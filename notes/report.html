@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EvalScope 评测与压测方案</title>
+<style>
+  :root{
+    --bg:#f6f8fc; --card:#ffffff; --card2:#eef2f9; --line:#dde3ec;
+    --txt:#1f2733; --mut:#6b7686; --accent:#2f6bff; --accent2:#0f9d77;
+    --warn:#c8821a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,"Segoe UI","Microsoft YaHei",Roboto,sans-serif;
+    background:var(--bg);color:var(--txt);line-height:1.7;font-size:15px}
+  .wrap{max-width:980px;margin:0 auto;padding:0 24px 80px}
+  header{padding:56px 0 26px;border-bottom:1px solid var(--line);margin-bottom:8px}
+  h1{font-size:30px;margin:0 0 8px;letter-spacing:.5px}
+  .sub{color:var(--mut);font-size:15px}
+  .toc{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:28px 0 8px}
+  .toc a{display:block;background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:14px 16px;text-decoration:none;color:var(--txt);transition:.15s;
+    box-shadow:0 1px 3px rgba(20,40,80,.04)}
+  .toc a:hover{border-color:var(--accent);transform:translateY(-2px);box-shadow:0 6px 18px rgba(47,107,255,.12)}
+  .toc .k{font-size:12px;color:var(--accent2);font-weight:700;letter-spacing:1px}
+  .toc .t{font-size:15px;margin-top:4px;font-weight:600}
+  section{margin:46px 0}
+  h2{font-size:22px;margin:0 0 4px;display:flex;align-items:center;gap:10px}
+  h2 .num{display:inline-flex;width:30px;height:30px;align-items:center;justify-content:center;
+    background:linear-gradient(135deg,var(--accent),var(--accent2));border-radius:8px;
+    font-size:14px;color:#fff;font-weight:700}
+  .lead{color:var(--mut);margin:6px 0 18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin:14px 0;
+    box-shadow:0 1px 3px rgba(20,40,80,.04)}
+  h3{font-size:16px;margin:2px 0 10px;color:var(--accent)}
+  ul{margin:8px 0;padding-left:20px}
+  li{margin:6px 0}
+  b{color:#0c1320}
+  code{background:var(--card2);border:1px solid var(--line);border-radius:5px;padding:0 6px;font-size:13px;
+    font-family:"JetBrains Mono",Consolas,monospace;color:#b5430f}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:9px 11px;text-align:left;vertical-align:top}
+  th{background:var(--card2);color:#0c1320;font-weight:700}
+  td b{color:var(--accent)}
+  .note{border-left:3px solid var(--warn);background:rgba(200,130,26,.08);
+    padding:10px 14px;border-radius:0 8px 8px 0;margin:12px 0;color:#7a5410;font-size:14px}
+  .key{border-left:3px solid var(--accent2);background:rgba(15,157,119,.08);
+    padding:10px 14px;border-radius:0 8px 8px 0;margin:12px 0;font-size:14px}
+  @media(max-width:760px){.toc{grid-template-columns:1fr 1fr}}
+  footer{margin-top:60px;padding-top:20px;border-top:1px solid var(--line);color:var(--mut);font-size:13px}
+</style>VM
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>EvalScope 评测与压测方案汇报</h1>
+  <div class="sub">面向商业大模型 API 的横向对比，覆盖四个维度的对齐：<b>LLM 效果对齐</b>、<b>VLM 多模态对齐</b>、<b>性能对齐</b>、<b>缓存对齐</b>，统一思路是「控制变量、绝对公平、可复现」。</div>
+  <div class="toc">
+    <a href="#s1"><div class="k">效果对齐</div><div class="t">LLM 微缩测试集</div></a>
+    <a href="#s2"><div class="k">多模态对齐</div><div class="t">VLM 分层抽样/全量</div></a>
+    <a href="#s3"><div class="k">性能对齐</div><div class="t">单轮长文本</div></a>
+    <a href="#s4"><div class="k">缓存对齐</div><div class="t">多轮缓存命中率</div></a>
+  </div>
+</header>
+
+<!-- ===================== 1. LLM ===================== -->
+<section id="s1">
+  <h2><span class="num">1</span>LLM 极简均衡测试集</h2>
+  <div class="lead">目标：用极少题量快速摸底不同供应商模型的「中文知识 + 数理逻辑」上限，省调用成本与时间。</div>
+
+  <div class="card">
+    <h3>选型：一文一理的黄金组合</h3>
+    <ul>
+      <li><b>CMMLU</b>：67 个中国本土学科，测<b>中文知识广度。</b></li>
+      <li><b>HumanEvalPlus</b>：在 HumanEval 上加数万严苛用例，测<b>硬核编程逻辑</b>，沙盒一跑漏洞原形毕露。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>核心策略：按学科分层截断</h3>
+    <ul>
+      <li>EvalScope 原生后端把 CMMLU 拆成 67 个学科子集，<code>--limit</code> <b>对每个子集单独截断</b> → 天然分层均衡。</li>
+      <li>每科取 50 题 → <b>3350 题</b>；固定随机种子可复现，零文件操作，学科权重完美保留。</li>
+      <li>HumanEvalPlus 仅 164 题、成本极低，<b>保持全量</b>，并开 Docker 沙盒安全执行生成代码。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ===================== 2. VLM ===================== -->
+<section id="s2">
+  <h2><span class="num">2</span>VLM 分层抽样测试集</h2>
+  <div class="lead">目标：把 1000~2700 题的多模态测试集压到 ~500 题，且<b>能力分布与原集一致</b>。</div>
+
+  <div class="card">
+    <h3>核心痛点与解法</h3>
+    <ul>
+      <li><b>痛点</b>：测试集按类别集中排序，框架的 <code>limit</code> 是「全局前 N 条」→ 可能某些类别一题没抽到，维度失衡。</li>
+      <li><b>解法</b>：读本地 TSV，按<b>类别列</b>（如能力类别 / 任务类型 / 场景，自动探测）做<b>等比例分层抽样</b>（固定随机种子），存回原文件名喂给框架。</li>
+      <li><b>可复现</b>：任何机器抽到完全相同的 ~500 题；自动备份全量，避免反复抽样越缩越小。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>两种跑法：分层微缩 vs. 全量</h3>
+    <ul>
+      <li><b>分层微缩（默认）</b>：每个集压到 ~500 题，4 个集一起跑，快速画「能力雷达图」做横向对比。</li>
+      <li><b>单个/少数几个数据集全量</b>：只关心某一两个能力时，<b>跳过抽样</b>、直接对选中的集跑全量（不设 limit）——题量虽大但维度最完整，适合定点深测某能力或复核微缩版结论。</li>
+    </ul>
+    <div class="key">两种跑法<b>共用同一运行器</b>：抽样只是「跑前对 TSV 的预处理」，要全量就<b>不做抽样这一步</b>、直接跑原始数据集即可，命令本身不变。</div>
+  </div>
+
+  <div class="card">
+    <h3>数据集速查</h3>
+    <table>
+      <tr><th>能力</th><th>数据集</th><th>原题量</th><th>分层维度</th><th>抽样方式</th></tr>
+      <tr><td>基础视力</td><td><code>MMBench_DEV_EN_V11</code></td><td>~1164</td><td>能力类别</td><td>分层抽 ~500</td></tr>
+      <tr><td>实景理解</td><td><code>MME-RealWorld-Lite</code></td><td>~2150</td><td>场景 / 任务类型</td><td>分层抽 ~500</td></tr>
+      <tr><td>极限推理</td><td><code>MMMU_Pro_10c</code></td><td>~1730</td><td>学科 / 子领域</td><td>分层抽 ~500</td></tr>
+      <tr><td>视频理解</td><td><code>Video-MME</code></td><td>2700</td><td>视频时长</td><td><b>按视频抽</b> ~100 个（~300 题）</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ===================== 3. 单轮长文本 ===================== -->
+<section id="s3">
+  <h2><span class="num">3</span>单轮长文本性能压测</h2>
+  <div class="lead">目标：横向对比商业 API 的长上下文推理性能，核心看<b>首字延迟 TTFT</b> 与 <b>生成速度 TPOT</b>。</div>
+
+  <div class="card">
+    <h3>三大公平性设计</h3>
+    <ul>
+      <li><b>数据集用 <code>longalpaca</code></b>：真实长文本（>6000 tok）。不用 <code>random</code>——乱码会让模型立刻 EOS，TPOT 失真。</li>
+      <li><b>防服务端缓存作弊</b>：并发梯队间游标自增不重复；用偏移量错开历史，杜绝 KV/Prefix Cache 命中污染 TTFT。</li>
+      <li><b>对齐生成长度</b>：商业 API 不支持忽略结束符，用统一的最大输出 token 截断天花板，保证 TPOT 可比。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>压测梯队设计</h3>
+    <ul>
+      <li><b>并发梯队 1 / 8 / 16</b>：分别测单点极限速度、并发吞吐、极限吞吐；各梯队对应请求量 20 / 80 / 160。</li>
+      <li><b>流式必开</b>：才能精确捕获 TTFT。<b>预热 2 条</b>：暖机排除冷启动，不计入报告。</li>
+      <li>全程发约 <b>262 条</b>互不重复的请求；预热数据也来自数据集并消耗游标 → 全是新鲜语料，彻底杜绝缓存作弊。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>关键指标（对比时只看归一化值）</h3>
+    <table>
+      <tr><th>指标</th><th>含义</th></tr>
+      <tr><td><b>TTFT</b></td><td>首字延迟，衡量长 Prompt 的 Prefill 速度（看 P50 / P99）</td></tr>
+      <tr><td><b>TPOT</b></td><td>(总延迟−TTFT) / 输出 token，剔除输出长短影响，<b>最公平的生成速度</b></td></tr>
+      <tr><td><b>RPS / TPS</b></td><td>高并发下的吞吐与算力水位</td></tr>
+    </table>
+    <div class="note"><b>绝不直接对比总 Latency</b>——它受各模型话术长短影响极大。看平均输出 token 是否都在 500 左右，确认截断已生效、对比基础公平。</div>
+  </div>
+
+  <div class="card">
+    <h3>执行策略：一键脚本 + 厂商命名防撞</h3>
+    <ul>
+      <li><b>一条命令跑完</b>：<code>python scripts/perf/run_longalpaca_bench.py &lt;模型&gt;-&lt;厂商&gt;</code>。所有保证公平的参数（数据集 / 梯队 / 截断 / 流式 / 预热）都锁死在脚本的 <code>FIXED</code> 里，API Key 走环境变量、绝不硬编码。</li>
+      <li><b>profile = 模型 × 厂商</b>：同一款模型常在多家厂商都有（如 deepseek-v3.2 既在阿里百炼又在腾讯云），故 profile 用 <code>&lt;模型&gt;-&lt;厂商&gt;</code> 双维度登记。</li>
+      <li><b>输出命名带厂商</b>：结果落在 <code>results/longalpaca/&lt;时间戳&gt;/longalpaca_&lt;模型&gt;-&lt;厂商&gt;/</code>，内含 <code>perf_report.html</code>、<code>benchmark.log</code> 及各并发档的 <code>benchmark_data.db</code>。</li>
+    </ul>
+    <div class="note"><b>为什么 <code>--name</code> 必须带厂商</b>：输出路径只到「秒」级时间戳，若只带模型名，<b>同款模型跨厂商并发跑</b>会算出同一目录而撞车——evalscope 发现 <code>benchmark_data.db</code> 已存在会直接退出。带上厂商即保证（厂商,模型）维度唯一，同秒并发也不冲突。</div>
+  </div>
+
+  <div class="card">
+    <h3>定时自动化 + 智能体归档</h3>
+    <ul>
+      <li><b>智能体一次搭建、自动跑</b>：把一段「搭建提示词」发给本地定时调度智能体（hermes），它便自行创建 3 个每日重复任务——<code>21:00</code> / <code>04:00</code> / <code>15:00</code>，到点各跑一轮（<b>由智能体的调度机制触发，而非在代码里写死等待</b>），时间戳天然隔离、互不覆盖。</li>
+      <li><b>每个时段用不同 offset</b>：21 点档 <code>500</code> / 凌晨 4 点档 <code>1000</code> / 15 点档 <code>1500</code>（每轮消耗 262 条，间隔 500 互不重叠），三档各打全新语料，三次之间彻底不蹭彼此残留的服务端缓存。同档跨天用同一 offset，方便看「同一时段的日间趋势」。</li>
+      <li><b>到点自动整理归档</b>：每次跑完自动定位最新结果目录，按 parallel=1 / 8 / 16 三档提取 TTFT、TPOT（均看 P50 / P99）、RPS、TPS，连同成功 / 失败数沉淀成 <code>notes/perf-commercial-apis/runs/&lt;日期&gt;_&lt;时间&gt;_&lt;profile&gt;.md</code>，并在执行回执里贴表点评是否异常。</li>
+    </ul>
+    <div class="note"><b>前置</b>：API Key 须设为持久环境变量（<code>DASHSCOPE_API_KEY</code>，腾讯另需 <code>TENCENT_API_KEY</code>），否则定时任务到点取不到 key 会直接退出。</div>
+    <div class="key">搭建提示词存档于 <code>notes/perf-commercial-apis/scheduled_agent_prompt.md</code>：一次性发给 hermes 即自动建好三个任务；也可自己手动跑脚本，只是少了那步自动归档与点评。</div>
+  </div>
+</section>
+
+<!-- ===================== 4. 多轮缓存 ===================== -->
+<section id="s4">
+  <h2><span class="num">4</span>多轮对话 KV 缓存命中率压测</h2>
+  <div class="lead">目标：评估服务端在多轮对话中对历史上下文（Prefix Cache）的复用能力——多轮又快又省的关键。</div>
+
+  <div class="card">
+    <h3>两个核心指标</h3>
+    <table>
+      <tr><th>指标</th><th>口径</th><th>意义</th></tr>
+      <tr><td><b>Cache Hit (%)</b></td><td>命中 token ÷ 全部输入 token，<b>按 token 总量加权</b>（含第 1 轮 0%）</td><td>实际省了多少钱 / 算力</td></tr>
+      <tr><td><b>Eligible Cache Hit Rate</b></td><td>剔除第 1 轮与本轮新内容后的命中率</td><td>服务端缓存系统做得有多好</td></tr>
+    </table>
+    <div class="key"><b>黄金判真伪</b>：<code>Eligible</code> 死磕 <b>100.00</b> = 服务端没回传，客户端理论估算；跑出 <b>93.00</b> 等非整数 = 走真实命中数据。</div>
+  </div>
+
+  <div class="card">
+    <h3>三大对齐机制（跨厂商绝对公平）</h3>
+    <ul>
+      <li><b>数据集预生成</b>：脚本一次跑出固定的多轮对话（基于 <code>swe_smith</code>，「长首轮 + 尾部增量」纺锤形，最贴 Agent 场景），随机性<b>冻结在文件里</b>，所有厂商吃同一份。</li>
+      <li><b>会话隔离</b>：腾讯云需开会话缓存开关、自动注入会话标识；阿里百炼隐式缓存、无需此参数。</li>
+      <li><b>防复测污染</b>：同模型同厂商重测，用大池子 + 偏移量取不相交子集，避免残留缓存让冷启动虚高。</li>
+    </ul>
+  </div>
+
+</section>
+
+<footer>
+  统一原则：<b>控制变量 · 绝对公平 · 可复现</b>。能力评测追求「分层均衡 + 低成本摸底」，性能压测追求「杜绝缓存作弊 + 归一化指标」。<br>
+  源文档：<code>notes/llm-evaluation</code> · <code>notes/vlm-evaluation</code> · <code>notes/perf-commercial-apis</code> · <code>notes/perf-multi-turn-cache</code>
+</footer>
+
+</div>
+</body>
+</html>

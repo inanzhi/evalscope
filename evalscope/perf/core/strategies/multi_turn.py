@@ -14,6 +14,12 @@ if TYPE_CHECKING:
 
 logger = get_logger()
 
+# Body field / HTTP header used to carry the per-conversation session identity
+# when ``--multi-turn-session-cache`` is enabled.  Names follow the OpenAI-style
+# ``prompt_cache_key`` convention and Tencent Cloud's sticky-routing header.
+_SESSION_CACHE_BODY_FIELD = 'prompt_cache_key'
+_SESSION_CACHE_HEADER = 'X-Session-ID'
+
 
 class MultiTurnStrategy(BenchmarkStrategy):
     """Multi-turn conversation benchmark strategy.
@@ -151,7 +157,19 @@ class MultiTurnStrategy(BenchmarkStrategy):
                     break
                 if turn.max_tokens is not None:
                     request['max_tokens'] = turn.max_tokens
-                benchmark_data = await self.client.post(request)
+
+                # Optional per-conversation session identity for providers with
+                # implicit / sticky KV-cache reuse (e.g. Tencent Cloud).  The key
+                # is stable within a conversation (shared ``trace_id``) and unique
+                # across conversations and across models sharing one endpoint (the
+                # model-name prefix prevents cross-model cache cross-talk).  Off by
+                # default, so the request body/headers are unchanged otherwise.
+                extra_headers: Optional[Dict[str, str]] = None
+                if self.args.multi_turn_session_cache:
+                    session_key = f'{self.args.model}-{trace_id}'
+                    request[_SESSION_CACHE_BODY_FIELD] = session_key
+                    extra_headers = {_SESSION_CACHE_HEADER: session_key}
+                benchmark_data = await self.client.post(request, extra_headers=extra_headers)
 
                 # Inject multi-turn specific metadata.
                 benchmark_data.is_warmup = is_warmup

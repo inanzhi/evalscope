@@ -140,6 +140,7 @@ private/
 # outputs
 outputs/
 evalscope/outputs/
+results/
 evalscope/*_temp.py
 evalscope/data/
 */output_res/*
