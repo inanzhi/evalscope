@@ -362,6 +362,24 @@ class Arguments(BaseArgument):
     multi_turn_args: Optional[MultiTurnArgs] = None
     """Advanced multi-turn conversation parameters (MultiTurnArgs). Pass as JSON string via CLI."""
 
+    multi_turn_session_cache: bool = False
+    """Inject a per-conversation session identifier on every multi-turn request.
+
+    When enabled (multi-turn mode only), each conversation gets a unique, stable
+    key derived from ``{model}-{trace_id}`` that is sent as both:
+
+    * the ``prompt_cache_key`` body field (request-level prefix-cache identity), and
+    * the ``X-Session-ID`` HTTP header (sticky routing to one inference instance).
+
+    The key is identical across all turns of one conversation and differs across
+    conversations (and across models sharing one endpoint), which is exactly the
+    contract implicit KV-cache reuse expects on providers such as Tencent Cloud.
+    Providers that don't recognise these fields (e.g. Alibaba Bailian) ignore the
+    unknown body field / header, so enabling this is harmless there.
+
+    Disabled by default: existing runs send no extra field/header.
+    """
+
     # --- Field validators ---
 
     @field_validator('max_tokens', mode='before')
@@ -730,6 +748,20 @@ def add_argument(parser: argparse.ArgumentParser):
             '"chars_per_token": 3.0}\'. '
             'Note: min_turns and max_turns are top-level --min-turns / --max-turns arguments '
             '(per-conversation turn count is sampled from [min_turns, max_turns]).'
+        ),
+    )
+    parser.add_argument(
+        '--multi-turn-session-cache',
+        action='store_true',
+        default=False,
+        dest='multi_turn_session_cache',
+        help=(
+            'Multi-turn only. Inject a per-conversation session identifier '
+            '("{model}-{trace_id}") into every request as both the prompt_cache_key '
+            'body field and the X-Session-ID HTTP header, so providers with '
+            'implicit / sticky KV-cache reuse (e.g. Tencent Cloud) route a '
+            'conversation to one instance and reuse its prefix cache. Other '
+            'providers ignore the unknown field/header. Off by default.'
         ),
     )
     # yapf: enable

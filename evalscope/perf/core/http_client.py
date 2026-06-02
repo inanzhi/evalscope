@@ -1,7 +1,7 @@
 import aiohttp
 import asyncio
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from evalscope.perf.arguments import Arguments
 from evalscope.perf.utils.benchmark_util import BenchmarkData
@@ -65,16 +65,24 @@ class AioHttpClient:
         trace_config.on_response_chunk_received.append(self.on_response_chunk_received)
         return trace_config
 
-    async def post(self, body) -> BenchmarkData:
+    async def post(self, body, extra_headers: Optional[dict] = None) -> BenchmarkData:
         """
         Send POST request and delegate response handling to API plugin.
+
+        Args:
+            body: The request payload to send.
+            extra_headers: Optional per-request headers merged over the client's
+                shared headers (e.g. a per-conversation session id in multi-turn
+                mode). ``None`` leaves the shared headers untouched, so existing
+                single-header behaviour is preserved.
 
         Returns:
             BenchmarkData: The benchmark data object containing request and response information.
         """
+        headers = self.headers if not extra_headers else {**self.headers, **extra_headers}
         try:
             # Delegate the request processing to the API plugin
-            output = await self.api_plugin.process_request(self.client, self.url, self.headers, body)
+            output = await self.api_plugin.process_request(self.client, self.url, headers, body)
             return output
         except asyncio.TimeoutError as e:
             logger.error(
