@@ -67,7 +67,9 @@ def run_vlm(dataset: str, limit=None, video_llm: bool = False):
                 'name': 'CustomAPIModel',   # 固定值，必须是 CustomAPIModel
                 'api_base': API_BASE,
                 'key': API_KEY,
-                'temperature': 0.0,
+                'temperature': 0.0,         # 采样温度；0=贪心（可复现）。官方文档支持的 model 配置键
+                'top_p': 0.95,               # 核采样；非具名参数→进 BaseAPI.default_kwargs→原样透传成请求体顶层字段。temperature=0 时为空操作，留作可调旋钮
+                # 'reasoning_effort': 'high',  # 思考档位；同 top_p 走 **kwargs 透传进请求体，能否生效取决于目标 API 是否认该字段（OpenAI 兼容推理端点通常认）
                 'max_tokens': 1024,
                 'img_size': -1,
                 'video_llm': video_llm,     # 视频集且要传 video_url 时设 True
@@ -82,6 +84,14 @@ if __name__ == '__main__':
 ```
 
 > 也可用 CLI：把上面的 `eval_config` 写成 `vlm_config.yaml`（结构见 [vlmevalkit_backend.md](../../docs/zh/user_guides/backend/vlmevalkit_backend.md) 第 3 节），然后 `evalscope eval --eval-config vlm_config.yaml`。
+
+> **这些键在源码里到底怎么处理的（已核实 VLMEvalKit `OpenAIWrapper`=`CustomAPIModel`，见其 `vlmeval/api/gpt.py` 与 `vlmeval/api/base.py`）：**
+>
+> 1. **具名构造参数 → 有 wrapper 默认值**：`temperature`、`max_tokens`、`img_size`、`timeout`、`key`、`api_base` 是 `OpenAIWrapper.__init__` 的显式形参，**不写就用 wrapper 默认** `temperature=0`、`max_tokens=2048`、`img_size=-1`、`timeout=300s`。（官方文档化的就 `temperature`/`max_tokens`/`img_size` 三个，见 [vlmevalkit_backend.md](../../docs/zh/user_guides/backend/vlmevalkit_backend.md)。）
+> 2. **非具名键 → `**kwargs` 透传进请求体**：`top_p` / `reasoning_effort` 等不是构造形参，会落进 `__init__(**kwargs)` → `BaseAPI` 存 `self.default_kwargs = kwargs` → `generate()` 里 `kwargs = deepcopy(default_kwargs); kwargs.update(...)` → `generate_inner(**kwargs)` → `payload = dict(model=…, messages=…, temperature=…, max_tokens=…, **kwargs)` → **作为请求体顶层字段原样发给 OpenAI 兼容 API**。
+> 3. **所以**：`top_p` 写了就发、不写则 body 里没有该字段（服务端用自己默认）；`reasoning_effort` 同样**会被透传进 body**，能否生效取决于目标 API 是否认这个字段（OpenAI 兼容的推理模型端点通常认）——不是"框架丢弃"或"wrapper 自有默认"。
+>
+> 选择题型保持 `temperature=0.0`（可复现）；思考型 VLM 按模型卡推荐值（常见 0.6）再调。
 
 #### 并发设置：`nproc`（VLM 这边不是单并发）
 VLMEvalKit 后端的并发开关是 `eval_config` 里的 **`nproc`**（并行调用 API 的数量，见 [vlmevalkit_backend.md](../../docs/zh/user_guides/backend/vlmevalkit_backend.md) 参数说明）。上面 `run_vlm.py` 已默认 `'nproc': 16`，即**默认就是 16 并发**，不像 native 后端默认单并发。想调整就改这个数：
@@ -100,7 +110,7 @@ VLMEvalKit 后端的并发开关是 `eval_config` 里的 **`nproc`**（并行调
 - **`ignore: True`**：单条样本失败就跳过、不中断整场（对应 [backend_manager.py:131](../../evalscope/backend/vlm_eval_kit/backend_manager.py#L131) 的 `--ignore`）。
 - **`retry: 3`**：单条失败重试 3 次（[backend_manager.py:138](../../evalscope/backend/vlm_eval_kit/backend_manager.py#L138)）。
 
-> VLMEvalKit 后端**没有**顶层的 per-request 超时参数，超时沿用 VLMEvalKit 默认（由其底层 API wrapper 控制），故本方案不显式设 timeout。
+> 超时其实**可控**：`OpenAIWrapper.__init__` 有具名参数 `timeout`（默认 **300s**），在 `model` 配置 dict 里加 `'timeout': 300` 即可透传覆盖（与 `temperature` 等同级）。本方案沿用默认 300s 未显式写，需要时自行加。
 
 ### 2.1 先下载全量数据集（生成本地 TSV）
 抽样前要让框架先把原始 `.tsv` 下到 `~/LMUData/`。用 `limit=1` 快速触发即可（首次评测会自动下载）：
@@ -242,11 +252,26 @@ run_vlm('Video-MME', video_llm=True)  # 名字不变，底层跑抽好的子集
 
 ## 5. 数据集速查表
 
-| 能力 | 数据集代号 | 原集题量 | 分层维度 | 抽样方式 |
-|---|---|---|---|---|
-| 基础视力 | `MMBench_DEV_EN_V11` | ~1164 | 能力类别（`category`） | 分层抽 ~500 |
-| 实景理解 | `MME-RealWorld-Lite` | ~2150 | 场景 / 任务类型 | 分层抽 ~500 |
-| 极限推理 | `MMMU_Pro_10c` | ~1730 | 学科 / 子领域（`subject`） | 分层抽 ~500 |
-| 视频理解 | `Video-MME` | 2700（900 视频×3） | 视频时长（`duration`） | 按 `video` 抽 ~100 个视频（~300 题） |
+| 能力 | 数据集代号 | 题型 | 原集题量 | 分层维度 | 抽样方式 |
+|---|---|---|---|---|---|
+| 基础视力 | `MMBench_DEV_EN_V11` | 单选（A–D，circular 循环评测）| ~1164 | 能力类别（`category`） | 分层抽 ~500 |
+| 实景理解 | `MME-RealWorld-Lite` | 单选（**5 选项** A–E）| ~2150 | 场景 / 任务类型 | 分层抽 ~500 |
+| 极限推理 | `MMMU_Pro_10c` | 单选（**10 选项**，`10c` 即扩到 10 个候选）| ~1730 | 学科 / 子领域（`subject`） | 分层抽 ~500 |
+| 视频理解 | `Video-MME` | 单选（A–D，每视频 3 题）| 2700（900 视频×3） | 视频时长（`duration`） | 按 `video` 抽 ~100 个视频（~300 题） |
+
+> 题型来源（已核实）：[MME-RealWorld](https://github.com/MME-Benchmarks/MME-RealWorld)（5 选项）、[MMMU-Pro 论文](https://arxiv.org/pdf/2409.02813)（选项 4→10）、[Video-MME](https://github.com/MME-Benchmarks/Video-MME)（4 选项 A–D）；MMBench 为单选+circular 循环评测。**四个集全是单选题**——所以 `temperature=0`（贪心）最合适、可复现，无需大 `max_tokens`（模型只需吐出选项字母/短答）。
+
+### 5.1 各数据集要传的专属参数
+
+前三个是**图片集**，跑法一致、无专属参数；只有 `Video-MME` 是**视频集**，要额外开 `video_llm` 并可调帧/字幕参数。
+
+| 数据集 | 类型 | 必传/专属参数 | 放在哪 |
+|---|---|---|---|
+| `MMBench_DEV_EN_V11` | 图片 | 无（`video_llm=False`，model 内 `temperature/max_tokens/img_size` 用默认即可） | model dict |
+| `MME-RealWorld-Lite` | 图片 | 无（同上） | model dict |
+| `MMMU_Pro_10c` | 图片 | 无（同上）。⚠️ 若换 COT 变体 `MMMU_Pro_10c_COT`，需把 `max_tokens` 调大（要输出思维链） | model dict |
+| `Video-MME` | 视频 | **`video_llm=True`**（model dict）；可选 `nframe`（默 8）/ `fps`（默 -1，>0 时按帧率取帧，覆盖 nframe）/ `use_subtitle`（默 False）| `video_llm` 在 model dict；`nframe/fps/use_subtitle` 在 `eval_config` 顶层（与 `data/mode/limit/nproc` 同级，见 [vlmevalkit_backend.md](../../docs/zh/user_guides/backend/vlmevalkit_backend.md) 参数说明）|
+
+> Video-MME 取帧示例（在 `run_vlm` 的 `eval_config` 顶层加）：`'nframe': 8`（默认）或 `'fps': 1`（按 1 帧/秒，长视频帧数随时长增多）；要带字幕设 `'use_subtitle': True`。这些只对视频集生效，图片集忽略。
 
 > 运行前务必执行 0.1 的 `list_supported_datasets()` 核对本地 `ms-vlmeval` 版本是否包含上述名字。

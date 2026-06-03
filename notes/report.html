@@ -48,7 +48,7 @@
     padding:10px 14px;border-radius:0 8px 8px 0;margin:12px 0;font-size:14px}
   @media(max-width:760px){.toc{grid-template-columns:1fr 1fr}}
   footer{margin-top:60px;padding-top:20px;border-top:1px solid var(--line);color:var(--mut);font-size:13px}
-</style>VM
+</style>
 </head>
 <body>
 <div class="wrap">
@@ -113,12 +113,14 @@
   <div class="card">
     <h3>数据集速查</h3>
     <table>
-      <tr><th>能力</th><th>数据集</th><th>原题量</th><th>分层维度</th><th>抽样方式</th></tr>
-      <tr><td>基础视力</td><td><code>MMBench_DEV_EN_V11</code></td><td>~1164</td><td>能力类别</td><td>分层抽 ~500</td></tr>
-      <tr><td>实景理解</td><td><code>MME-RealWorld-Lite</code></td><td>~2150</td><td>场景 / 任务类型</td><td>分层抽 ~500</td></tr>
-      <tr><td>极限推理</td><td><code>MMMU_Pro_10c</code></td><td>~1730</td><td>学科 / 子领域</td><td>分层抽 ~500</td></tr>
-      <tr><td>视频理解</td><td><code>Video-MME</code></td><td>2700</td><td>视频时长</td><td><b>按视频抽</b> ~100 个（~300 题）</td></tr>
+      <tr><th>能力</th><th>数据集</th><th>题型</th><th>原题量</th><th>分层维度</th><th>抽样方式</th></tr>
+      <tr><td>基础视力</td><td><code>MMBench_DEV_EN_V11</code></td><td>单选 A–D（circular 循环评测）</td><td>~1164</td><td>能力类别（<code>category</code>）</td><td>分层抽 ~500</td></tr>
+      <tr><td>实景理解</td><td><code>MME-RealWorld-Lite</code></td><td>单选 <b>5 选项</b> A–E</td><td>~2150</td><td>场景 / 任务类型</td><td>分层抽 ~500</td></tr>
+      <tr><td>极限推理</td><td><code>MMMU_Pro_10c</code></td><td>单选 <b>10 选项</b>（<code>10c</code> 扩到 10 候选）</td><td>~1730</td><td>学科 / 子领域（<code>subject</code>）</td><td>分层抽 ~500</td></tr>
+      <tr><td>视频理解</td><td><code>Video-MME</code></td><td>单选 A–D（每视频 3 题）</td><td>2700（900 视频×3）</td><td>视频时长（<code>duration</code>）</td><td><b>按视频抽</b> ~100 个（~300 题）</td></tr>
     </table>
+    <div class="key"><b>四个集全是单选题</b>——所以 <code>temperature=0</code>（贪心）最合适、可复现，模型只需吐出选项字母，无需大 <code>max_tokens</code>。视频集 <code>Video-MME</code> 须额外开 <code>video_llm=True</code>，可调 <code>nframe</code> / <code>fps</code> / <code>use_subtitle</code>。</div>
+    <div class="note"><b>视频集必须按「视频」抽样、不能按「题」抽样</b>：唯一视频标识列是 <code>video</code>，按它整组挑题；否则每个视频只抽到一两道题，但模型下载+截帧解析整段视频的耗时一点没省，账单照样爆炸。</div>
   </div>
 </section>
 
@@ -157,21 +159,11 @@
   </div>
 
   <div class="card">
-    <h3>执行策略：一键脚本 + 厂商命名防撞</h3>
-    <ul>
-      <li><b>一条命令跑完</b>：<code>python scripts/perf/run_longalpaca_bench.py &lt;模型&gt;-&lt;厂商&gt;</code>。所有保证公平的参数（数据集 / 梯队 / 截断 / 流式 / 预热）都锁死在脚本的 <code>FIXED</code> 里，API Key 走环境变量、绝不硬编码。</li>
-      <li><b>profile = 模型 × 厂商</b>：同一款模型常在多家厂商都有（如 deepseek-v3.2 既在阿里百炼又在腾讯云），故 profile 用 <code>&lt;模型&gt;-&lt;厂商&gt;</code> 双维度登记。</li>
-      <li><b>输出命名带厂商</b>：结果落在 <code>results/longalpaca/&lt;时间戳&gt;/longalpaca_&lt;模型&gt;-&lt;厂商&gt;/</code>，内含 <code>perf_report.html</code>、<code>benchmark.log</code> 及各并发档的 <code>benchmark_data.db</code>。</li>
-    </ul>
-    <div class="note"><b>为什么 <code>--name</code> 必须带厂商</b>：输出路径只到「秒」级时间戳，若只带模型名，<b>同款模型跨厂商并发跑</b>会算出同一目录而撞车——evalscope 发现 <code>benchmark_data.db</code> 已存在会直接退出。带上厂商即保证（厂商,模型）维度唯一，同秒并发也不冲突。</div>
-  </div>
-
-  <div class="card">
     <h3>定时自动化 + 智能体归档</h3>
     <ul>
       <li><b>智能体一次搭建、自动跑</b>：把一段「搭建提示词」发给本地定时调度智能体（hermes），它便自行创建 3 个每日重复任务——<code>21:00</code> / <code>04:00</code> / <code>15:00</code>，到点各跑一轮（<b>由智能体的调度机制触发，而非在代码里写死等待</b>），时间戳天然隔离、互不覆盖。</li>
-      <li><b>每个时段用不同 offset</b>：21 点档 <code>500</code> / 凌晨 4 点档 <code>1000</code> / 15 点档 <code>1500</code>（每轮消耗 262 条，间隔 500 互不重叠），三档各打全新语料，三次之间彻底不蹭彼此残留的服务端缓存。同档跨天用同一 offset，方便看「同一时段的日间趋势」。</li>
       <li><b>到点自动整理归档</b>：每次跑完自动定位最新结果目录，按 parallel=1 / 8 / 16 三档提取 TTFT、TPOT（均看 P50 / P99）、RPS、TPS，连同成功 / 失败数沉淀成 <code>notes/perf-commercial-apis/runs/&lt;日期&gt;_&lt;时间&gt;_&lt;profile&gt;.md</code>，并在执行回执里贴表点评是否异常。</li>
+      <li><b>三档用同一批数据</b>：数据游标固定（脚本内置 offset=500），不按时段区分；三次间隔 6~11 小时、服务端前缀缓存早过期，用同批数据反而便于跨时段直接对比。</li>
     </ul>
     <div class="note"><b>前置</b>：API Key 须设为持久环境变量（<code>DASHSCOPE_API_KEY</code>，腾讯另需 <code>TENCENT_API_KEY</code>），否则定时任务到点取不到 key 会直接退出。</div>
     <div class="key">搭建提示词存档于 <code>notes/perf-commercial-apis/scheduled_agent_prompt.md</code>：一次性发给 hermes 即自动建好三个任务；也可自己手动跑脚本，只是少了那步自动归档与点评。</div>
