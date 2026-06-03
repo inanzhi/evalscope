@@ -300,15 +300,15 @@ python scripts/perf/build_swe_smith_dataset.py `
 ### 8.6 运行脚本（方案 B：每个模型一条命令）
 
 ```powershell
-$tencentUrl = "https://api.lkeap.cloud.tencent.com/v1/chat/completions"   # 以你的控制台为准
+$tencentUrl = "https://tokenhub.tencentmaas.com/v1/chat/completions"   # 腾讯 TencentMaaS token hub；以你的控制台为准
 $bailianUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
 
 $common = @(
   "--api","openai",
   "--dataset","swe_smith","--dataset-path","outputs/agentic_dataset.json",
   "--multi-turn","--parallel","1","--number","10",
-  "--max-tokens","16384","--seed","42","--temperature","0","--stream",
-  "--extra-args",'{"reasoning_effort":"high"}',
+  "--max-tokens","16384","--seed","42","--temperature","0","--top-p","1.0","--stream",
+  "--extra-args",'{"reasoning_effort":"high"}',   # reasoning_effort 非原生字段，走 extra-args 注入请求体；非推理模型删掉这行
   "--read-timeout","300",          # 读超时 300s：reasoning=high 单轮常需数十秒~分钟，60s 会误杀
   "--no-timestamp","--no-test-connection"
 )
@@ -326,7 +326,7 @@ evalscope perf --model deepseek-v3.2     --url $bailianUrl --api-key $env:DASHSC
 
 | 层级 | 参数 |
 |---|---|
-| 全程固定（保证一致） | `--dataset-path`、`--seed 42`、`--parallel 1`、`--number 10`、`--max-tokens`、`--temperature 0`、`reasoning_effort high`、`--multi-turn` |
+| 全程固定（保证一致） | `--dataset-path`、`--seed 42`、`--parallel 1`、`--number 10`、`--max-tokens`、`--temperature 0`、`--top-p 1.0`、`reasoning_effort high`、`--multi-turn` |
 | 随被测对象变 | `--model`、`--url`、`--api-key`、`--name`（带厂商-模型）、`--outputs-dir`（带厂商-模型） |
 | 开关触发（代码注入） | `--multi-turn-session-cache` → 自动注入 `X-Session-ID` / `prompt_cache_key` = `{model}-{trace_id}` |
 
@@ -374,7 +374,7 @@ from evalscope.perf.arguments import Arguments
 task = Arguments(
     # ===== 每次只改这一组（随被测对象变）=====
     model='deepseek-v3.2',
-    url='https://api.lkeap.cloud.tencent.com/v1/chat/completions',  # 腾讯；百炼换 dashscope compatible-mode
+    url='https://tokenhub.tencentmaas.com/v1/chat/completions',  # 腾讯 TencentMaaS；百炼换 dashscope compatible-mode
     api_key='<YOUR_API_KEY>',
     name='v32-tencent',              # 结果库名带「模型-厂商」：同模型跨厂商也唯一，不撞目录
     outputs_dir='results/v32-tencent',
@@ -390,9 +390,10 @@ task = Arguments(
     number=10,
     max_tokens=16384,
     seed=42,
-    temperature=0.0,
+    temperature=0.0,                 # 采样温度；0=贪心（可复现）
+    top_p=1.0,                       # 核采样；temperature=0 时为空操作，留作可调旋钮
     stream=True,
-    extra_args={'reasoning_effort': 'high'},
+    extra_args={'reasoning_effort': 'high'},  # 思考档位 low/medium/high；非原生字段，走 extra_args 注入请求体。非推理模型删掉此行
     read_timeout=300,                # 读超时 300s（reasoning=high 慢，60s 会误杀）
     no_test_connection=True,
     no_timestamp=True,

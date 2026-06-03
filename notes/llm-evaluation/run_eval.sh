@@ -5,9 +5,19 @@
 # 请在运行前替换下方的模型名称和 API 配置
 # =======================================================
 
-MODEL_NAME="qwen/Qwen2.5-72B-Instruct"
+MODEL_NAME="deepseek-v4-pro"
 API_URL="https://dashscope.aliyuncs.com/compatible-mode/v1" # 替换为实际供应商 API URL
 API_KEY="YOUR_API_KEY" # 替换为实际 API KEY
+
+# --- 生成参数(可自行修改) -------------------------------------------------
+# 全部经 --generation-config 下发(native 后端唯一入口); 键名见 generate_config.py
+# 【不传 --generation-config 时内部默认(API评测)】仅注入 temperature=0.0; top_p/max_tokens/seed/reasoning_effort 不发,走服务端默认;
+#   retries=5/retry_interval=10。⚠️ 一旦传了 --generation-config 就整体替换、不合并, 所以必须把 temperature 一起带上(见下方拼接)。
+TEMPERATURE=0          # 采样温度; 0=贪心(可复现)。accuracy 评测建议 0
+TOP_P=1.0              # 核采样; temperature=0 时为空操作, 留作可调旋钮
+REASONING_EFFORT="high"    # 思考档位 low/medium/high; 留空=不传。仅推理模型可设, Qwen2.5 等非推理模型设了会报错
+# 拼出 generation-config: REASONING_EFFORT 非空时才追加 reasoning_effort 段
+GEN_CONFIG="temperature=${TEMPERATURE},top_p=${TOP_P},timeout=60${REASONING_EFFORT:+,reasoning_effort=${REASONING_EFFORT}}"
 
 echo "======================================================="
 echo "🚀 开始测试 CMMLU (每科 50 题, 自动 3350 题) ..."
@@ -23,7 +33,7 @@ evalscope eval \
   --datasets cmmlu \
   --limit 50 \
   --eval-batch-size 16 \
-  --generation-config timeout=60 \
+  --generation-config "$GEN_CONFIG" \
   --ignore-errors
 
 echo ""
@@ -39,7 +49,7 @@ evalscope eval \
   --datasets humaneval_plus \
   --sandbox '{"enabled": true, "engine": "docker"}' \
   --eval-batch-size 8 \
-  --generation-config timeout=60 \
+  --generation-config "$GEN_CONFIG" \
   --ignore-errors
 
 echo "✅ 所有测试执行完毕！"

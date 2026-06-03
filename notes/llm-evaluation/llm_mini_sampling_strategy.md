@@ -58,7 +58,7 @@ evalscope eval \
   --datasets cmmlu \
   --limit 50 \
   --eval-batch-size 16 \             # 16 并发；不加默认单并发(1)，3350 题会很慢
-  --generation-config timeout=60 \   # 单次请求超时 60s（重试默认 5 次、间隔 10s）
+  --generation-config temperature=0,top_p=1.0,timeout=60 \   # 模型参数走这里；必带 temperature（见 3.4 的坑）。推理模型再追加 reasoning_effort=high
   --ignore-errors                    # 重试耗尽仍失败就跳过该样本，不中断整场
 
 # HumanEvalPlus 全量 164 题（推荐开 Docker 沙盒执行生成代码）
@@ -68,8 +68,8 @@ evalscope eval \
   --api-key $API_KEY \
   --datasets humaneval_plus \
   --sandbox '{"enabled": true, "engine": "docker"}' \
-  --eval-batch-size 8 \              # 沙盒会并行起多个 docker，核少就调小
-  --generation-config timeout=60 \
+  --eval-batch-size 4 \              # 沙盒会并行起多个 docker，核少就调小
+  --generation-config temperature=0,top_p=1.0,timeout=60 \   # 推理模型再追加 reasoning_effort=high
   --ignore-errors
 ```
 
@@ -104,9 +104,37 @@ native 后端的并发开关是 **`--eval-batch-size`**，它直接决定并发�
 
 - 重试逻辑：任何异常都会触发重试，到 `retries` 次仍失败才抛出（[function_utils.py:71-82](../../evalscope/utils/function_utils.py#L71)）；超时本身也会被重试。
 - 写法：CLI `--generation-config timeout=60` + `--ignore-errors`；Python `TaskConfig(generation_config={'timeout': 60}, ignore_errors=True)`。
-- 要调重试：`--generation-config timeout=60,retries=3,retry_interval=5`。
+- 要调重试：`--generation-config temperature=0,timeout=60,retries=3,retry_interval=5`。
 
-### 3.4 Python 代码调用方式（批量对比多供应商）
+### 3.4 模型生成参数
+
+模型参数**没有独立 flag，全塞进 `--generation-config`**。两种格式二选一（值含列表/字典如 `stop_seqs`、`extra_body` 时**必须**用 JSON，否则逗号会被切错）。
+
+**全参数示例（逗号式，标量参数全列出，按需删减）：**
+```bash
+--generation-config "temperature=0,top_p=0.8,top_k=20,max_tokens=2048,seed=42,n=1,presence_penalty=0,frequency_penalty=0,repetition_penalty=1.0,reasoning_effort=high,logprobs=False,stream=False,timeout=60,retries=5,retry_interval=10"
+```
+
+**含列表/字典时用 JSON：**
+```bash
+--generation-config '{"temperature":0,"top_p":0.8,"max_tokens":2048,"seed":42,"reasoning_effort":"high","stop_seqs":["\n\n"],"extra_body":{"enable_thinking":false}}'
+```
+
+| 类别 | 参数键 |
+|---|---|
+| 采样 | `temperature`、`top_p`、`top_k`、`seed`、`n`、`max_tokens`、`stop_seqs` |
+| 惩罚 | `presence_penalty`、`frequency_penalty`、`repetition_penalty` |
+| 思考模型 | `reasoning_effort`(low/medium/high)、`reasoning_tokens` |
+| 流式/超时/重试 | `stream`、`timeout`、`retries`(默认5)、`retry_interval`(默认10) |
+| 概率/私有 | `logprobs`、`top_logprobs`、`extra_body`、`extra_headers` |
+
+> **不传 `--generation-config` 时的内部默认（API 评测，[config.py:387-397](../../evalscope/config.py#L387)）**：只注入 `DEFAULT_TEXT_GEN_SERVICE_CONFIG` = **`{'temperature': 0.0}`**——即**仅发 temperature=0.0**，`top_p` / `top_k` / `max_tokens` / `seed` / `reasoning_effort` 全是 `None` → **不发送**，由模型/服务端自有默认决定；`retries=5` / `retry_interval=10` / `timeout=None` 为 `GenerateConfig` 字段默认。（本地权重评测 `checkpoint` 默认不同：`max_tokens=2048, top_k=50, top_p=1.0, temperature=1.0`，本文打商业 API 用不到。）
+
+**⚠️ 两个坑**：
+1. **必带 `temperature`**：默认只有 `temperature=0.0`，但「**一传 `--generation-config` 就整体替换、不合并**」（[config.py:374](../../evalscope/config.py#L374)），漏写会让它变 `None`（走模型默认、破坏复现）。
+2. **按需删减、别全抄**：`top_p`/`top_k` 在 `temperature=0` 时基本无意义；`reasoning_effort` 只对思考模型有效，非思考模型传了可能报错；`logprobs=True`、`n>1` 会改变输出结构。accuracy 评测最小集通常只需 `temperature=0,max_tokens=...,seed=...,timeout=...`。
+
+### 3.5 Python 代码调用方式（批量对比多供应商）
 
 见 [run_eval.py](./run_eval.py)；用 `TaskConfig` 的扁平字段（`model/api_url/api_key/datasets/limit`）即可，并发靠 `eval_batch_size`（默认 1），超时/跳过靠 `generation_config` + `ignore_errors`。
 
@@ -114,7 +142,13 @@ native 后端的并发开关是 **`--eval-batch-size`**，它直接决定并发�
 from evalscope import run_task, TaskConfig
 
 def eval_vendor(name, api_url, api_key):
-    gen_cfg = {'timeout': 60}  # retries/retry_interval 默认 5 次 / 10s
+    # 生成参数（键名见 generate_config.py）；retries/retry_interval 默认 5 次 / 10s
+    gen_cfg = {
+        'temperature': 0,    # 采样温度；0=贪心（可复现）
+        'top_p': 1.0,        # 核采样；temperature=0 时为空操作，留作可调旋钮
+        # 'reasoning_effort': 'high',  # 思考档位 low/medium/high；仅推理模型可开
+        'timeout': 60,
+    }
     # CMMLU：每科 50 题，16 并发
     run_task(TaskConfig(
         model=name, api_url=api_url, api_key=api_key,
@@ -127,7 +161,7 @@ def eval_vendor(name, api_url, api_key):
         model=name, api_url=api_url, api_key=api_key,
         datasets=['humaneval_plus'],
         sandbox={'enabled': True, 'engine': 'docker'},
-        eval_batch_size=8,
+        eval_batch_size=2,
         generation_config=gen_cfg, ignore_errors=True,
     ))
 

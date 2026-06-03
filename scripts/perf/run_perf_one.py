@@ -29,7 +29,7 @@ from evalscope.perf.main import run_perf_benchmark
 # ============================================================================
 # 1) 唯一需要改动的地方：指定本次压测要跑哪个模型/厂商组合
 # ============================================================================
-ACTIVE = 'v32-bailian'
+ACTIVE = 'deepseek-v4-pro_tencent'
 
 # ============================================================================
 # 2) 厂商与模型配置字典库 (Profiles)
@@ -39,30 +39,38 @@ ACTIVE = 'v32-bailian'
 #    - `api_key_env`: 这里只配环境变量名，千万不要把真实的 API Key 硬编码写在代码里！
 # ============================================================================
 PROFILES = {
-    'v32-tencent': dict(
-        model='deepseek-v3.2',
-        url='https://tokenhub.tencentmaas.com/v1/chat/completions',
-        api_key_env='TENCENT_API_KEY',
-        session_cache=True,
-    ),
-    'v32-bailian': dict(
-        model='glm-5',
-        url='https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
-        api_key_env='DASHSCOPE_API_KEY',
-        session_cache=False,
-    ),
-    'v4pro-tencent': dict(
+    'deepseek-v4-pro_tencent': dict(
         model='deepseek-v4-pro',
         url='https://tokenhub.tencentmaas.com/v1/chat/completions',
         api_key_env='TENCENT_API_KEY',
         session_cache=True,
     ),
-    'v4flash-tencent': dict(
+     'deepseek-v4-pro-202606_tencent': dict(
+        model='deepseek-v4-pro-202606',
+        url='https://tokenhub.tencentmaas.com/v1/chat/completions',
+        api_key_env='TENCENT_API_KEY',
+        session_cache=True,
+    ),
+   
+    'deepseek-v4-flash_tencent': dict(
         model='deepseek-v4-flash',
         url='https://tokenhub.tencentmaas.com/v1/chat/completions',
         api_key_env='TENCENT_API_KEY',
         session_cache=True,
     ),
+    'deepseek-v4-flash-202606_tencent': dict(
+        model='deepseek-v4-flash-202606',
+        url='https://tokenhub.tencentmaas.com/v1/chat/completions',
+        api_key_env='TENCENT_API_KEY',
+        session_cache=True,
+    ),
+     'deepseek-v4-pro_aliyun': dict(
+        model='deepseek-v4-pro',
+        url='https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+        api_key_env='DASHSCOPE_API_KEY',
+        session_cache=False,
+    ),
+
 }
 
 # 数据集双轨制（由下面的 offset 自动决定用哪个）
@@ -74,6 +82,8 @@ POOL_DATASET = 'outputs/agentic_pool.json'
 # ============================================================================
 # 3) 控制变量法的核心地带 (FIXED) ———— 绝对禁止修改！
 #    只有保证所有厂商吃到的参数和数据一模一样，性能对比才有说服力。
+#    【不传时 perf 内部默认 (Arguments)】temperature=0.0 / max_tokens=2048 / stream=True / total_timeout=6h;
+#       top_p / top_k / seed / reasoning_effort 默认 None = 不发送, 由服务端自有默认决定。下面显式写出是为锁死可复现。
 # ============================================================================
 FIXED = dict(
     api='openai',                                   # 必须是 openai 兼容模式，才能保住咱们的特殊请求体注入
@@ -83,9 +93,10 @@ FIXED = dict(
     number=10,                                      # 每次只跑 10 条独立的对话 Session
     max_tokens=16384,                               # 配合长文本自然截断，不用商业模型不支持的 ignore_eos
     seed=42,                                        # 锁死随机种子
-    temperature=0.0,
+    temperature=0.0,                                # 采样温度；0=贪心(可复现)。要调就改这里
+    top_p=0.95,                                      # 核采样；temperature=0 时为空操作，留作可调旋钮
     stream=True,                                    # 必须开启流式，否则算不出首字延迟 TTFT
-    extra_args={'reasoning_effort': 'high'},        # 开启深度思考模式，云厂商都认这个字段
+    extra_args={'reasoning_effort': 'high'},        # 深度思考档位(low/medium/high)；非原生字段，走 extra_args 注入请求体。非推理模型请删掉此行
     read_timeout=300,                               # 读超时 300s：reasoning=high 单轮常需数十秒~分钟，60s 会误杀
     no_test_connection=True,
     no_timestamp=True,

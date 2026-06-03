@@ -12,22 +12,20 @@
 你是本地定时调度智能体。请在仓库 d:\MyCodes\Trae\evalscope 下，为 longalpaca 商业 API 性能压测建立每天三次的定时自动任务：每个任务到点自动执行压测并整理成归档报告。环境是 Windows + PowerShell。
 
 【一、创建三个每日定时任务】
-用你自己的定时机制创建下面 3 个「每天重复触发」的任务。三个任务做的事完全一样（见「二」），唯一区别是 offset：
+用你自己的定时机制创建下面 3 个「每天重复触发」的任务。三个任务做的事完全一样（见「二」），只是触发时间不同：
 
-  | 任务名                  | 触发时间    | offset |
-  |-------------------------|------------|git--------|
-  | longalpaca-bench-2100   | 每天 21:00 | 500    |
-  | longalpaca-bench-0400   | 每天 04:00 | 1000   |
-  | longalpaca-bench-1500   | 每天 15:00 | 1500   |
-
-三档 offset 取互不重叠的数据，避免三次之间蹭到彼此残留的服务端缓存（每轮消耗 262 条，间隔 500 > 262，区间不重叠）。
+  | 任务名                  | 触发时间    |
+  |-------------------------|------------|
+  | longalpaca-bench-2100   | 每天 21:00 |
+  | longalpaca-bench-0400   | 每天 04:00 |
+  | longalpaca-bench-1500   | 每天 15:00 |
 
 【二、每个任务到点要执行的完整流程】
 profile 固定 deepseek-v4-flash-bailian（要换模型/厂商就改这个值；profile 已在脚本 PROFILES 里登记）。
 
-1) 执行压测——切到仓库根目录，运行下面命令，<offset> 用该任务对应的值：
-       python scripts/perf/run_longalpaca_bench.py deepseek-v4-flash-bailian <offset>
-   说明：脚本已把所有保证公平的参数（数据集/梯队/截断/流式/预热）固化好，API Key 从环境变量 DASHSCOPE_API_KEY 读，不要把明文 key 写进命令。
+1) 执行压测——切到仓库根目录，运行：
+       python scripts/perf/run_longalpaca_bench.py deepseek-v4-flash-bailian
+   说明：脚本已把所有保证公平的参数（数据集/梯队/截断/流式/预热/数据游标）固化好，API Key 从环境变量 DASHSCOPE_API_KEY 读，不要把明文 key 写进命令。
 
 2) 定位输出——本次结果落在：
        results/longalpaca/<最新时间戳目录>/longalpaca_deepseek-v4-flash-bailian/
@@ -45,7 +43,7 @@ profile 固定 deepseek-v4-flash-bailian（要换模型/厂商就改这个值；
 4) 异常处理——命令报错或大量请求失败（鉴权失败/超时/限流 429 等）时，不要伪造数据，原样保留关键报错日志和失败统计，并说明可能原因。
 
 【三、建完回执】
-三个任务创建完成后，把任务清单（名称 + 触发时间 + offset）回给我确认，并说明如何查看 / 取消这些任务。
+三个任务创建完成后，把任务清单（名称 + 触发时间）回给我确认，并说明如何查看 / 取消这些任务。
 ```
 
 ---
@@ -64,5 +62,5 @@ profile 固定 deepseek-v4-flash-bailian（要换模型/厂商就改这个值；
 
 - **profile（模型 × 厂商）**：默认 `deepseek-v4-flash-bailian`。换组合时把提示词「二」里的 profile 和归档文件名一起改。profile 需先在 [run_longalpaca_bench.py](../../scripts/perf/run_longalpaca_bench.py) 的 `PROFILES` 里登记（已内置 bailian / tencent × deepseek-v4-flash / v3.2 四个）。
 - **为什么 profile 要带厂商名**：同一款模型常在多家厂商都有。输出路径是 `results/longalpaca/<时间戳>/longalpaca_<profile>/`，profile 带厂商（`...-bailian` / `...-tencent`）才能保证**同一模型不同厂商并发跑也不撞目录**（否则 evalscope 发现 `benchmark_data.db` 已存在会直接退出）。
-- **每个时段用不同 offset**：21 点档=500、凌晨 4 点档=1000、15 点档=1500。三档取互不重叠的数据，确保即使前一档的服务端缓存还没过期，下一档也打的是全新语料。同档每天用同一 offset，相隔约 24 小时缓存已过期，方便做「同一时段的日间趋势对比」。
-- **想手动跑某一档**：直接 `python scripts/perf/run_longalpaca_bench.py deepseek-v4-flash-bailian 500`，只是少了 hermes 那步自动归档与点评。
+- **数据游标固定**：三档都用脚本内置的默认 offset（500，跳过前 500 条避开历史缓存），不再按时段区分。三次间隔 6~11 小时，服务端前缀缓存早已过期，用同一批数据反而便于跨时段直接对比。若某次想复测错开数据，再单独给脚本传第二个参数即可。
+- **想手动跑一次**：直接 `python scripts/perf/run_longalpaca_bench.py deepseek-v4-flash-bailian`，只是少了 hermes 那步自动归档与点评。

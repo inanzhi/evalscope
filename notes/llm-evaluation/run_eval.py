@@ -10,8 +10,16 @@ from evalscope import run_task, TaskConfig
 
 
 def eval_one_vendor(model_name: str, api_url: str, api_key: str):
-    # 单次请求超时 60s; retries/retry_interval 沿用默认 5 次 / 10s
-    gen_cfg = {'timeout': 60}
+    # 生成参数(可自行修改); 键名见 evalscope/api/model/generate_config.py
+    #   单次请求超时 60s; retries/retry_interval 沿用默认 5 次 / 10s
+    # 【不传 generation_config 时内部默认(API评测)】仅注入 temperature=0.0; top_p/max_tokens/seed/reasoning_effort 不发,走服务端默认。
+    #   ⚠️ 一旦传 generation_config 就整体替换、不合并, 必须把 temperature 一起带上。
+    gen_cfg = {
+        'temperature': 0,    # 采样温度; 0=贪心(可复现)
+        'top_p': 1.0,        # 核采样; temperature=0 时为空操作, 留作可调旋钮
+        # 'reasoning_effort': 'high',  # 思考档位 low/medium/high; 仅推理模型可开, Qwen2.5 等非推理模型开了会报错
+        'timeout': 60,
+    }
 
     # ---- CMMLU 微缩版: 每科 50 题, 自动 3350 题, 可复现 ----
     run_task(TaskConfig(

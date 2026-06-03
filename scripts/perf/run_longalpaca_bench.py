@@ -71,11 +71,16 @@ PROFILES = {
 # ============================================================================
 # 2) 控制变量法的核心地带 (FIXED) ———— 绝对禁止修改！
 #    只有保证所有厂商/时段吃到的参数和数据一模一样，性能对比才有说服力。
+#    【不传时 perf 内部默认 (Arguments)】temperature=0.0 / max_tokens=2048 / stream=True / total_timeout=6h;
+#       top_p / top_k / seed / reasoning_effort 默认 None = 不发送, 由服务端自有默认决定。下面显式写出是为锁死可复现。
 # ============================================================================
 FIXED = dict(
     dataset='longalpaca',                           # 真实长文本语料(>6000 tokens)，不用 random 避免乱码触发 EOS
     dataset_offset=500,                             # 跳过前 500 条，杜绝服务端 KV-Cache 命中(复测可命令行覆盖)
     max_tokens=512,                                 # 强制截断天花板，拉齐各模型输出量级，保证 TPOT 公平
+    temperature=0.0,                                # 采样温度；0=贪心(可复现)。要调就改这里
+    top_p=1.0,                                      # 核采样；temperature=0 时为空操作，留作可调旋钮
+    # extra_args={'reasoning_effort': 'high'},      # 深度思考档位(low/medium/high)；非原生字段，走 extra_args 注入请求体。仅推理模型可开，非推理模型开了会报错
     parallel=[1, 8, 16],                            # 并发梯队：单点极限速度 / 8 并发 / 16 并发吞吐
     number=[20, 80, 160],                           # 各梯队总请求量；梯队间数据也不重复
     stream=True,                                    # 必须开启流式，否则算不出首字延迟 TTFT

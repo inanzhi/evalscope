@@ -44,14 +44,24 @@
 > 3. **后续增量聚合 (第二轮及以后)**：接着往下读 User 消息，每攒够 `--subsequent-turn-length`（比如 1024 Token）的长度，就作为新的一轮发出去。
 > 4. **丢弃短数据**：如果某条原始数据的文本不够长，凑不齐你要求的 `--min-turns`（最小轮数），脚本会直接把它抛弃，保证最终生出来的 10 条测试数据每一条都极其严谨、饱满。
 
-**操作说明**：通过自带脚本，预构建 JSON 测试集。
+**操作说明**：通过自带脚本，预构建 JSON 测试集。建议**一次把两份都生成好**——小集做横向对比、大池子做同模型复测：
+
 ```bash
+# ① 小集（10 条）：跨厂商/模型横向对比用，所有人第一把都吃这 10 条
 python scripts/perf/build_swe_smith_dataset.py \
   --model-path Qwen/Qwen2.5-7B-Instruct \
   --first-turn-length 8192 --subsequent-turn-length 1024 \
   --min-turns 4 --max-turns 12 --number 10 \
   --output-path outputs/agentic_dataset.json --seed 42
+
+# ② 大池子（近万条）：复测同模型时按 offset 取不相交子集用。仅 --number 与 --output-path 不同，其余必须与小集一致
+python scripts/perf/build_swe_smith_dataset.py \
+  --model-path Qwen/Qwen2.5-7B-Instruct \
+  --first-turn-length 8192 --subsequent-turn-length 1024 \
+  --min-turns 4 --max-turns 12 --number 10000 \
+  --output-path outputs/agentic_pool.json --seed 42
 ```
+> 两份务必用**相同的轮长/轮数参数**生成，保证小集和大池子里的对话同构、可比（凑不齐长度的会被丢弃，所以实际条数会略少于 `--number`）。
 
 ### Step 2: 编写单例运行脚本 (`scripts/perf/run_perf_one.py`)
 因为多轮测试参数多且复杂，推荐使用 Python 脚本固定公共参数，每次只改顶部几行：
@@ -66,11 +76,42 @@ dataset_offset = 0                # 同模型复测时，每次加 10
 # ===== 全程固定参数（保证公平） =====
 # api='openai', dataset='swe_smith', dataset_path='outputs/agentic_dataset.json'
 # multi_turn=True, parallel=1, number=10, max_tokens=16384
-# extra_args={'reasoning_effort': 'high'}  # 开启深度思考
+# 生成参数（可自行修改，键名见 evalscope/perf/arguments.py）：
+#   temperature=0.0   # 采样温度；0=贪心（可复现）
+#   top_p=1.0         # 核采样；temperature=0 时为空操作，留作可调旋钮
+#   extra_args={'reasoning_effort': 'high'}  # 思考档位 low/medium/high；非原生字段，走 extra_args 注入请求体。非推理模型请删掉
 ```
+
+> **不传时 perf 的内部默认（[arguments.py](../../evalscope/perf/arguments.py#L281)）**：硬默认 `temperature=0.0`、`max_tokens=2048`、`stream=True`、`total_timeout=6h`；`top_p` / `top_k` / `seed` / `reasoning_effort` 默认 `None` → **不发送**，由服务端自有默认决定。脚本里显式写 `max_tokens=16384`、`seed=42`、`extra_args=reasoning_effort` 就是为覆盖这些默认、锁死可复现。
 
 ### Step 3: 执行与指标验收
 执行 `python scripts/perf/run_perf_one.py`，查看跑出的结果。
+
+### Step 3.1: 小集 vs 大池子——什么时候用哪个、命令怎么写
+
+`run_perf_one.py` 的**第二个参数 `offset` 会自动决定用哪份数据**，你不用手动改 `--dataset-path`：
+
+| 用途 | offset | 自动选用的数据 | 落盘目录 |
+| --- | --- | --- | --- |
+| **横向对比**不同厂商/模型（第一把都用它，绝对公平） | `0`（默认，不传） | 小集 `outputs/agentic_dataset.json`（10 条） | `results/<profile>` |
+| **复测同一(模型,厂商)** 取平均（防残留缓存让命中率虚高） | `>0` | 大池子 `outputs/agentic_pool.json`（近万条） | `results/<profile>-off<N>` |
+
+**① 横向对比（小集）——不传 offset：**
+```powershell
+python scripts/perf/run_perf_one.py deepseek-v4-pro_tencent
+```
+
+**② 复测同模型（大池子）——传 offset > 0：**
+每轮跑 `number=10` 条，从 offset 起取 10 条（`offset .. offset+9`）。复测时每次 **+10** 取完全不重叠的新一批：
+```powershell
+python scripts/perf/run_perf_one.py deepseek-v4-pro_tencent 10   # 第 10~19 条 → results/...-off10
+python scripts/perf/run_perf_one.py deepseek-v4-pro_tencent 20   # 第 20~29 条 → results/...-off20
+python scripts/perf/run_perf_one.py deepseek-v4-pro_tencent 30   # 第 30~39 条 → results/...-off30
+```
+
+- offset **必须 > 0** 才会切到大池子（`=0` 会退回小集）；取 **10 的倍数** 才能整批不重叠。
+- 上限 `offset + 10 ≤ 池子条数`（当前 9549），即 offset 最大约 **9539**，够测几百轮互不蹭缓存。
+- ⚠️ **铁律**：不同厂商/模型**横向对比时绝不要换 offset**，都用小集（offset=0）才最公平；只有**同一(模型,厂商)复测取平均**时才换 offset。
 
 ---
 
