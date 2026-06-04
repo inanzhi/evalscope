@@ -15,7 +15,6 @@ Public surface:
 from .config_builder import (
     build_docker_image,
     build_sandbox_config,
-    default_docker_build_context,
     merge_sandbox_config_dicts,
     should_build_docker_image,
 )
@@ -30,7 +29,6 @@ __all__ = [
     'build_and_acquire_pool_sync',
     'build_docker_image',
     'build_sandbox_config',
-    'default_docker_build_context',
     'get_enclave_types',
     'get_sandbox_service',
     'merge_sandbox_config_dicts',
