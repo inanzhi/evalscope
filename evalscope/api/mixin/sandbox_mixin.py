@@ -17,7 +17,6 @@ from evalscope.api.sandbox import (
     SandboxEngine,
     build_and_acquire_pool_sync,
     build_docker_image,
-    default_docker_build_context,
     get_sandbox_service,
     merge_sandbox_config_dicts,
     resolve_engine,
@@ -66,11 +65,20 @@ class SandboxBackend(ABC):
 class EnclaveSandboxBackend(SandboxBackend):
     """ms_enclave-backed sandbox backend delegating to :class:`SandboxService`."""
 
-    def __init__(self, benchmark_meta: 'BenchmarkMeta', task_config: 'TaskConfig'):
+    def __init__(
+        self,
+        benchmark_meta: 'BenchmarkMeta',
+        task_config: 'TaskConfig',
+        use_custom_image: bool = False,
+        build_context: Optional[tuple] = None,
+    ):
         super().__init__(benchmark_meta, task_config)
         self._pool_handle: Optional[PoolHandle] = None
         self._pool_size: int = self._resolve_pool_size()
-        self._use_custom_image: bool = False
+        self._use_custom_image: bool = use_custom_image
+        # ``(build_context_path, dockerfile)`` resolved from the owning adapter's
+        # ``get_build_context()``; ``None`` when the benchmark ships no custom image.
+        self._build_context: Optional[tuple] = build_context
 
     def _resolve_pool_size(self) -> int:
         if not self._task_config:
@@ -92,10 +100,18 @@ class EnclaveSandboxBackend(SandboxBackend):
         if engine is SandboxEngine.DOCKER:
             image = sandbox_cfg_dict.get('image')
             if self._use_custom_image and image and should_build_docker_image(image):
-                logger.info(f'Building sandbox image: {image}')
-                build_ctx, dockerfile = default_docker_build_context()
-                build_docker_image(image, path=build_ctx, dockerfile=dockerfile)
-                logger.info(f'Sandbox image built: {image}')
+                if not self._build_context:
+                    logger.warning(
+                        f'Sandbox image {image!r} is not available locally and the benchmark '
+                        f'requests a custom image, but no build context was provided; '
+                        f'sandbox creation will fail. Build the image manually or check '
+                        f'the adapter\'s get_build_context().'
+                    )
+                else:
+                    build_ctx, dockerfile = self._build_context
+                    logger.info(f'Building sandbox image {image!r} from {build_ctx}')
+                    build_docker_image(image, path=build_ctx, dockerfile=dockerfile)
+                    logger.info(f'Sandbox image built: {image}')
 
         self._pool_handle = build_and_acquire_pool_sync(
             engine=engine,
@@ -209,8 +225,31 @@ class SandboxMixin:
     def _get_backend(self) -> SandboxBackend:
         if self._backend:
             return self._backend
-        self._backend = EnclaveSandboxBackend(self._benchmark_meta, self._task_config)
+        self._backend = EnclaveSandboxBackend(
+            self._benchmark_meta,
+            self._task_config,
+            use_custom_image=getattr(self, '_use_custom_image', False),
+            build_context=self._resolve_build_context(),
+        )
         return self._backend
+
+    def _resolve_build_context(self) -> Optional[tuple]:
+        """Resolve the docker build context advertised by the owning adapter.
+
+        Benchmarks that ship a custom image (e.g. humaneval_plus, scicode) set
+        ``_use_custom_image = True`` and implement ``get_build_context()``.  The
+        base mixin does neither, so both lookups degrade gracefully to ``None``.
+        """
+        if not getattr(self, '_use_custom_image', False):
+            return None
+        get_ctx = getattr(self, 'get_build_context', None)
+        if not callable(get_ctx):
+            return None
+        try:
+            return get_ctx()
+        except Exception as exc:
+            logger.warning(f'Failed to resolve docker build context: {exc}')
+            return None
 
     @thread_safe
     def ensure_sandbox_ready(self) -> bool:

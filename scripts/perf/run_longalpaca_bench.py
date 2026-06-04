@@ -7,66 +7,78 @@
 设计目标：定时智能体只需运行一条命令即可，无需改代码。所有保证公平对比的"死规定"参数放在 FIXED 里，别动。
 
 【为什么用 (厂商,模型) 双维度的 profile 而不是只传模型名】
-    同一款模型常常在多家厂商都能跑(如 deepseek-v3.2 在腾讯云和阿里百炼都有)。
+    同一款模型常常在多家厂商都能跑(如 deepseek-v4-pro 在腾讯云和阿里云都有)。
     若输出目录/结果名只带模型名，两家厂商并发跑同一模型会落到同一路径 → 撞车
     (evalscope 发现 benchmark_data.db 已存在会直接退出)。
-    因此这里用 "<model>-<vendor>" 作为 profile key，并据此拼 name 与输出目录，
+    因此这里用 "<model>_<vendor>" 作为 profile key，并据此拼 name 与输出目录，
     保证 (厂商,模型) 维度唯一，哪怕同一秒并发启动也不冲突。
 
+【输出目录带 offset，支持同模型多次/多档并发】
+    结果名拼成 longalpaca_<profile>_offset-<offset>，把数据游标也写进目录名。
+    这样即便同一 profile 用不同 offset 复测、或多档并发，也各自独立不撞目录。
+
+【同时跑多个模型】
+    每个 profile 各跑一条命令即可并发，互不干扰(name 带 profile+offset 唯一)。例如:
+        python scripts/perf/run_longalpaca_bench.py deepseek-v4-pro_aliyun 10
+        python scripts/perf/run_longalpaca_bench.py deepseek-v4-pro_tencent 10
+    两条可同时(两个终端或后台)启动，分别落到各自目录。
+
 如何运行：
-    python scripts/perf/run_longalpaca_bench.py                                # 用默认 profile ACTIVE
-    python scripts/perf/run_longalpaca_bench.py deepseek-v4-flash-bailian      # 指定 profile(模型-厂商)
-    python scripts/perf/run_longalpaca_bench.py deepseek-v4-flash-bailian 600  # 第2个参数覆盖 dataset_offset
+    python scripts/perf/run_longalpaca_bench.py                              # 用默认 profile ACTIVE
+    python scripts/perf/run_longalpaca_bench.py deepseek-v4-pro_aliyun       # 指定 profile(模型_厂商)
+    python scripts/perf/run_longalpaca_bench.py deepseek-v4-pro_aliyun 10    # 第2个参数覆盖 dataset_offset
+
+【怎么加一个要测的模型】
+    profile 名固定写成 "<模型名>_<厂商名>"，往下面的 PROFILES 列表加一行字符串即可。
+    模型名/厂商/URL/Key 全自动推导：模型名 = 最后一个下划线之前那段，厂商 = 之后那段，
+    URL 和 API Key 来自 run_perf_one.py 里集中维护的 VENDORS(填一次处处引用)。
+    例如要测腾讯云的新模型 foo-bar，加一行 'foo-bar_tencent' 即可。
 
 前置要求：
-    - 对应厂商的 API Key 环境变量已设置(见各 profile 的 api_key_env)。
+    - 厂商 URL 与 API Key 已在 run_perf_one.py 的 VENDORS 里填好(本脚本直接 import 复用，无需设环境变量)。
     - 已安装 evalscope，且本机能联通目标 API。
 
 输出：
-    每次运行落盘到 results/longalpaca/<时间戳>/longalpaca_<profile>/，目录内含
+    每次运行落盘到 results/longalpaca/<时间戳>/longalpaca_<profile>_offset-<offset>/，目录内含
     benchmark.log、HTML 报告、以及各并发档(parallel_*/)的 benchmark_data.db。
-    profile 里带了厂商名，所以不同厂商跑同一模型也各自独立、互不覆盖。
+    name 带厂商名 + offset，所以不同厂商跑同一模型、或同模型不同 offset 都各自独立、互不覆盖。
 """
 
 import os
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # 确保能 import 同目录的 run_perf_one
+
 from evalscope.perf.arguments import Arguments
 from evalscope.perf.main import run_perf_benchmark
+from run_perf_one import VENDORS  # 厂商 URL+Key 集中在 run_perf_one.py 填一次，这里复用同一份
 
 # ============================================================================
-# 1) 厂商 × 模型配置库 (Profiles)
-#    key 用 "<model>-<vendor>"，会直接进结果名和输出目录，保证 (厂商,模型) 唯一。
-#    测新组合就在这里加一项；api_key_env 只配环境变量名，千万别硬编码真实 key！
+# 1) 要测的 profile 清单。profile 名 = "<模型名>_<厂商名>"。
+#    加模型 = 在这里加一行字符串即可；模型名/厂商/URL/Key 全自动推导(见 _resolve)。
+#    厂商名(最后一个下划线之后那段)必须已在 run_perf_one.py 的 VENDORS 里登记。
 # ============================================================================
-ACTIVE = 'deepseek-v4-flash-bailian'                                 # 默认跑哪个 profile
+ACTIVE = 'deepseek-v4-pro_aliyun'                                    # 默认跑哪个 profile
 
-PROFILES = {
-    'deepseek-v4-flash-bailian': dict(
-        vendor='bailian',
-        model='deepseek-v4-flash',
-        url='https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
-        api_key_env='DASHSCOPE_API_KEY',
-    ),
-    'deepseek-v4-flash-tencent': dict(
-        vendor='tencent',
-        model='deepseek-v4-flash',
-        url='https://tokenhub.tencentmaas.com/v1/chat/completions',
-        api_key_env='TENCENT_API_KEY',
-    ),
-    'deepseek-v3.2-bailian': dict(
-        vendor='bailian',
-        model='deepseek-v3.2',
-        url='https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
-        api_key_env='DASHSCOPE_API_KEY',
-    ),
-    'deepseek-v3.2-tencent': dict(
-        vendor='tencent',
-        model='deepseek-v3.2',
-        url='https://tokenhub.tencentmaas.com/v1/chat/completions',
-        api_key_env='TENCENT_API_KEY',
-    ),
-}
+PROFILES = [
+    'deepseek-v4-pro_aliyun',
+    'deepseek-v4-pro_tencent',
+    'deepseek-v4-flash_aliyun',
+    'deepseek-v4-flash_tencent',
+    'deepseek-v3.2_aliyun',
+    'deepseek-v3.2_tencent',
+]
+
+
+def _resolve(profile):
+    """把 profile 名("<模型名>_<厂商名>")拆成 (模型名, 厂商名, 厂商配置)。
+    厂商名取最后一个下划线之后的部分，其余为模型名；URL / api_key 来自 VENDORS[厂商名]。"""
+    if profile not in PROFILES:
+        sys.exit(f"未知的 profile '{profile}'。请从以下选项中挑一个: {', '.join(PROFILES)}")
+    model, _, vendor = profile.rpartition('_')
+    if vendor not in VENDORS:
+        sys.exit(f"profile '{profile}' 的厂商 '{vendor}' 没在 VENDORS 里登记。可选厂商: {', '.join(VENDORS)}")
+    return model, vendor, VENDORS[vendor]
 
 # ============================================================================
 # 2) 控制变量法的核心地带 (FIXED) ———— 绝对禁止修改！
@@ -95,28 +107,24 @@ def main():
     active = sys.argv[1] if len(sys.argv) > 1 else ACTIVE
     offset = int(sys.argv[2]) if len(sys.argv) > 2 else FIXED['dataset_offset']
 
-    if active not in PROFILES:
-        sys.exit(f"未知的 profile '{active}'。请从以下选项中挑一个: {', '.join(PROFILES)}")
-    p = PROFILES[active]
-
-    api_key = os.environ.get(p['api_key_env'])
-    if not api_key:
-        sys.exit(f"没找到环境变量 {p['api_key_env']}(跑 '{active}' 必须先设置好这个 API Key)。")
+    # 从 profile 名自动拆出 模型/厂商，并取出该厂商的 URL / Key
+    model, vendor, v = _resolve(active)
 
     fixed = dict(FIXED)
     fixed['dataset_offset'] = offset
 
+    run_name = f'longalpaca_{active}_offset-{offset}'   # active=<model>_<vendor>，再带 offset，保证 (厂商,模型,offset) 唯一
     task = Arguments(
-        model=p['model'],
-        url=p['url'],
-        api_key=api_key,
-        name=f'longalpaca_{active}',                # active=<model>-<vendor>，进结果名/输出子目录，保证 (厂商,模型) 唯一
+        model=model,
+        url=v['url'],
+        api_key=v['api_key'],
+        name=run_name,
         **fixed,
     )
 
     print(f"[run_longalpaca_bench] 准备发车！\n"
-          f"profile={active} | 模型={p['model']} | 厂商={p['vendor']} | URL={p['url']} | 游标Offset={offset}\n"
-          f"结果落盘根目录={fixed['outputs_dir']}/<时间戳>/longalpaca_{active}/")
+          f"profile={active} | 模型={model} | 厂商={vendor} | URL={v['url']} | 游标Offset={offset}\n"
+          f"结果落盘根目录={fixed['outputs_dir']}/<时间戳>/{run_name}/")
 
     run_perf_benchmark(task)
 

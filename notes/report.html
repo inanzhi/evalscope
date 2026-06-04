@@ -54,60 +54,60 @@
 <div class="wrap">
 
 <header>
-  <h1>EvalScope 评测与压测方案汇报</h1>
-  <div class="sub">面向商业大模型 API 的横向对比，覆盖四个维度的对齐：<b>LLM 效果对齐</b>、<b>VLM 多模态对齐</b>、<b>性能对齐</b>、<b>缓存对齐</b>，统一思路是「控制变量、绝对公平、可复现」。</div>
+  <h1>EvalScope 评测与压测方案</h1>
+  <div class="sub">面向商业大模型 API 的横向对比评测，覆盖四个维度：<b>LLM 效果</b>、<b>VLM 多模态</b>、<b>推理性能</b>、<b>缓存复用</b>。统一原则为控制变量、公平对齐、结果可复现。</div>
   <div class="toc">
-    <a href="#s1"><div class="k">效果对齐</div><div class="t">LLM 微缩测试集</div></a>
-    <a href="#s2"><div class="k">多模态对齐</div><div class="t">VLM 分层抽样/全量</div></a>
-    <a href="#s3"><div class="k">性能对齐</div><div class="t">单轮长文本</div></a>
-    <a href="#s4"><div class="k">缓存对齐</div><div class="t">多轮缓存命中率</div></a>
+    <a href="#s1"><div class="k">效果评测</div><div class="t">LLM 知识与逻辑</div></a>
+    <a href="#s2"><div class="k">多模态评测</div><div class="t">VLM 分层抽样</div></a>
+    <a href="#s3"><div class="k">性能压测</div><div class="t">单轮长文本</div></a>
+    <a href="#s4"><div class="k">缓存压测</div><div class="t">多轮缓存命中率</div></a>
   </div>
 </header>
 
 <!-- ===================== 1. LLM ===================== -->
 <section id="s1">
-  <h2><span class="num">1</span>LLM 极简均衡测试集</h2>
-  <div class="lead">目标：用极少题量快速摸底不同供应商模型的「中文知识 + 数理逻辑」上限，省调用成本与时间。</div>
+  <h2><span class="num">1</span>LLM 效果评测集</h2>
+  <div class="lead">目标：以较小题量快速评估各供应商模型在「中文知识 + 数理逻辑」两个维度的能力上限，控制调用成本与时间。</div>
 
   <div class="card">
-    <h3>选型：一文一理的黄金组合</h3>
+    <h3>数据集选型：文理双维</h3>
     <ul>
-      <li><b>CMMLU</b>：67 个中国本土学科，测<b>中文知识广度。</b></li>
-      <li><b>HumanEvalPlus</b>：在 HumanEval 上加数万严苛用例，测<b>硬核编程逻辑</b>，沙盒一跑漏洞原形毕露。</li>
+      <li><b>CMMLU</b>：覆盖 67 个中国本土学科，评估中文知识广度。</li>
+      <li><b>HumanEvalPlus</b>：在 HumanEval 基础上扩充数万条测试用例，评估编程逻辑，经沙盒执行验证代码正确性。</li>
     </ul>
   </div>
 
   <div class="card">
-    <h3>核心策略：按学科分层截断</h3>
+    <h3>抽样策略：按学科分层截断</h3>
     <ul>
-      <li>EvalScope 原生后端把 CMMLU 拆成 67 个学科子集，<code>--limit</code> <b>对每个子集单独截断</b> → 天然分层均衡。</li>
-      <li>每科取 50 题 → <b>3350 题</b>；固定随机种子可复现，零文件操作，学科权重完美保留。</li>
-      <li>HumanEvalPlus 仅 164 题、成本极低，<b>保持全量</b>，并开 Docker 沙盒安全执行生成代码。</li>
+      <li>EvalScope 原生后端将 CMMLU 拆分为 67 个学科子集，<code>--limit</code> 对每个子集单独截断，实现分层均衡。</li>
+      <li>每科取 50 题，合计 <b>3350 题</b>；固定随机种子保证可复现，无需文件操作，学科权重保持不变。</li>
+      <li>HumanEvalPlus 仅 164 题、成本较低，保持全量评测，并启用 Docker 沙盒安全执行生成代码。</li>
     </ul>
   </div>
 </section>
 
 <!-- ===================== 2. VLM ===================== -->
 <section id="s2">
-  <h2><span class="num">2</span>VLM 分层抽样测试集</h2>
-  <div class="lead">目标：把 1000~2700 题的多模态测试集压到 ~500 题，且<b>能力分布与原集一致</b>。</div>
+  <h2><span class="num">2</span>VLM 多模态评测集</h2>
+  <div class="lead">目标：将 1000~2700 题的多模态测试集压缩至约 500 题，同时保证能力分布与原集一致。</div>
 
   <div class="card">
-    <h3>核心痛点与解法</h3>
+    <h3>问题与方案</h3>
     <ul>
-      <li><b>痛点</b>：测试集按类别集中排序，框架的 <code>limit</code> 是「全局前 N 条」→ 可能某些类别一题没抽到，维度失衡。</li>
-      <li><b>解法</b>：读本地 TSV，按<b>类别列</b>（如能力类别 / 任务类型 / 场景，自动探测）做<b>等比例分层抽样</b>（固定随机种子），存回原文件名喂给框架。</li>
-      <li><b>可复现</b>：任何机器抽到完全相同的 ~500 题；自动备份全量，避免反复抽样越缩越小。</li>
+      <li><b>问题</b>：测试集按类别集中排序，框架的 <code>limit</code> 仅取全局前 N 条，可能导致部分类别未被抽样，维度失衡。</li>
+      <li><b>方案</b>：读取本地 TSV，按类别列（能力类别 / 任务类型 / 场景，自动探测）做等比例分层抽样（固定随机种子），存回原文件名供框架读取。</li>
+      <li><b>可复现</b>：任意机器均抽得完全相同的约 500 题；自动备份全量数据，避免重复抽样导致样本持续缩减。</li>
     </ul>
   </div>
 
   <div class="card">
-    <h3>两种跑法：分层微缩 vs. 全量</h3>
+    <h3>两种评测模式：分层抽样与全量</h3>
     <ul>
-      <li><b>分层微缩（默认）</b>：每个集压到 ~500 题，4 个集一起跑，快速画「能力雷达图」做横向对比。</li>
-      <li><b>单个/少数几个数据集全量</b>：只关心某一两个能力时，<b>跳过抽样</b>、直接对选中的集跑全量（不设 limit）——题量虽大但维度最完整，适合定点深测某能力或复核微缩版结论。</li>
+      <li><b>分层抽样（默认）</b>：每个集压缩至约 500 题，4 个集合并评测，用于快速生成能力雷达图做横向对比。</li>
+      <li><b>指定数据集全量</b>：仅关注个别能力维度时，跳过抽样、对选定数据集跑全量评测，维度最完整，适合定点深测或复核抽样版结论。</li>
     </ul>
-    <div class="key">两种跑法<b>共用同一运行器</b>：抽样只是「跑前对 TSV 的预处理」，要全量就<b>不做抽样这一步</b>、直接跑原始数据集即可，命令本身不变。</div>
+    <div class="key">两种模式共用同一运行器：抽样为评测前对 TSV 的预处理步骤，全量评测仅需省略该步骤，命令本身不变。</div>
   </div>
 
   <div class="card">
@@ -119,85 +119,84 @@
       <tr><td>极限推理</td><td><code>MMMU_Pro_10c</code></td><td>单选 <b>10 选项</b>（<code>10c</code> 扩到 10 候选）</td><td>~1730</td><td>学科 / 子领域（<code>subject</code>）</td><td>分层抽 ~500</td></tr>
       <tr><td>视频理解</td><td><code>Video-MME</code></td><td>单选 A–D（每视频 3 题）</td><td>2700（900 视频×3）</td><td>视频时长（<code>duration</code>）</td><td><b>按视频抽</b> ~100 个（~300 题）</td></tr>
     </table>
-    <div class="key"><b>四个集全是单选题</b>——所以 <code>temperature=0</code>（贪心）最合适、可复现，模型只需吐出选项字母，无需大 <code>max_tokens</code>。视频集 <code>Video-MME</code> 须额外开 <code>video_llm=True</code>，可调 <code>nframe</code> / <code>fps</code> / <code>use_subtitle</code>。</div>
-    <div class="note"><b>视频集必须按「视频」抽样、不能按「题」抽样</b>：唯一视频标识列是 <code>video</code>，按它整组挑题；否则每个视频只抽到一两道题，但模型下载+截帧解析整段视频的耗时一点没省，账单照样爆炸。</div>
+    <div class="key">四个集均为单选题，故采用 <code>temperature=0</code>（贪心解码）保证可复现，模型仅需输出选项字母，无需较大的 <code>max_tokens</code>。视频集 <code>Video-MME</code> 须额外启用 <code>video_llm=True</code>，可配置 <code>nframe</code> / <code>fps</code> / <code>use_subtitle</code>。</div>
+    <div class="note"><b>视频集须按「视频」抽样，不可按「题」抽样</b>：唯一视频标识列为 <code>video</code>，须按其整组选题。否则每个视频仅抽到一两道题，而模型下载与截帧解析整段视频的耗时并未减少，调用成本无法节省。</div>
   </div>
 </section>
 
 <!-- ===================== 3. 单轮长文本 ===================== -->
 <section id="s3">
   <h2><span class="num">3</span>单轮长文本性能压测</h2>
-  <div class="lead">目标：横向对比商业 API 的长上下文推理性能，核心看<b>首字延迟 TTFT</b> 与 <b>生成速度 TPOT</b>。</div>
+  <div class="lead">目标：横向对比商业 API 的长上下文推理性能，核心指标为首字延迟（TTFT）与生成速度（TPOT）。</div>
 
   <div class="card">
-    <h3>三大公平性设计</h3>
+    <h3>三项公平性设计</h3>
     <ul>
-      <li><b>数据集用 <code>longalpaca</code></b>：真实长文本（>6000 tok）。不用 <code>random</code>——乱码会让模型立刻 EOS，TPOT 失真。</li>
-      <li><b>防服务端缓存作弊</b>：并发梯队间游标自增不重复；用偏移量错开历史，杜绝 KV/Prefix Cache 命中污染 TTFT。</li>
-      <li><b>对齐生成长度</b>：商业 API 不支持忽略结束符，用统一的最大输出 token 截断天花板，保证 TPOT 可比。</li>
+      <li><b>数据集采用 <code>longalpaca</code></b>：真实长文本（&gt;6000 token）。不采用 <code>random</code>，因无意义字符会触发模型立即 EOS，导致 TPOT 失真。</li>
+      <li><b>防服务端缓存命中干扰</b>：并发梯队间游标自增不重复，并以偏移量错开历史，杜绝 KV / Prefix Cache 命中影响 TTFT。</li>
+      <li><b>对齐生成长度</b>：商业 API 不支持忽略结束符，以统一的最大输出 token 上限截断，保证 TPOT 可比。</li>
     </ul>
   </div>
 
   <div class="card">
     <h3>压测梯队设计</h3>
     <ul>
-      <li><b>并发梯队 1 / 8 / 16</b>：分别测单点极限速度、并发吞吐、极限吞吐；各梯队对应请求量 20 / 80 / 160。</li>
-      <li><b>流式必开</b>：才能精确捕获 TTFT。<b>预热 2 条</b>：暖机排除冷启动，不计入报告。</li>
-      <li>全程发约 <b>262 条</b>互不重复的请求；预热数据也来自数据集并消耗游标 → 全是新鲜语料，彻底杜绝缓存作弊。</li>
+      <li><b>并发梯队 1 / 8 / 16</b>：分别测量单点极限速度、并发吞吐、极限吞吐，各梯队对应请求量 20 / 80 / 160。</li>
+      <li><b>开启流式</b>：以精确捕获 TTFT。<b>预热 2 条</b>：排除冷启动延迟，不计入报告。</li>
+      <li>全程发送约 <b>262 条</b>互不重复的请求；预热数据同样取自数据集并消耗游标，确保全程语料新鲜，杜绝缓存命中干扰。</li>
     </ul>
   </div>
 
   <div class="card">
-    <h3>关键指标（对比时只看归一化值）</h3>
+    <h3>关键指标（对比时仅看归一化值）</h3>
     <table>
       <tr><th>指标</th><th>含义</th></tr>
-      <tr><td><b>TTFT</b></td><td>首字延迟，衡量长 Prompt 的 Prefill 速度（看 P50 / P99）</td></tr>
-      <tr><td><b>TPOT</b></td><td>(总延迟−TTFT) / 输出 token，剔除输出长短影响，<b>最公平的生成速度</b></td></tr>
-      <tr><td><b>RPS / TPS</b></td><td>高并发下的吞吐与算力水位</td></tr>
+      <tr><td><b>TTFT</b></td><td>首字延迟，衡量长 Prompt 的 Prefill 速度（关注 P50 / P99）</td></tr>
+      <tr><td><b>TPOT</b></td><td>(总延迟−TTFT) / 输出 token，剔除输出长短影响，最公平的生成速度指标</td></tr>
+      <tr><td><b>RPS / TPS</b></td><td>高并发下的吞吐量与算力水位</td></tr>
     </table>
-    <div class="note"><b>绝不直接对比总 Latency</b>——它受各模型话术长短影响极大。看平均输出 token 是否都在 500 左右，确认截断已生效、对比基础公平。</div>
+    <div class="note">不直接对比端到端总延迟，因其受各模型输出长短影响较大。应核对平均输出 token 是否均在 500 左右，确认截断生效、对比基础公平。</div>
   </div>
 
   <div class="card">
-    <h3>定时自动化 + 智能体归档</h3>
+    <h3>定时自动化与归档</h3>
     <ul>
-      <li><b>智能体一次搭建、自动跑</b>：把一段「搭建提示词」发给本地定时调度智能体（hermes），它便自行创建 3 个每日重复任务——<code>21:00</code> / <code>04:00</code> / <code>15:00</code>，到点各跑一轮（<b>由智能体的调度机制触发，而非在代码里写死等待</b>），时间戳天然隔离、互不覆盖。</li>
-      <li><b>到点自动整理归档</b>：每次跑完自动定位最新结果目录，按 parallel=1 / 8 / 16 三档提取 TTFT、TPOT（均看 P50 / P99）、RPS、TPS，连同成功 / 失败数沉淀成 <code>notes/perf-commercial-apis/runs/&lt;日期&gt;_&lt;时间&gt;_&lt;profile&gt;.md</code>，并在执行回执里贴表点评是否异常。</li>
-      <li><b>三档用同一批数据</b>：数据游标固定（脚本内置 offset=500），不按时段区分；三次间隔 6~11 小时、服务端前缀缓存早过期，用同批数据反而便于跨时段直接对比。</li>
+      <li><b>定时调度</b>：通过本地定时调度智能体创建 3 个每日任务（<code>21:00</code> / <code>04:00</code> / <code>15:00</code>），到点各执行一轮，时间戳天然隔离、互不覆盖。</li>
+      <li><b>自动归档</b>：每轮完成后自动定位最新结果目录，按 parallel=1 / 8 / 16 三档提取 TTFT、TPOT（P50 / P99）、RPS、TPS 及成功 / 失败数，沉淀为 <code>notes/perf-commercial-apis/runs/&lt;日期&gt;_&lt;时间&gt;_&lt;profile&gt;.md</code>。</li>
+      <li><b>三档共用同批数据</b>：数据游标固定（offset=500）；三次间隔 6~11 小时，服务端前缀缓存已过期，用同批数据便于跨时段直接对比。</li>
     </ul>
-    <div class="note"><b>前置</b>：API Key 须设为持久环境变量（<code>DASHSCOPE_API_KEY</code>，腾讯另需 <code>TENCENT_API_KEY</code>），否则定时任务到点取不到 key 会直接退出。</div>
-    <div class="key">搭建提示词存档于 <code>notes/perf-commercial-apis/scheduled_agent_prompt.md</code>：一次性发给 hermes 即自动建好三个任务；也可自己手动跑脚本，只是少了那步自动归档与点评。</div>
+    <div class="note"><b>前置条件</b>：API Key 须配置为持久环境变量（<code>DASHSCOPE_API_KEY</code>，腾讯云另需 <code>TENCENT_API_KEY</code>），否则定时任务无法取得凭证。</div>
   </div>
 </section>
 
 <!-- ===================== 4. 多轮缓存 ===================== -->
 <section id="s4">
   <h2><span class="num">4</span>多轮对话 KV 缓存命中率压测</h2>
-  <div class="lead">目标：评估服务端在多轮对话中对历史上下文（Prefix Cache）的复用能力——多轮又快又省的关键。</div>
+  <div class="lead">目标：评估服务端在多轮对话中对历史上下文（Prefix Cache）的复用能力，这是多轮场景降本提速的关键。</div>
 
   <div class="card">
     <h3>两个核心指标</h3>
     <table>
       <tr><th>指标</th><th>口径</th><th>意义</th></tr>
-      <tr><td><b>Cache Hit (%)</b></td><td>命中 token ÷ 全部输入 token，<b>按 token 总量加权</b>（含第 1 轮 0%）</td><td>实际省了多少钱 / 算力</td></tr>
-      <tr><td><b>Eligible Cache Hit Rate</b></td><td>剔除第 1 轮与本轮新内容后的命中率</td><td>服务端缓存系统做得有多好</td></tr>
+      <tr><td><b>Cache Hit (%)</b></td><td>命中 token ÷ 全部输入 token，按 token 总量加权（含第 1 轮 0%）</td><td>实际节省的成本与算力</td></tr>
+      <tr><td><b>Eligible Cache Hit Rate</b></td><td>剔除第 1 轮与本轮新内容后的命中率</td><td>服务端缓存系统的实际复用能力</td></tr>
     </table>
-    <div class="key"><b>黄金判真伪</b>：<code>Eligible</code> 死磕 <b>100.00</b> = 服务端没回传，客户端理论估算；跑出 <b>93.00</b> 等非整数 = 走真实命中数据。</div>
+    <div class="key"><b>数据真伪判别</b>：<code>Eligible</code> 恒为 <b>100.00</b> 表示服务端未回传真实数据、为客户端理论估算值；出现 <b>93.00</b> 等非整数则为真实命中数据。</div>
   </div>
 
   <div class="card">
-    <h3>三大对齐机制（跨厂商绝对公平）</h3>
+    <h3>三项对齐机制（保证跨厂商公平）</h3>
     <ul>
-      <li><b>数据集预生成</b>：脚本一次跑出固定的多轮对话（基于 <code>swe_smith</code>，「长首轮 + 尾部增量」纺锤形，最贴 Agent 场景），随机性<b>冻结在文件里</b>，所有厂商吃同一份。</li>
-      <li><b>会话隔离</b>：腾讯云需开会话缓存开关、自动注入会话标识；阿里百炼隐式缓存、无需此参数。</li>
-      <li><b>防复测污染</b>：同模型同厂商重测，用大池子 + 偏移量取不相交子集，避免残留缓存让冷启动虚高。</li>
+      <li><b>数据集预生成</b>：脚本一次性生成固定的多轮对话（基于 <code>swe_smith</code>，呈「长首轮 + 尾部增量」结构，贴近 Agent 场景），随机性固化于文件，所有厂商使用同一份数据。</li>
+      <li><b>会话隔离</b>：腾讯云须开启会话缓存开关并自动注入会话标识；阿里百炼为隐式缓存，无需此参数。</li>
+      <li><b>防复测污染</b>：同模型同厂商重测时，从大数据池按偏移量取不相交子集，避免残留缓存使冷启动命中率虚高。</li>
     </ul>
   </div>
 
 </section>
 
 <footer>
-  统一原则：<b>控制变量 · 绝对公平 · 可复现</b>。能力评测追求「分层均衡 + 低成本摸底」，性能压测追求「杜绝缓存作弊 + 归一化指标」。<br>
+  统一原则：<b>控制变量 · 公平对齐 · 结果可复现</b>。效果评测侧重分层均衡与低成本评估，性能压测侧重杜绝缓存命中干扰与指标归一化。<br>
   源文档：<code>notes/llm-evaluation</code> · <code>notes/vlm-evaluation</code> · <code>notes/perf-commercial-apis</code> · <code>notes/perf-multi-turn-cache</code>
 </footer>
 

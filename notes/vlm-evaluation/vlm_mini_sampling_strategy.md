@@ -36,54 +36,48 @@ VLMEvalKit 后端通过 `eval_config` 嵌套配置驱动（见 [run.py:64-89](..
 
 ## 2. 通用运行器（统一用 eval_config）
 
-把下面存成 `run_vlm.py`。下载、抽样后正式跑，全走它。
+完整运行器见 [run_vlm.py](./run_vlm.py)（结构与凭证组织方式搬自 [run_perf_one.py](../../scripts/perf/run_perf_one.py)）。下载、抽样后正式跑全走它。核心设计：
+
+- **厂商凭证只填一处**：`VENDORS` dict 里每个厂商填一次 `url`(完整 /v1/chat/completions) + `api_key`。
+- **profile 名 = `<模型名>_<厂商名>`**：往 `PROFILES` 加一行即可，模型/厂商/URL/Key/输出目录全自动推导。
+- **输出目录按「模型_厂商」隔离**：`work_dir = outputs/<模型名>_<厂商名>`，同名模型打不同厂商不会互相覆盖（详见下方「多厂商对比」）。
 
 ```python
-# run_vlm.py
-import os
-from evalscope import run_task, TaskConfig
+# run_vlm.py 关键结构（凭证用占位符，真实值见文件）
+VENDORS = {
+    'aliyun':  dict(url='https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', api_key='sk-...'),
+    'tencent': dict(url='https://tokenhub.tencentmaas.com/v1/chat/completions',               api_key='sk-...'),
+}
+PROFILES = ['qwen-vl-max_aliyun', 'qwen-vl-max_tencent']   # 加模型 = 加一行 <模型>_<厂商>
 
-# api_base 必须是「完整」的 /v1/chat/completions；例如百炼：
-#   https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
-API_BASE = os.environ.get('API_URL', 'http://localhost:8000/v1/chat/completions')
-API_KEY = os.environ.get('API_KEY', 'EMPTY')
-MODEL_TYPE = '你的模型名'  # API 请求体里的 model 字段（如 qwen-vl-max）
-
-
-def run_vlm(dataset: str, limit=None, video_llm: bool = False):
+def run_vlm(profile: str, dataset: str, limit=None, video_llm: bool = False):
+    model, vendor, v = _resolve(profile)          # 从 profile 名拆出 模型/厂商/凭证
+    work_dir = f'outputs/{profile}'               # ← 隔离核心：每个 模型_厂商 一个独立目录
     run_task(TaskConfig(
-        eval_backend='VLMEvalKit',
-        work_dir='outputs',
+        eval_backend='VLMEvalKit', work_dir=work_dir,
         eval_config={
-            'data': [dataset],
-            'mode': 'all',          # 推理 + 评测
-            'limit': limit,         # None=全量；下载链路时设 1
-            'reuse': False,
-            'nproc': 16,
-            'ignore': True,         # 跳过失败样本, 不中断整场（默认开）
-            'retry': 3,             # 单条失败重试次数
+            'data': [dataset], 'mode': 'all', 'limit': limit, 'reuse': False,
+            'nproc': 16, 'ignore': True, 'retry': 3,
             'model': [{
-                'type': MODEL_TYPE,
-                'name': 'CustomAPIModel',   # 固定值，必须是 CustomAPIModel
-                'api_base': API_BASE,
-                'key': API_KEY,
-                'temperature': 0.0,         # 采样温度；0=贪心（可复现）。官方文档支持的 model 配置键
-                'top_p': 0.95,               # 核采样；非具名参数→进 BaseAPI.default_kwargs→原样透传成请求体顶层字段。temperature=0 时为空操作，留作可调旋钮
-                # 'reasoning_effort': 'high',  # 思考档位；同 top_p 走 **kwargs 透传进请求体，能否生效取决于目标 API 是否认该字段（OpenAI 兼容推理端点通常认）
-                'max_tokens': 1024,
-                'img_size': -1,
-                'video_llm': video_llm,     # 视频集且要传 video_url 时设 True
+                'type': model,                    # API 请求体里的 model 名 = 结果文件名前缀
+                'name': 'CustomAPIModel',         # 固定值
+                'api_base': v['url'], 'key': v['api_key'],
+                'temperature': 0.0, 'top_p': 0.95, 'max_tokens': 1024, 'img_size': -1,
+                'video_llm': video_llm,
             }],
         },
     ))
-
-
-if __name__ == '__main__':
-    # 例：先下载（limit=1 快速触发），再跑全量/微缩版
-    run_vlm('MMBench_DEV_EN_V11', limit=1)
 ```
 
-> 也可用 CLI：把上面的 `eval_config` 写成 `vlm_config.yaml`（结构见 [vlmevalkit_backend.md](../../docs/zh/user_guides/backend/vlmevalkit_backend.md) 第 3 节），然后 `evalscope eval --eval-config vlm_config.yaml`。
+运行（profile 由命令行 `argv[1]` 覆盖；第 2 个参数可指定单个数据集）：
+
+```bash
+DOWNLOAD=1 python notes/vlm-evaluation/run_vlm.py qwen-vl-max_aliyun   # limit=1 仅触发下载
+python notes/vlm-evaluation/run_vlm.py qwen-vl-max_aliyun              # 跑该 profile 的全部数据集
+python notes/vlm-evaluation/run_vlm.py qwen-vl-max_aliyun MMBench_DEV_EN_V11   # 只跑一个集
+```
+
+> 也可用 CLI：把 `eval_config` 写成 `vlm_config.yaml`（结构见 [vlmevalkit_backend.md](../../docs/zh/user_guides/backend/vlmevalkit_backend.md) 第 3 节），然后 `evalscope eval --eval-config vlm_config.yaml`。
 
 > **这些键在源码里到底怎么处理的（已核实 VLMEvalKit `OpenAIWrapper`=`CustomAPIModel`，见其 `vlmeval/api/gpt.py` 与 `vlmeval/api/base.py`）：**
 >
@@ -112,15 +106,45 @@ VLMEvalKit 后端的并发开关是 `eval_config` 里的 **`nproc`**（并行调
 
 > 超时其实**可控**：`OpenAIWrapper.__init__` 有具名参数 `timeout`（默认 **300s**），在 `model` 配置 dict 里加 `'timeout': 300` 即可透传覆盖（与 `temperature` 等同级）。本方案沿用默认 300s 未显式写，需要时自行加。
 
+#### 多厂商对比：输出目录按「模型_厂商」隔离（VLMEvalKit 没有 `--name`/`model_id`）
+
+**为什么必须隔离**：VLMEvalKit 后端的结果文件名**只由 model 的 `type` 决定**（源码把 `type` 规范化后当结果名，`name` 必须固定是 `CustomAPIModel`，见 [backend_manager.py:65-74](../../evalscope/backend/vlm_eval_kit/backend_manager.py#L65)）。而 `type` 同时又是**请求体里真正发给 API 的 model 名**，不能把厂商后缀塞进去（否则服务端不认）。再加上 VLMEvalKit **不像 native eval 那样自动加时间戳目录**，同名模型打不同厂商若共用一个 `work_dir` 会直接互相覆盖。
+
+**怎么隔离**：`run_vlm.py` 已把 `work_dir` 自动设成 `outputs/<profile>` = `outputs/<模型名>_<厂商名>`，无需手动传。同一款 `qwen-vl-max` 打两家只要 profile 不同即可：
+
+```bash
+python notes/vlm-evaluation/run_vlm.py qwen-vl-max_aliyun     # → outputs/qwen-vl-max_aliyun/
+python notes/vlm-evaluation/run_vlm.py qwen-vl-max_tencent    # → outputs/qwen-vl-max_tencent/
+```
+
+**输出目录结构**（VLMEvalKit 是扁平结构，无时间戳层；下方 `<模型名>` = profile 里 `_厂商` 之前那段）：
+
+```
+outputs/
+└── qwen-vl-max_aliyun/                                   ← work_dir = outputs/<模型_厂商>（隔离层）
+    └── qwen-vl-max/                                      ← 子目录 = type（模型名，: → -、. → _）
+        ├── qwen-vl-max_MMBench_DEV_EN_V11.xlsx           ← 每题原始推理结果
+        ├── qwen-vl-max_MMBench_DEV_EN_V11_acc.csv        ← 准确率汇总（分层分数，最终看这个）
+        └── *.pkl                                         ← 推理缓存（reuse 时复用，重跑要先清掉）
+```
+
+- **和 perf 的 `--name` 不是一回事**：perf 压测用 `--name` 拼「模型_厂商」当 db 名防同秒撞库；VLMEvalKit 这边没有 `--name`，也没有 native eval 的 `model_id`，唯一干净的隔离手段就是 `work_dir`（本脚本已自动用 profile 名生成）。
+- ⚠️ **重跑会跳过推理**：VLMEvalKit 发现 `work_dir/<模型名>/` 下已有结果会**直接跳过推理、只重评测**（[vlmevalkit_backend.md](../../docs/zh/user_guides/backend/vlmevalkit_backend.md) 第 4 节）。想让模型重新推理，先清掉对应目录里的旧结果（或 `.pkl`）。
+
 ### 2.1 先下载全量数据集（生成本地 TSV）
 抽样前要让框架先把原始 `.tsv` 下到 `~/LMUData/`。用 `limit=1` 快速触发即可（首次评测会自动下载）：
 
 ```python
 from run_vlm import run_vlm
+
+PROFILE = 'qwen-vl-max_aliyun'   # 下载与厂商无关，随便用一个已登记的 profile 触发即可
 for ds in ['MMBench_DEV_EN_V11', 'MME-RealWorld-Lite', 'MMMU_Pro_10c']:
-    run_vlm(ds, limit=1)
-run_vlm('Video-MME', limit=1, video_llm=True)
+    run_vlm(PROFILE, ds, limit=1)
+run_vlm(PROFILE, 'Video-MME', limit=1, video_llm=True)
 ```
+
+> 也可直接命令行：`DOWNLOAD=1 python notes/vlm-evaluation/run_vlm.py qwen-vl-max_aliyun`（一次性把所有数据集 limit=1 触发下载）。
+> 抽样（第 3 节）改的是 `~/LMUData/*.tsv`，**厂商无关、只需做一次**；之后每个 profile 各自跑即可。
 
 ---
 
@@ -171,15 +195,15 @@ def resample_tsv(name: str, target: int, seed: int = 42, strata_col: str | None 
 
 ## 4. 各数据集 500 题抽样方案
 
-> 流程统一：① `run_vlm(ds, limit=1)` 触发下载 → ② `resample_tsv(...)` 抽样 → ③ `run_vlm(ds)` 跑微缩版。
+> 流程统一：① `run_vlm(profile, ds, limit=1)` 触发下载 → ② `resample_tsv(...)` 抽样（厂商无关，做一次）→ ③ `run_vlm(profile, ds)` 跑微缩版。下面示例用 `qwen-vl-max_aliyun`，换厂商只改 profile 名。
 
 ### 4.1 基础视力：MMBench_DEV_EN_V11 (~1164 → ~500)
 ```python
 from sample_utils import resample_tsv
 from run_vlm import run_vlm
 
-resample_tsv('MMBench_DEV_EN_V11', target=500)  # 分层列通常是 category（能力类别），自动探测
-run_vlm('MMBench_DEV_EN_V11')                    # 名字不变，底层跑 500 题
+resample_tsv('MMBench_DEV_EN_V11', target=500)         # 分层列通常是 category（能力类别），自动探测；厂商无关，做一次
+run_vlm('qwen-vl-max_aliyun', 'MMBench_DEV_EN_V11')    # 数据集名不变，底层跑抽好的 500 题
 ```
 
 ### 4.2 实景理解：MME-RealWorld-Lite (~2150 → ~500)
@@ -188,7 +212,7 @@ from sample_utils import resample_tsv
 from run_vlm import run_vlm
 
 resample_tsv('MME-RealWorld-Lite', target=500)
-run_vlm('MME-RealWorld-Lite')
+run_vlm('qwen-vl-max_aliyun', 'MME-RealWorld-Lite')
 ```
 
 ### 4.3 极限推理：MMMU_Pro_10c (~1730 → ~500)
@@ -198,7 +222,7 @@ from sample_utils import resample_tsv
 from run_vlm import run_vlm
 
 resample_tsv('MMMU_Pro_10c', target=500)
-run_vlm('MMMU_Pro_10c')
+run_vlm('qwen-vl-max_aliyun', 'MMMU_Pro_10c')
 ```
 
 ### 4.4 视频理解：Video-MME (按视频抽样至 ~300 题)
@@ -243,7 +267,7 @@ sampled = df[df[vid_col].isin(pick)].sort_index()
 sampled.to_csv(original, sep='\t', index=False)
 print(f'✅ Video-MME: 抽中 {len(pick)} 个视频 → {len(sampled)} 题 (标识列={vid_col})')
 
-run_vlm('Video-MME', video_llm=True)  # 名字不变，底层跑抽好的子集
+run_vlm('qwen-vl-max_aliyun', 'Video-MME', video_llm=True)  # 名字不变，底层跑抽好的子集
 ```
 
 > 还原全量：把 `~/LMUData/{name}_FULL.tsv` 覆盖回 `~/LMUData/{name}.tsv` 即可。

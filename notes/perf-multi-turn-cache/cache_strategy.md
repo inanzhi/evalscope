@@ -75,7 +75,7 @@ dataset_offset = 0                # 同模型复测时，每次加 10
 
 # ===== 全程固定参数（保证公平） =====
 # api='openai', dataset='swe_smith', dataset_path='outputs/agentic_dataset.json'
-# multi_turn=True, parallel=1, number=10, max_tokens=16384
+# multi_turn=True, parallel=5（会话级并发，详见 Step 3.3）, number=10, max_tokens=16384
 # 生成参数（可自行修改，键名见 evalscope/perf/arguments.py）：
 #   temperature=0.0   # 采样温度；0=贪心（可复现）
 #   top_p=1.0         # 核采样；temperature=0 时为空操作，留作可调旋钮
@@ -93,8 +93,10 @@ dataset_offset = 0                # 同模型复测时，每次加 10
 
 | 用途 | offset | 自动选用的数据 | 落盘目录 |
 | --- | --- | --- | --- |
-| **横向对比**不同厂商/模型（第一把都用它，绝对公平） | `0`（默认，不传） | 小集 `outputs/agentic_dataset.json`（10 条） | `results/<profile>` |
-| **复测同一(模型,厂商)** 取平均（防残留缓存让命中率虚高） | `>0` | 大池子 `outputs/agentic_pool.json`（近万条） | `results/<profile>-off<N>` |
+| **横向对比**不同厂商/模型（第一把都用它，绝对公平） | `0`（默认，不传） | 小集 `outputs/agentic_dataset.json`（10 条） | `results/<profile>_cache-{on/off}` |
+| **复测同一(模型,厂商)** 取平均（防残留缓存让命中率虚高） | `>0` | 大池子 `outputs/agentic_pool.json`（近万条） | `results/<profile>_offset-<N>_cache-{on/off}` |
+
+> 目录尾巴的 `_cache-on` / `_cache-off` 记录的是本次 `session_cache`（Session 缓存路由注入）的**实际生效状态**，让同一模型「开缓存 / 关缓存」两种跑法各自落盘、互不覆盖。
 
 **① 横向对比（小集）——不传 offset：**
 ```powershell
@@ -112,6 +114,66 @@ python scripts/perf/run_perf_one.py deepseek-v4-pro_tencent 30   # 第 30~39 条
 - offset **必须 > 0** 才会切到大池子（`=0` 会退回小集）；取 **10 的倍数** 才能整批不重叠。
 - 上限 `offset + 10 ≤ 池子条数`（当前 9549），即 offset 最大约 **9539**，够测几百轮互不蹭缓存。
 - ⚠️ **铁律**：不同厂商/模型**横向对比时绝不要换 offset**，都用小集（offset=0）才最公平；只有**同一(模型,厂商)复测取平均**时才换 offset。
+
+**③ 临时开关 session_cache（第 3 个参数）——同模型对比开 / 关缓存：**
+`session_cache` 默认取 `VENDORS[厂商]` 里登记的值（腾讯云 `False`、阿里百炼 `True`）；想在不改代码的前提下临时翻转，传**第 3 个参数** `on`/`off`（`on/1/true/yes` 为开，其余为关）。生效状态会写进目录尾巴 `_cache-on` / `_cache-off`，两种跑法各自落盘：
+```powershell
+python scripts/perf/run_perf_one.py deepseek-v4-pro_tencent 0 on    # 强开  → results/deepseek-v4-pro_tencent_cache-on
+python scripts/perf/run_perf_one.py deepseek-v4-pro_tencent 0 off   # 强关  → results/deepseek-v4-pro_tencent_cache-off
+```
+> 第 3 个参数省略时即用厂商登记的默认值；要传它就得把第 2 个 offset 参数也占上位（不复测就填 `0`）。
+
+### Step 3.2: `number=10` 到底发了多少次请求？（别被"10"骗了）
+
+`number=10` 数的是**会话(Session)条数**，不是请求数。一条会话是一整段多轮对话，里面有好几个 turn，**每个 turn 才是一次真正发给模型的请求**（带累积历史）。`multi_turn=True` 的语义就是模拟真人一轮一轮地发：
+
+```
+轮1: 用户问 A        → 发 1 次请求，模型答 A'
+轮2: 用户接着问 B     → 发 1 次请求（带上 A、A'）
+轮3: 用户接着问 C     → 发 1 次请求（带上 A A' B B'）
+...                  历史一轮轮累积，prompt_tokens 越来越大（8200→9300→10300…）
+```
+
+而每条会话的 turn 数**长短不一**（数据集 `min_turns=4, max_turns=12`）。以大池子 `offset=10` 取的第 10~19 条为例，实测每条的 turn 数：
+
+```
+会话0:  6 turn  → 发  6 次请求
+会话1: 10 turn  → 发 10 次请求
+会话2:  8 turn  → 发  8 次请求
+会话3: 11 turn  → 发 11 次请求
+会话4: 11 turn  → 发 11 次请求
+会话5: 10 turn  → 发 10 次请求
+会话6:  5 turn  → 发  5 次请求
+会话7:  9 turn  → 发  9 次请求
+会话8:  5 turn  → 发  5 次请求
+会话9:  4 turn  → 发  4 次请求
+────────────────────────────
+合计 = 6+10+8+11+11+10+5+9+5+4 = 79 次串行请求
+```
+
+所以"跑 10 条"≈ **跑 79 次请求**。在 JSON 里这体现为：每条会话是个**列表**，列表里有几个元素（每个元素 `{messages, prompt_tokens}`）就代表要发几次请求。叠加 `reasoning_effort='high'`（深度思考几十秒~分钟）、`max_tokens=16384`（长输出）、每轮上万 token 的长 prefill，慢是必然的。
+
+### Step 3.3: 会话级并发（`parallel`）——想跑快点看这里
+
+`parallel=N` 在多轮模式下并发的是**会话之间**，不是会话内部的 turn（[multi_turn.py](../../evalscope/perf/core/strategies/multi_turn.py)）：
+
+- 框架起 **N 个 worker**，每个 worker 一次认领**一整条会话**，串行跑完它所有 turn，再认领下一条；
+- **会话内的 turn 永远串行**，改不了也不该改——第 N 轮必须等第 N-1 轮的回复回来、append 进上下文后才能发（multi-turn 不支持 open-loop，本质如此）。
+
+| 设置 | 效果 |
+| --- | --- |
+| `parallel=1` | 1 个 worker，79 次请求完全排队，最慢 |
+| `parallel=5` | 5 条会话同时进行，整体快约 5 倍 |
+| `parallel=10` | 10 条会话全开，最快 |
+
+**关键：并发不污染缓存命中率。** 每条会话有自己独立的 `session_key = model-trace_id`，缓存命中是在**同一条会话内部**度量的（turn N 复用 turn N-1 的上下文），会话之间 key 不同、互不串味，所以 **Cache Hit / Eligible Cache Hit Rate 指标不受 `parallel` 影响**。
+
+**那 `parallel` 锁死的是什么？** 是**延迟类指标的可比性**：并发上去后服务端同时扛 N 条会话，排队争抢会让单请求的 **TTFT / TPOT 变大**。所以：
+
+- **只关心缓存命中率** → 放心调大 `parallel`，结果一样还快很多。
+- **要测单点延迟并和其它厂商横向对比** → 必须**所有厂商用同一个 `parallel` 档**，否则延迟数不可比。
+
+> 改 `parallel` 改的是 `run_perf_one.py` 里 `FIXED` 的那一行；正在运行的进程不受影响，需**重启命令**才生效。
 
 ---
 
