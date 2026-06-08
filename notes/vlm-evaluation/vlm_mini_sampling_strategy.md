@@ -1,301 +1,173 @@
-# VLM (多模态大模型) 极简均衡测试集抽取方案
+# VLM 评测：下载 / 抽样 / 跑分 一条龙
 
-## 0. 运行前必读
+目的：把动辄上千题的 VLM 测试集压到几百题，省时间省 API 钱，同时保证各能力维度占比不失衡。
 
-### 0.1 先核对数据集名
-EvalScope 装的是定制版 `ms-vlmeval`，**版本可能比上游旧**，个别数据集名（如 `MMMU_Pro_10c`、`MME-RealWorld-Lite`）不一定在你装的版本里。运行前先确认一次：
+所有脚本都在本目录，**直接 `python 脚本名 --参数` 执行**。唯一可能要设的环境变量是 `MODELSCOPE_CACHE`（数据集缓存放哪，系统盘小就得指到大盘，详见下方专节）；本机已永久设好，新开终端无需再管。
 
+---
+
+## 命令行脚本
+
+| 脚本 | 干什么 | 怎么跑 |
+|---|---|---|
+| `download_datasets.py` | 下载数据集（不调模型、不花钱） | `python download_datasets.py --dataset MMBench_DEV_EN_V11` |
+| `sample_dataset.py` | 切分**单个**数据集 | `python sample_dataset.py --dataset MMBench_DEV_EN_V11 --target 500` |
+| `sample_all.py` | 一键切分**全部**数据集 | `python sample_all.py` |
+| `run_eval.py` | 跑评测（**真实调 API、计费**） | `python run_eval.py --profile kimi-k2.6_aliyun --dataset MMBench_DEV_EN_V11` |
+| `compress_videos.py` | （视频原生模式可选）压缩超 data-uri 上限的视频 | `python compress_videos.py`（详见坑 #2） |
+
+> 命令前面带不带 `notes/vlm-evaluation/` 都行；从仓库根目录跑就写全路径，如 `python notes/vlm-evaluation/run_eval.py ...`。
+
+另有 3 个支撑文件不用直接调：`run_vlm.py`（**配置中心**：厂商/密钥/profile/生成参数都改这）、`sample_utils.py`（抽样函数）、`vlm_compat.py`（运行时补丁：transformers 别名 + 信任本地抽样 TSV + 视频本地 mp4→base64 Data URL，详见其顶部注释与坑 #2/#6）。
+
+---
+
+## 标准流程（三步）
+
+**1. 下载** —— 把原始数据拉到本地：
+```bash
+python download_datasets.py --all
+```
+
+**2. 抽样**（可选，想跑全量就跳过）—— 把每个集压小：
+```bash
+python sample_all.py                       # 图片集各抽 ~500 题，Video-MME 抽 100 个短视频
+
+# 只切【图片集】—— 用 --target 控题数：
+python sample_dataset.py --dataset MMMU_Pro_10c --target 500
+
+# 只切【视频集 Video-MME】—— 用 --num-videos 控视频个数，--duration 选时长：
+python sample_dataset.py --dataset Video-MME --num-videos 100 --duration short   # 抽 100 个短视频（每视频 3 题 → ~300 题）
+python sample_dataset.py --dataset Video-MME --num-videos 100                     # 跨全时长抽 100 个视频（不加 --duration）
+```
+> 视频集**不吃 `--target`**（抽的是「视频」不是「题」）；图片集**不吃 `--num-videos` / `--duration`**。两类参数互不通用，传错会被忽略。`--duration` 可选 `short` / `medium` / `long`。
+
+**3. 跑分**：
+```bash
+python run_eval.py --profile kimi-k2.6_aliyun --all                          # 跑全部（图片集 + 视频集）
+
+# 跑单个【图片集】：
+python run_eval.py --profile kimi-k2.6_aliyun --dataset MMBench_DEV_EN_V11
+
+# 跑单个【视频集】—— 默认走「原生整段视频」，跑前必须先压缩超标视频（见下）：
+python compress_videos.py                                   # ① 压缩 base64 后会超 20MB 的视频（一次性）
+python run_eval.py --profile kimi-k2.6_aliyun --dataset Video-MME   # ② 跑分
+```
+> **视频集比图片集多一步 `compress_videos.py`**：默认是「原生整段视频」模式（`run_eval.py` 检测到 `VIDEO_DATASETS` 自动设 `video_llm=True`，由 `vlm_compat.py` 补丁 4 把本地 mp4 → base64 Data URL 整段发）。但商业 API 对单个 data-uri 有 20MB 上限，原始 >~15MB 的视频会破限报错（详见坑 #2），所以**跑分前先 `compress_videos.py` 把超标的压小**。
+>
+> 视频集并发重，`run_vlm.py` 里 `NPROC` 建议降到 4~8，报 429 再调小。
+> （不想压缩 / 想省 token，可改用「抽帧」模式，见坑 #2 第二种。）
+
+**看结果**：`outputs/<模型_厂商>/<模型>/*_acc.csv` 就是准确率汇总。
+
+**想还原全量**：`python sample_dataset.py --dataset XXX --restore`（首次抽样会自动备份 `*_FULL.tsv`）。
+
+---
+
+## 环境变量 `MODELSCOPE_CACHE`（数据集缓存放哪）
+
+它告诉 modelscope **把数据集/模型缓存下到哪个目录**。默认落在系统盘 `~/.cache/modelscope`；**系统盘小（比如本机 C 盘被 Video-MME 撑爆过）就必须指到大盘**，否则解压时报 `No space left on device`。本机已指到 **`D:\ms_cache\modelscope`**。
+
+设它有两种方式，区别在「生效范围」：
+
+```powershell
+# 方式 A：只对【当前这个终端窗口】临时生效，关掉就没了
+$env:MODELSCOPE_CACHE = "D:\ms_cache\modelscope"
+
+# 方式 B：永久写进系统（推荐，一次到位）。只对【之后新开的】终端生效，当前已开的窗口不认
+setx MODELSCOPE_CACHE "D:\ms_cache\modelscope"
+```
+
+> `$env:XXX` 是 PowerShell 读/写环境变量的写法（≈ bash 的 `export XXX=...`）。
+>
+> **实操**：本机已 `setx` 过，所以**新开一个终端**跑分时**不用再敲** `$env:...`，直接 `python notes\vlm-evaluation\run_eval.py ...` 即可。只有在「`setx` 之前就开着的旧窗口」里才需要临时补一句方式 A。
+>
+> **验证**：新开终端里 `echo $env:MODELSCOPE_CACHE`，能打印出 `D:\ms_cache\modelscope` 就说明永久设置已生效。
+>
+> ⚠️ 没设它、或指错盘 → modelscope 找不到已下的数据会**重新下载**（Video-MME 又是上百 GB），还可能把系统盘再撑爆。
+
+---
+
+## ⭐ `--limit` 到底跑多少题？（每次跑分前先想清楚，直接关系花多少钱）
+
+`run_eval.py --limit N` 控制**这次跑前 N 题**，默认 `None`。它和「抽样」是**两件独立的事**，最容易混：
+
+| `--limit` 取值 | 实际跑多少题 | 用途 |
+|---|---|---|
+| **不传**（默认 `None`） | **当前 TSV 的全部行** | 正式跑分。⚠️ 这个「全量」= **抽样后的子集**（你抽过样就是几百题），**不是**原始全量 |
+| `--limit 1` | 只跑第 1 题 | 触发下载 / 冒烟验证链路，几乎不花钱 |
+| `--limit N` | 跑前 N 题（TSV 前 N 行，**不分层**） | 临时小样试跑 |
+
+**`--limit` ≠ 抽样，关键区别：**
+- **抽样**（`sample_dataset.py`）：按能力维度**分层均衡**缩小，把结果**固化进 TSV**（原始全量备份成 `*_FULL.tsv`），可复现、跨模型同一批题。正式对比就靠它。
+- **`--limit N`**：只是临时**截前 N 行**，不分层、维度可能不均衡，**别拿它的分数做正式横向对比**——它是给冒烟/试跑用的。
+
+**「全量」具体多少题，取决于本地 TSV 现在是抽样子集还是原始全量**，跑前可以先数一眼（以 MMBench 为例）：
+```bash
+wc -l ~/LMUData/MMBench_DEV_EN_V11.tsv        # 实际会跑这个（行数-1=题数）
+wc -l ~/LMUData/MMBench_DEV_EN_V11_FULL.tsv   # 原始全量备份，带 _FULL，不会被跑
+```
+> 例：抽样后 `MMBench_DEV_EN_V11.tsv` ≈760 题、`_FULL` 备份 ≈8105 题。此时**不传 `--limit` = 跑这 760 题全量**（不是 8105）。VLMEvalKit 只读不带 `_FULL` 的那个文件名。
+
+> 💡 想正式跑分但又嫌「抽样后全量」还是太多，可临时叠 `--limit`：`--limit 100` 就在抽样子集里再截前 100 题。但记住截出来的不分层，仅供试跑。
+
+---
+
+## 数据集速查
+
+| 能力 | 数据集 | 原题量 | 抽样方式 |
+|---|---|---|---|
+| 基础视力 | `MMBench_DEV_EN_V11` | 4876 行 | 按「题组」分层抽（保 circular 完整），`--target` 控题数 |
+| 实景理解 | `MME-RealWorld-Lite` | ~2150 | 按场景/任务分层抽，`--target` 控题数 |
+| 极限推理 | `MMMU_Pro_10c` | ~1730 | 按学科分层抽，`--target` 控题数 |
+| 视频理解 | `Video-MME` | 2700（900 视频×3） | 按视频抽，`--num-videos` 控视频个数，`--duration short/medium/long` 选时长（不传=全时长）；**不吃 `--target`** |
+
+抽样用固定随机种子（默认 42），**任何机器抽到的都是同一批题**，方便对比不同模型/厂商。
+
+---
+
+## 几个要知道的坑
+
+1. **Video-MME 下载是整包全量视频**（实测：约 90 GB zip + 解压出 ~190 GB，解压时两者并存，**至少备 200~280 GB 空闲**），抽样只省「推理花的钱」，**省不了下载/解压**。跑前先装解码依赖：`pip install av decord`。
+   - **缓存默认落在系统盘**（modelscope → `~/.cache/modelscope`），系统盘小的话会在解压时报 `OSError: [Errno 28] No space left on device`。**下载前先把缓存重定向到大盘**，靠环境变量 `MODELSCOPE_CACHE` 指定缓存目录（详见下方「环境变量 MODELSCOPE_CACHE」）。
+   - ⚠️ 已下到一半才发现盘满时，别把旧缓存按 `…\modelscope\hub\datasets` 结构搬过去——这版 modelscope 实际下载到 `$MODELSCOPE_CACHE\datasets`（**没有 `hub`**），路径对不上会触发**重新下载**。最稳妥是设好 `MODELSCOPE_CACHE` 后让它重下一份，再删掉旧的废缓存。
+2. **视频怎么传给商业 API（两种模式）**。vlmeval 原版在 `video_llm=True` 时把**本地 `.mp4` 路径**当 `video_url` 直发，DashScope/腾讯等只认公网 URL 或 base64，会报 `<400> InvalidParameter: The provided URL does not appear to be valid`。`vlm_compat.py` 的**补丁 4** 已修这个 bug，于是有两种可选模式：
+   - **原生整段视频（默认，`video_llm=True`）**：补丁把本地 mp4 → `data:video/mp4;base64,...` 整段发（带 `fps`，默认 2），模型看完整视频、最忠实。抽帧密度调 `vlm_compat.py` 里的 `VIDEO_FPS`。
+     - ⚠️ **单个 data-uri 有大小上限**（DashScope = 20 MB；报错 `Exceeded limit on max bytes per data-uri item : 20971520`，并连带 vlmeval 抛 `KeyError: 'choices'`）。base64 膨胀 ~33%，**原始 >~15 MB 的视频会破限**。我们抽的 short 视频里有 18 个超标 → 约 54 题会失败。
+     - **解决**：先跑 `python compress_videos.py` 把超标视频压到 ~12 MB（原件备份到 `video/_orig_oversized/`，可 `--restore` 还原；只动超标的）。压完所有视频 base64 后都 <20 MB，全量可跑。
+   - **抽帧成图片（省钱，`video_llm=False`）**：按 `nframe`（默认 8）抽帧编码成 base64 图片发，请求体小、token 省，但丢时序细节。改 `run_eval.py` 里视频分支的 `True→False` 即可；想多抽帧在 `eval_config` 加 `'nframe': 16`。
+   - ⚠️ **空文本会被腾讯拒（厂商校验差异）**：Video-MME 的系统提示 `SYS` 是**空串**，vlmeval 原样塞进 `content` 发出去。DashScope 容忍，**腾讯（tokenhub）报 `400001 "Invalid request: text content is empty"`** → 连带 vlmeval 抛 `KeyError: 'choices'`。`vlm_compat.py` 补丁 4 已**自动跳过空文本条目**（对两家都安全），无需手动处理。换别的厂商若也卡空文本，是同一回事。
+3. **`run_eval.py` 每次跑都会重新推理、重新计费**（输出目录带时间戳，不复用上次结果），别手滑重跑。
+4. **思考模式（关键调用事项）**：`run_vlm.py` 里 `FIXED_MODEL` 默认 `thinking={'type': 'disabled'}`（**已关**——单选题开思考又慢又费 token）。想开就改成 `{'type': 'enabled'}`（按目标 API 的 schema）。
+   - ⚠️ **必须「平铺」成顶层非具名参数**（直接写 `thinking=...`），**别用 `extra_body={'thinking':...}`**：VLMEvalKit 是手搓 `requests.post`（见 `vlmeval/api/gpt.py`），不解包 `extra_body`，会把它当请求体里一个字面字段塞进去→服务端忽略→**开/关思考静默失效**。`top_p` 同理，平铺才透传。
+   - ⚠️ **`temperature` 必须跟思考开关匹配**：kimi-k2.6 思考模式用 `temperature=1.0`、非思考用 `0.6`，传错值服务端直接 **400 拒绝**。开/关思考时记得**同步改 `temperature`**。
+5. **换模型/厂商**：在 `run_vlm.py` 的 `VENDORS` 填密钥、`PROFILES` 加一行 `<模型名>_<厂商名>` 即可。
+6. **Windows 兼容**：`vlm_compat.py` 自动打了几个补丁；另有两处必须改 `site-packages` 的 bug（`hipho_verifier.py` 的 timeout、`multiple_choice.py` 的 `/tmp`），**重装 vlmeval 后需重打**，细节见 `vlm_compat.py` 顶部注释。
+
+---
+
+## 跑前自检：核对数据集名
+
+不同版本 `ms-vlmeval` 支持的集略有差异，跑前可先核对：
 ```python
 from evalscope.backend.vlm_eval_kit import VLMEvalKitBackendManager
 print(VLMEvalKitBackendManager.list_supported_datasets())
 ```
 
-把命令里的名字和这个列表对一下；缺失就 `pip install ms-vlmeval -U`，或换列表里的近义集。
+本机这版 `ms-vlmeval` 共支持 **400 个数据集**，下面 4 个是**脚本默认在用的**（`run_vlm.py` 里 `IMAGE_DATASETS` / `VIDEO_DATASETS`）：
 
-### 0.2 VLMEvalKit 后端用 `eval_config` 配置
-VLMEvalKit 后端通过 `eval_config` 嵌套配置驱动（见 [run.py:64-89](../../evalscope/run.py#L64)），统一用 `TaskConfig(eval_backend='VLMEvalKit', eval_config={...})` 或 `--eval-config 配置文件` 来跑（不是 native 那套扁平 `--datasets/--model/--api-url`）。下面第 2 节的 `run_vlm.py` 已封装好。
+| 能力 | 数据集名 |
+|---|---|
+| 基础视力 | `MMBench_DEV_EN_V11` ✅ |
+| 实景理解 | `MME-RealWorld-Lite` ✅ |
+| 极限推理 | `MMMU_Pro_10c` ✅ |
+| 视频理解 | `Video-MME` ✅ |
 
----
+要换别的集，直接把名字填进 `run_eval.py --dataset <名字>`（或改 `run_vlm.py` 的清单）即可。常用近亲：`MMMU_Pro_10c_COT`（带思维链）、`MMMU_Pro_V`（截图版）、`MME-RealWorld`（全量）、`MMBench_DEV_CN_V11`（中文）、`Video-TT` / `LongVideoBench` / `MLVU`（其他视频集）。
 
-## 1. 需求背景与核心痛点
-标准 VLM 测试集（如 `MMBench_DEV_EN_V11`、`MME-RealWorld-Lite`、`MMMU_Pro_10c`）题量大多 1000 - 2000 题。为压缩测试时间与 API 成本，我们希望每个测试集控制在 **500 题左右**。
+<details>
+<summary><b>点开看全部 400 个支持的数据集</b>（✅ = 代码默认在用）</summary>
 
-**核心痛点**：专业测试集通常按"类别/主题"集中排序存放，VLMEvalKit 后端的 `limit` 是**全局前 N 条**，直接设 500 相当于只截"前 500 题"（可能某些类别一题没抽到），评估维度严重失衡。
+`3DSRBench` · `A-Bench_TEST` · `A-Bench_VAL` · `A-OKVQA` · `A4Bench` · `AesBench_TEST` · `AesBench_VAL` · `AI2D_MINI` · `AI2D_TEST` · `AI2D_TEST_NO_MASK` · `AMBER` · `APhO_2025` · `atomic_dataset` · `AyaVisionBench` · `BLINK` · `BLINK_circular` · `BMMR` · `BMMR_mini` · `CCBench` · `CCOCR` · `CCOCR_DocParsing_DocPhotoChn` · `CCOCR_DocParsing_DocPhotoEng` · `CCOCR_DocParsing_DocScanChn` · `CCOCR_DocParsing_DocScanEng` · `CCOCR_DocParsing_FormulaHandwriting` · `CCOCR_DocParsing_MolecularHandwriting` · `CCOCR_DocParsing_TablePhotoChn` · `CCOCR_DocParsing_TablePhotoEng` · `CCOCR_DocParsing_TableScanChn` · `CCOCR_DocParsing_TableScanEng` · `CCOCR_Kie_ColdCell` · `CCOCR_Kie_ColdSibr` · `CCOCR_Kie_Cord` · `CCOCR_Kie_EphoieScut` · `CCOCR_Kie_Poie` · `CCOCR_Kie_Sroie2019Word` · `CCOCR_MultiLanOcr_Arabic` · `CCOCR_MultiLanOcr_French` · `CCOCR_MultiLanOcr_German` · `CCOCR_MultiLanOcr_Italian` · `CCOCR_MultiLanOcr_Japanese` · `CCOCR_MultiLanOcr_Korean` · `CCOCR_MultiLanOcr_Portuguese` · `CCOCR_MultiLanOcr_Russian` · `CCOCR_MultiLanOcr_Spanish` · `CCOCR_MultiLanOcr_Vietnamese` · `CCOCR_MultiSceneOcr_Cord` · `CCOCR_MultiSceneOcr_Funsd` · `CCOCR_MultiSceneOcr_Hieragent` · `CCOCR_MultiSceneOcr_Iam` · `CCOCR_MultiSceneOcr_Ic15` · `CCOCR_MultiSceneOcr_Inversetext` · `CCOCR_MultiSceneOcr_Totaltext` · `CCOCR_MultiSceneOcr_UgcLaion` · `CCOCR_MultiSceneOcr_ZhDense` · `CCOCR_MultiSceneOcr_ZhDoc` · `CCOCR_MultiSceneOcr_ZhHandwriting` · `CCOCR_MultiSceneOcr_ZhScene` · `CCOCR_MultiSceneOcr_ZhVertical` · `CG-Bench_MCQ_Grounding` · `CG-Bench_MCQ_Grounding_Mini` · `CG-Bench_OpenEnded` · `CG-Bench_OpenEnded_Mini` · `CGAVCounting` · `ChartMimic_v1_customized` · `ChartMimic_v1_direct` · `ChartMimic_v2_customized` · `ChartMimic_v2_customized_1800` · `ChartMimic_v2_customized_600` · `ChartMimic_v2_direct` · `ChartMimic_v2_direct_1800` · `ChartMimic_v2_direct_600` · `ChartMuseum_dev` · `ChartMuseum_test` · `ChartQA_TEST` · `ChartQAPro` · `ChartQAPro_CoT` · `ChartQAPro_PoT` · `CharXiv_descriptive_val` · `CharXiv_reasoning_val` · `CMMMU_VAL` · `CMMU_MCQ` · `COCO_VAL` · `CountBenchQA` · `Creation_MMBench` · `CRPE_EXIST` · `CRPE_RELATION` · `CV-Bench-2D` · `CV-Bench-3D` · `CVQA_EN` · `CVQA_LOC` · `Detailed_Difference` · `DocVQA_TEST` · `DocVQA_VAL` · `DUDE` · `DUDE_MINI` · `DynaMath` · `DynaMath_noprompt` · `EgoExoBench_MCQ` · `electro_dataset` · `EMMA` · `EMMA_COT` · `EuPhO_2024` · `EuPhO_2025` · `F_MA_2024` · `F_MA_2025` · `GMAI-MMBench_TEST` · `GMAI-MMBench_VAL` · `GOBench` · `GQA_TestDev_Balanced` · `GSM8K-V` · `HallusionBench` · `hle` · `HRBench4K` · `HRBench8K` · `InfoVQA_TEST` · `InfoVQA_VAL` · `Instance_Comparison` · `IPhO_2024` · `IPhO_2025` · `K-DTCBench` · `LEGO` · `LEGO_circular` · `LiveMMBench_Creation` · `LiveMMBench_Infographic` · `LiveMMBench_Perception` · `LiveMMBench_Reasoning` · `LiveMMBench_Reasoning_circular` · `LLaVABench` · `LLaVABench_KO` · `LogicVista` · `LongVideoBench` · `M4Bench` · `MATBench` · `MathCanvas-Bench` · `MathVerse_MINI` · `MathVerse_MINI_Text_Dominant` · `MathVerse_MINI_Text_Lite` · `MathVerse_MINI_Vision_Dominant` · `MathVerse_MINI_Vision_Intensive` · `MathVerse_MINI_Vision_Only` · `MathVerse_MINI_Vision_Only_cot` · `MathVision` · `MathVision_MINI` · `MathVista_MINI` · `mechanics_dataset` · `MedqbenchCaption` · `MedqbenchCaption_dev` · `MedqbenchCaption_test` · `MedqbenchMCQ` · `MedqbenchMCQ_dev` · `MedqbenchMCQ_test` · `MedqbenchPairedDescription_dev` · `MedqbenchPairedDescription_test` · `MedXpertQA_MM_test` · `MEGABench` · `MIA-Bench` · `MicroBench` · `MicroVQA` · `MLLMGuard_DS` · `MLVU` · `MLVU_MCQ` · `MLVU_OpenEnded` · `MM-HELIX` · `MM-HELIX_lang` · `MM-IFEval` · `MM-Math` · `MM_NIAH_TEST` · `MM_NIAH_VAL` · `MMAlignBench` · `MMBench` · `MMBench-Video` · `MMBench_CN` · `MMBench_CN_V11` · `MMBench_dev_ar` · `MMBench_DEV_CN` · `MMBench_dev_cn` · `MMBench_DEV_CN_V11` · `MMBench_dev_en` · `MMBench_DEV_EN` · `MMBench_DEV_EN_V11` ✅ · `MMBench_DEV_KO` · `MMBench_dev_pt` · `MMBench_dev_ru` · `MMBench_dev_tr` · `MMBench_TEST_CN` · `MMBench_TEST_CN_V11` · `MMBench_TEST_EN` · `MMBench_TEST_EN_V11` · `MMBench_V11` · `MMBench_V11_MINI` · `MMCR` · `MMDU` · `MME` · `MME-RealWorld` · `MME-RealWorld-CN` · `MME-RealWorld-Lite` ✅ · `MME-Reasoning` · `MME_CoT_TEST` · `MMGenBench-Domain` · `MMGenBench-Test` · `MMLongBench_DOC` · `MMMB` · `MMMB_ar` · `MMMB_cn` · `MMMB_en` · `MMMB_pt` · `MMMB_ru` · `MMMB_tr` · `MMMU_DEV_VAL` · `MMMU_Pro_10c` ✅ · `MMMU_Pro_10c_COT` · `MMMU_Pro_V` · `MMMU_Pro_V_COT` · `MMMU_TEST` · `MMSci_DEV_Captioning_image_only` · `MMSci_DEV_Captioning_with_abs` · `MMSci_DEV_MCQ` · `MMSIBench_circular` · `MMStar` · `MMStar_KO` · `MMStar_MINI` · `MMStar_TR` · `MMT-Bench_ALL` · `MMT-Bench_ALL_MI` · `MMT-Bench_VAL` · `MMT-Bench_VAL_MI` · `MMVet` · `MMVet_Hard` · `MMVMBench` · `MMVP` · `MOAT` · `MovieChat1k` · `MSEarthMCQ` · `MTL_MMBench_DEV` · `MTVQA_TEST` · `MUIRBench` · `MVBench` · `MVBench_MP4` · `MVTamperBench` · `MVTamperBenchEnd` · `MVTamperBenchStart` · `NaturalBenchDataset` · `NBPhO_2024` · `NBPhO_2025` · `OceanOCRBench` · `OCR_Reasoning` · `OCRBench` · `OCRBench_MINI` · `OCRBench_v2` · `OCRVQA_TEST` · `OCRVQA_TESTCORE` · `olmOCRBench` · `OlympiadBench` · `OlympiadBench_CN` · `OlympiadBench_EN` · `Omni3DBench` · `OmniDocBench` · `OmniEarth-Bench` · `OmniMedVQA` · `optics_dataset` · `OST` · `PanMechanics_2024` · `PanMechanics_2025` · `PanPhO_2024` · `PanPhO_2025` · `PathMMU_TEST` · `PathMMU_VAL` · `PathVQA_TEST` · `PathVQA_VAL` · `Physics` · `Physics_blankim` · `PhyX_MC` · `PhyX_mini_MC` · `PhyX_mini_OE` · `PhyX_OE` · `POPE` · `Q-Bench1_TEST` · `Q-Bench1_VAL` · `QBench_Video` · `QBench_Video_MCQ` · `QBench_Video_VQA` · `QSpatial_plus` · `QSpatial_scannet` · `quantum_dataset` · `R-Bench-Dis` · `R-Bench-Ref` · `RealWorldQA` · `ReasonMap-Plus` · `RefCOCO` · `SCAM` · `ScienceQA_TEST` · `ScienceQA_VAL` · `ScreenSpot` · `ScreenSpot_Desktop` · `ScreenSpot_Mobile` · `ScreenSpot_Pro` · `ScreenSpot_Pro_CAD` · `ScreenSpot_Pro_Creative` · `ScreenSpot_Pro_Development` · `ScreenSpot_Pro_Office` · `ScreenSpot_Pro_OS` · `ScreenSpot_Pro_Scientific` · `ScreenSpot_v2` · `ScreenSpot_v2_Desktop` · `ScreenSpot_v2_Mobile` · `ScreenSpot_v2_Web` · `ScreenSpot_Web` · `SEEDBench2` · `SEEDBench2_Plus` · `SEEDBench_IMG` · `SEEDBench_IMG_KO` · `SeePhys` · `SeePhys_vo` · `SFE` · `SFE-zh` · `SimpleVQA` · `SLIDEVQA` · `SLIDEVQA_MINI` · `Spatial457` · `Spatial_Perception` · `SpatialEval` · `State_Comparison` · `State_Invariance` · `StaticEmbodiedBench` · `StaticEmbodiedBench_circular` · `statistics_dataset` · `TableVQABench` · `TallyQA` · `TaskMeAnything_v1_imageqa_random` · `tdbench_cs_depth` · `tdbench_cs_height` · `tdbench_cs_integrity` · `tdbench_cs_zoom` · `tdbench_grounding_rot0` · `tdbench_grounding_rot180` · `tdbench_grounding_rot270` · `tdbench_grounding_rot90` · `tdbench_rot0` · `tdbench_rot180` · `tdbench_rot270` · `tdbench_rot90` · `TempCompass` · `TempCompass_Captioning` · `TempCompass_MCQ` · `TempCompass_YorN` · `TextVQA_VAL` · `TopViewRS` · `TreeBench` · `VCR-Bench` · `VCR_EN_EASY_100` · `VCR_EN_EASY_500` · `VCR_EN_EASY_ALL` · `VCR_EN_HARD_100` · `VCR_EN_HARD_500` · `VCR_EN_HARD_ALL` · `VCR_ZH_EASY_100` · `VCR_ZH_EASY_500` · `VCR_ZH_EASY_ALL` · `VCR_ZH_HARD_100` · `VCR_ZH_HARD_500` · `VCR_ZH_HARD_ALL` · `VDC` · `VGRPBench` · `Video-MME` ✅ · `Video-TT` · `Video_Holmes` · `Video_MMLU_CAP` · `Video_MMLU_QA` · `VisFactor` · `VisFactor_CoT` · `VisFactor_GE` · `VisFactor_GE_CoT` · `VisFactor_GH` · `VisFactor_GH_CoT` · `VisFactor_GN` · `VisFactor_GN_CoT` · `VisOnlyQA-VLMEvalKit` · `VisuLogic` · `VizWiz` · `VL-RewardBench` · `VLM2Bench` · `VLMBias` · `VLMBlind` · `VLRMBench` · `VLRMBench_Foresight` · `VLRMBench_MultiSolution` · `VMCBench_DEV` · `VMCBench_TEST` · `VSR-zeroshot` · `VStarBench` · `WeMath` · `WeMath_COT` · `WildDoc` · `WildVision` · `WorldMedQA-V` · `WorldSense` · `XLRS-Bench-lite` · `ZEROBench` · `ZEROBench_sub`
 
-**解决策略 (分层抽样)**：VLMEvalKit 后端的数据集以 `.tsv` 缓存在本地（默认 `~/LMUData/`，见 [vlmevalkit_backend.md](../../docs/zh/user_guides/backend/vlmevalkit_backend.md) 第 2 节）。我们用 Python 读 TSV，按**类别字段（能力类别 / 任务类型 / 场景 / 学科等，因集而异）**做**"等比例分层抽样"**，存回原文件名直接喂给框架。
-
-### 为什么科学且 100% 可复现？
-核心是 `df.groupby(分层列).apply(lambda x: x.sample(frac=比例, random_state=42))`：
-
-1. **绝对可复现 (`random_state=42`)**：任何机器跑出来都是**完全相同的那 ~500 题**，满足"控制变量法"，确保对比不同 API 时考卷一致。
-2. **能力分布镜像 (`groupby` + `frac`)**：先按类别"分班"，再按统一比例抽题，微缩集中各细分能力占比与原集**基本一致**。
-
-> ⚠️ 不同数据集 TSV 的"分层列"叫法不一（`category` / `l2-category` / `sub_category` / `subject`…，VLM 多是能力类别/任务类型，并非学科）。下面脚本用 `pick_strata_column()` **自动探测**并打印，避免写死列名导致 `KeyError`。
-
----
-
-## 2. 通用运行器（统一用 eval_config）
-
-完整运行器见 [run_vlm.py](./run_vlm.py)（结构与凭证组织方式搬自 [run_perf_one.py](../../scripts/perf/run_perf_one.py)）。下载、抽样后正式跑全走它。核心设计：
-
-- **厂商凭证只填一处**：`VENDORS` dict 里每个厂商填一次 `url`(完整 /v1/chat/completions) + `api_key`。
-- **profile 名 = `<模型名>_<厂商名>`**：往 `PROFILES` 加一行即可，模型/厂商/URL/Key/输出目录全自动推导。
-- **输出目录按「模型_厂商」隔离**：`work_dir = outputs/<模型名>_<厂商名>`，同名模型打不同厂商不会互相覆盖（详见下方「多厂商对比」）。
-
-```python
-# run_vlm.py 关键结构（凭证用占位符，真实值见文件）
-VENDORS = {
-    'aliyun':  dict(url='https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', api_key='sk-...'),
-    'tencent': dict(url='https://tokenhub.tencentmaas.com/v1/chat/completions',               api_key='sk-...'),
-}
-PROFILES = ['qwen-vl-max_aliyun', 'qwen-vl-max_tencent']   # 加模型 = 加一行 <模型>_<厂商>
-
-def run_vlm(profile: str, dataset: str, limit=None, video_llm: bool = False):
-    model, vendor, v = _resolve(profile)          # 从 profile 名拆出 模型/厂商/凭证
-    work_dir = f'outputs/{profile}'               # ← 隔离核心：每个 模型_厂商 一个独立目录
-    run_task(TaskConfig(
-        eval_backend='VLMEvalKit', work_dir=work_dir,
-        eval_config={
-            'data': [dataset], 'mode': 'all', 'limit': limit, 'reuse': False,
-            'nproc': 16, 'ignore': True, 'retry': 3,
-            'model': [{
-                'type': model,                    # API 请求体里的 model 名 = 结果文件名前缀
-                'name': 'CustomAPIModel',         # 固定值
-                'api_base': v['url'], 'key': v['api_key'],
-                'temperature': 0.0, 'top_p': 0.95, 'max_tokens': 1024, 'img_size': -1,
-                'video_llm': video_llm,
-            }],
-        },
-    ))
-```
-
-运行（profile 由命令行 `argv[1]` 覆盖；第 2 个参数可指定单个数据集）：
-
-```bash
-DOWNLOAD=1 python notes/vlm-evaluation/run_vlm.py qwen-vl-max_aliyun   # limit=1 仅触发下载
-python notes/vlm-evaluation/run_vlm.py qwen-vl-max_aliyun              # 跑该 profile 的全部数据集
-python notes/vlm-evaluation/run_vlm.py qwen-vl-max_aliyun MMBench_DEV_EN_V11   # 只跑一个集
-```
-
-> 也可用 CLI：把 `eval_config` 写成 `vlm_config.yaml`（结构见 [vlmevalkit_backend.md](../../docs/zh/user_guides/backend/vlmevalkit_backend.md) 第 3 节），然后 `evalscope eval --eval-config vlm_config.yaml`。
-
-> **这些键在源码里到底怎么处理的（已核实 VLMEvalKit `OpenAIWrapper`=`CustomAPIModel`，见其 `vlmeval/api/gpt.py` 与 `vlmeval/api/base.py`）：**
->
-> 1. **具名构造参数 → 有 wrapper 默认值**：`temperature`、`max_tokens`、`img_size`、`timeout`、`key`、`api_base` 是 `OpenAIWrapper.__init__` 的显式形参，**不写就用 wrapper 默认** `temperature=0`、`max_tokens=2048`、`img_size=-1`、`timeout=300s`。（官方文档化的就 `temperature`/`max_tokens`/`img_size` 三个，见 [vlmevalkit_backend.md](../../docs/zh/user_guides/backend/vlmevalkit_backend.md)。）
-> 2. **非具名键 → `**kwargs` 透传进请求体**：`top_p` / `reasoning_effort` 等不是构造形参，会落进 `__init__(**kwargs)` → `BaseAPI` 存 `self.default_kwargs = kwargs` → `generate()` 里 `kwargs = deepcopy(default_kwargs); kwargs.update(...)` → `generate_inner(**kwargs)` → `payload = dict(model=…, messages=…, temperature=…, max_tokens=…, **kwargs)` → **作为请求体顶层字段原样发给 OpenAI 兼容 API**。
-> 3. **所以**：`top_p` 写了就发、不写则 body 里没有该字段（服务端用自己默认）；`reasoning_effort` 同样**会被透传进 body**，能否生效取决于目标 API 是否认这个字段（OpenAI 兼容的推理模型端点通常认）——不是"框架丢弃"或"wrapper 自有默认"。
->
-> 选择题型保持 `temperature=0.0`（可复现）；思考型 VLM 按模型卡推荐值（常见 0.6）再调。
-
-#### 并发设置：`nproc`（VLM 这边不是单并发）
-VLMEvalKit 后端的并发开关是 `eval_config` 里的 **`nproc`**（并行调用 API 的数量，见 [vlmevalkit_backend.md](../../docs/zh/user_guides/backend/vlmevalkit_backend.md) 参数说明）。上面 `run_vlm.py` 已默认 `'nproc': 16`，即**默认就是 16 并发**，不像 native 后端默认单并发。想调整就改这个数：
-
-```python
-'nproc': 16,   # 调大=更快更省时；调小=更稳、更不容易触发限流
-```
-
-**⚠️ 注意事项：**
-1. **商业 API 限并发**：开太高会大面积 `429 Too Many Requests`，从 **8~16** 起步，报错就调小。
-2. **视频集更吃资源**：`Video-MME` 每条要下载+截帧解析整段视频，`nproc` 太大易打满带宽/磁盘，视频集建议比图片集设得更小（如 4~8）。
-3. **只影响速度不影响分数**：并发只是加速，正确率不变。
-
-#### 错误处理与超时
-`run_vlm.py` 的 `eval_config` 已设：
-- **`ignore: True`**：单条样本失败就跳过、不中断整场（对应 [backend_manager.py:131](../../evalscope/backend/vlm_eval_kit/backend_manager.py#L131) 的 `--ignore`）。
-- **`retry: 3`**：单条失败重试 3 次（[backend_manager.py:138](../../evalscope/backend/vlm_eval_kit/backend_manager.py#L138)）。
-
-> 超时其实**可控**：`OpenAIWrapper.__init__` 有具名参数 `timeout`（默认 **300s**），在 `model` 配置 dict 里加 `'timeout': 300` 即可透传覆盖（与 `temperature` 等同级）。本方案沿用默认 300s 未显式写，需要时自行加。
-
-#### 多厂商对比：输出目录按「模型_厂商」隔离（VLMEvalKit 没有 `--name`/`model_id`）
-
-**为什么必须隔离**：VLMEvalKit 后端的结果文件名**只由 model 的 `type` 决定**（源码把 `type` 规范化后当结果名，`name` 必须固定是 `CustomAPIModel`，见 [backend_manager.py:65-74](../../evalscope/backend/vlm_eval_kit/backend_manager.py#L65)）。而 `type` 同时又是**请求体里真正发给 API 的 model 名**，不能把厂商后缀塞进去（否则服务端不认）。再加上 VLMEvalKit **不像 native eval 那样自动加时间戳目录**，同名模型打不同厂商若共用一个 `work_dir` 会直接互相覆盖。
-
-**怎么隔离**：`run_vlm.py` 已把 `work_dir` 自动设成 `outputs/<profile>` = `outputs/<模型名>_<厂商名>`，无需手动传。同一款 `qwen-vl-max` 打两家只要 profile 不同即可：
-
-```bash
-python notes/vlm-evaluation/run_vlm.py qwen-vl-max_aliyun     # → outputs/qwen-vl-max_aliyun/
-python notes/vlm-evaluation/run_vlm.py qwen-vl-max_tencent    # → outputs/qwen-vl-max_tencent/
-```
-
-**输出目录结构**（VLMEvalKit 是扁平结构，无时间戳层；下方 `<模型名>` = profile 里 `_厂商` 之前那段）：
-
-```
-outputs/
-└── qwen-vl-max_aliyun/                                   ← work_dir = outputs/<模型_厂商>（隔离层）
-    └── qwen-vl-max/                                      ← 子目录 = type（模型名，: → -、. → _）
-        ├── qwen-vl-max_MMBench_DEV_EN_V11.xlsx           ← 每题原始推理结果
-        ├── qwen-vl-max_MMBench_DEV_EN_V11_acc.csv        ← 准确率汇总（分层分数，最终看这个）
-        └── *.pkl                                         ← 推理缓存（reuse 时复用，重跑要先清掉）
-```
-
-- **和 perf 的 `--name` 不是一回事**：perf 压测用 `--name` 拼「模型_厂商」当 db 名防同秒撞库；VLMEvalKit 这边没有 `--name`，也没有 native eval 的 `model_id`，唯一干净的隔离手段就是 `work_dir`（本脚本已自动用 profile 名生成）。
-- ⚠️ **重跑会跳过推理**：VLMEvalKit 发现 `work_dir/<模型名>/` 下已有结果会**直接跳过推理、只重评测**（[vlmevalkit_backend.md](../../docs/zh/user_guides/backend/vlmevalkit_backend.md) 第 4 节）。想让模型重新推理，先清掉对应目录里的旧结果（或 `.pkl`）。
-
-### 2.1 先下载全量数据集（生成本地 TSV）
-抽样前要让框架先把原始 `.tsv` 下到 `~/LMUData/`。用 `limit=1` 快速触发即可（首次评测会自动下载）：
-
-```python
-from run_vlm import run_vlm
-
-PROFILE = 'qwen-vl-max_aliyun'   # 下载与厂商无关，随便用一个已登记的 profile 触发即可
-for ds in ['MMBench_DEV_EN_V11', 'MME-RealWorld-Lite', 'MMMU_Pro_10c']:
-    run_vlm(PROFILE, ds, limit=1)
-run_vlm(PROFILE, 'Video-MME', limit=1, video_llm=True)
-```
-
-> 也可直接命令行：`DOWNLOAD=1 python notes/vlm-evaluation/run_vlm.py qwen-vl-max_aliyun`（一次性把所有数据集 limit=1 触发下载）。
-> 抽样（第 3 节）改的是 `~/LMUData/*.tsv`，**厂商无关、只需做一次**；之后每个 profile 各自跑即可。
-
----
-
-## 3. 通用分层抽样工具
-
-四个数据集共用下面的工具（自动探测分层列、自动备份、可复现）。存成 `sample_utils.py`。
-
-```python
-# sample_utils.py
-import os
-import shutil
-import pandas as pd
-
-# 候选分层列，按优先级排列；取「存在且取值多于 1 种」的第一个
-_STRATA_CANDIDATES = ['category', 'l2-category', 'sub_category', 'subject', 'subfield', 'task_type', 'split', 'domain']
-
-
-def pick_strata_column(df: pd.DataFrame) -> str:
-    print(f'[columns] {list(df.columns)}')
-    for col in _STRATA_CANDIDATES:
-        if col in df.columns and df[col].nunique() > 1:
-            print(f'[strata] 使用分层列: {col} ({df[col].nunique()} 类)')
-            return col
-    raise KeyError(f'未找到合适的分层列，请人工从 {list(df.columns)} 中指定')
-
-
-def resample_tsv(name: str, target: int, seed: int = 42, strata_col: str | None = None):
-    """对 ~/LMUData/{name}.tsv 做分层抽样，原地覆盖（首次自动备份为 {name}_FULL.tsv）。"""
-    original = os.path.expanduser(f'~/LMUData/{name}.tsv')
-    backup = os.path.expanduser(f'~/LMUData/{name}_FULL.tsv')
-    if not os.path.exists(backup):
-        shutil.copy(original, backup)  # 备份全量，避免反复抽样越缩越小
-
-    df = pd.read_csv(backup, sep='\t')  # 始终从全量备份读
-    col = strata_col or pick_strata_column(df)
-    frac = min(1.0, target / len(df))
-    sampled = (df.groupby(col, group_keys=False)
-                 .apply(lambda x: x.sample(frac=frac, random_state=seed), include_groups=True)
-                 .sort_index())
-    sampled.to_csv(original, sep='\t', index=False)
-    print(f'✅ {name}: {len(df)} → {len(sampled)} 题 (分层列={col})')
-    return sampled
-```
-
-> `include_groups=True` 兼容 pandas≥2.2 的 `groupby.apply` 行为变更；老版本若报参数错误删掉它即可。
-
----
-
-## 4. 各数据集 500 题抽样方案
-
-> 流程统一：① `run_vlm(profile, ds, limit=1)` 触发下载 → ② `resample_tsv(...)` 抽样（厂商无关，做一次）→ ③ `run_vlm(profile, ds)` 跑微缩版。下面示例用 `qwen-vl-max_aliyun`，换厂商只改 profile 名。
-
-### 4.1 基础视力：MMBench_DEV_EN_V11 (~1164 → ~500)
-```python
-from sample_utils import resample_tsv
-from run_vlm import run_vlm
-
-resample_tsv('MMBench_DEV_EN_V11', target=500)         # 分层列通常是 category（能力类别），自动探测；厂商无关，做一次
-run_vlm('qwen-vl-max_aliyun', 'MMBench_DEV_EN_V11')    # 数据集名不变，底层跑抽好的 500 题
-```
-
-### 4.2 实景理解：MME-RealWorld-Lite (~2150 → ~500)
-```python
-from sample_utils import resample_tsv
-from run_vlm import run_vlm
-
-resample_tsv('MME-RealWorld-Lite', target=500)
-run_vlm('qwen-vl-max_aliyun', 'MME-RealWorld-Lite')
-```
-
-### 4.3 极限推理：MMMU_Pro_10c (~1730 → ~500)
-> MMMU_Pro 有多个版本：`MMMU_Pro_10c`（10 选项标准版，本文采用）、`MMMU_Pro_10c_COT`、`MMMU_Pro_V`（截图版）、`MMMU_Pro_V_COT`。
-```python
-from sample_utils import resample_tsv
-from run_vlm import run_vlm
-
-resample_tsv('MMMU_Pro_10c', target=500)
-run_vlm('qwen-vl-max_aliyun', 'MMMU_Pro_10c')
-```
-
-### 4.4 视频理解：Video-MME (按视频抽样至 ~300 题)
-**📖 原集规格**：900 个视频 × 3 题 = 2700 题；按时长分 Short(300, ~80s) / Medium(300, ~8.6min) / Long(300, ~41min)。
-
-> ⚠️ **视频集必须按"视频"抽样，不能按"题"抽样**！否则每个视频只抽到一两道题，但模型下载+截帧解析整段视频的耗时一点没省，账单照样爆炸。
->
-> 要点：
-> - 数据集代号是 **`Video-MME`**（短/中/长不是单独的数据集名）。
-> - 唯一视频标识列是 **`video`**；时长是 **`duration`** 列（取值 `short`/`medium`/`long`）。
-> - 想只测短视频，按 `duration == 'short'` 过滤列即可。
-
-```python
-import os, shutil
-import numpy as np
-import pandas as pd
-from run_vlm import run_vlm
-
-name = 'Video-MME'
-original = os.path.expanduser(f'~/LMUData/{name}.tsv')
-backup = os.path.expanduser(f'~/LMUData/{name}_FULL.tsv')
-if not os.path.exists(backup):
-    shutil.copy(original, backup)
-
-df = pd.read_csv(backup, sep='\t')
-print(f'[columns] {list(df.columns)}')
-
-# 可选：只保留短视频（节省时间）。不需要就注释掉这两行。
-if 'duration' in df.columns:
-    df = df[df['duration'] == 'short']
-
-# 1. 按唯一视频标识列抽样（列名优先 video，其次 video_path）
-vid_col = 'video' if 'video' in df.columns else 'video_path'
-unique_videos = df[vid_col].unique()
-
-# 2. 随机抽 100 个视频（每个 3 题 → 约 300 题）
-np.random.seed(42)
-pick = np.random.choice(unique_videos, size=min(100, len(unique_videos)), replace=False)
-
-# 3. 把这些视频的所有题完整挑出
-sampled = df[df[vid_col].isin(pick)].sort_index()
-sampled.to_csv(original, sep='\t', index=False)
-print(f'✅ Video-MME: 抽中 {len(pick)} 个视频 → {len(sampled)} 题 (标识列={vid_col})')
-
-run_vlm('qwen-vl-max_aliyun', 'Video-MME', video_llm=True)  # 名字不变，底层跑抽好的子集
-```
-
-> 还原全量：把 `~/LMUData/{name}_FULL.tsv` 覆盖回 `~/LMUData/{name}.tsv` 即可。
-
----
-
-## 5. 数据集速查表
-
-| 能力 | 数据集代号 | 题型 | 原集题量 | 分层维度 | 抽样方式 |
-|---|---|---|---|---|---|
-| 基础视力 | `MMBench_DEV_EN_V11` | 单选（A–D，circular 循环评测）| ~1164 | 能力类别（`category`） | 分层抽 ~500 |
-| 实景理解 | `MME-RealWorld-Lite` | 单选（**5 选项** A–E）| ~2150 | 场景 / 任务类型 | 分层抽 ~500 |
-| 极限推理 | `MMMU_Pro_10c` | 单选（**10 选项**，`10c` 即扩到 10 个候选）| ~1730 | 学科 / 子领域（`subject`） | 分层抽 ~500 |
-| 视频理解 | `Video-MME` | 单选（A–D，每视频 3 题）| 2700（900 视频×3） | 视频时长（`duration`） | 按 `video` 抽 ~100 个视频（~300 题） |
-
-> 题型来源（已核实）：[MME-RealWorld](https://github.com/MME-Benchmarks/MME-RealWorld)（5 选项）、[MMMU-Pro 论文](https://arxiv.org/pdf/2409.02813)（选项 4→10）、[Video-MME](https://github.com/MME-Benchmarks/Video-MME)（4 选项 A–D）；MMBench 为单选+circular 循环评测。**四个集全是单选题**——所以 `temperature=0`（贪心）最合适、可复现，无需大 `max_tokens`（模型只需吐出选项字母/短答）。
-
-### 5.1 各数据集要传的专属参数
-
-前三个是**图片集**，跑法一致、无专属参数；只有 `Video-MME` 是**视频集**，要额外开 `video_llm` 并可调帧/字幕参数。
-
-| 数据集 | 类型 | 必传/专属参数 | 放在哪 |
-|---|---|---|---|
-| `MMBench_DEV_EN_V11` | 图片 | 无（`video_llm=False`，model 内 `temperature/max_tokens/img_size` 用默认即可） | model dict |
-| `MME-RealWorld-Lite` | 图片 | 无（同上） | model dict |
-| `MMMU_Pro_10c` | 图片 | 无（同上）。⚠️ 若换 COT 变体 `MMMU_Pro_10c_COT`，需把 `max_tokens` 调大（要输出思维链） | model dict |
-| `Video-MME` | 视频 | **`video_llm=True`**（model dict）；可选 `nframe`（默 8）/ `fps`（默 -1，>0 时按帧率取帧，覆盖 nframe）/ `use_subtitle`（默 False）| `video_llm` 在 model dict；`nframe/fps/use_subtitle` 在 `eval_config` 顶层（与 `data/mode/limit/nproc` 同级，见 [vlmevalkit_backend.md](../../docs/zh/user_guides/backend/vlmevalkit_backend.md) 参数说明）|
-
-> Video-MME 取帧示例（在 `run_vlm` 的 `eval_config` 顶层加）：`'nframe': 8`（默认）或 `'fps': 1`（按 1 帧/秒，长视频帧数随时长增多）；要带字幕设 `'use_subtitle': True`。这些只对视频集生效，图片集忽略。
-
-> 运行前务必执行 0.1 的 `list_supported_datasets()` 核对本地 `ms-vlmeval` 版本是否包含上述名字。
+</details>

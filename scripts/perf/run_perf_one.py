@@ -55,11 +55,12 @@ VENDORS = {
     'tencent': dict(
         url='https://tokenhub.tencentmaas.com/v1/chat/completions',
         api_key='sk-9k79zoqAsREeYag1xUDT0WKVPLdvORdgh3FR0OTfsGtamvfN',
-        session_cache=False,
+        session_cache=True,
     ),
+
     'aliyun': dict(
         url='https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
-        api_key='sk-8a5e067144f5451c9aad99f58fefdffd',
+        api_key='sk-2f1a437b944f477aa996a3de09daaeb5',
         session_cache=True,
     ),
 }
@@ -78,8 +79,13 @@ PROFILES = [
     'deepseek-v4-pro_tencent',
     'deepseek-v4-pro-202606_tencent',
     'deepseek-v4-flash_tencent',
-    'deepseek-v4-flash-202606_tencent',
+    'deepseek-v4-flash-202605_tencent',
     'deepseek-v4-pro_aliyun',
+    'deepseek-v4-flash_aliyun',
+    'glm-5.1_tencent',
+    'kimi-k2.6_tencent',
+    'glm-5.1_aliyun',
+    'kimi-k2.6_aliyun'
 ]
 
 
@@ -110,14 +116,15 @@ FIXED = dict(
     api='openai',                                   # 必须是 openai 兼容模式，才能保住咱们的特殊请求体注入
     dataset='swe_smith',
     multi_turn=True,                                # 开启多轮压测
-    parallel=10,                                     # 会话级并发：10 条会话同时跑(会话内 turn 仍串行)；命中率不受影响，但 TTFT/TPOT 会因争抢变大，横向对比延迟须各厂商同档
+    parallel=5,                                     # 会话级并发：10 条会话同时跑(会话内 turn 仍串行)；命中率不受影响，但 TTFT/TPOT 会因争抢变大，横向对比延迟须各厂商同档
     number=10,                                      # 每次只跑 10 条独立的对话 Session
     max_tokens=16384,                               # 配合长文本自然截断，不用商业模型不支持的 ignore_eos
     seed=42,                                        # 锁死随机种子
-    temperature=0.0,                                # 采样温度；0=贪心(可复现)。要调就改这里
+    temperature=1.0,                                # 采样温度；0=贪心(可复现)。要调就改这里
     top_p=0.95,                                      # 核采样；temperature=0 时为空操作，留作可调旋钮
     stream=True,                                    # 必须开启流式，否则算不出首字延迟 TTFT
-    extra_args={'reasoning_effort': 'medium'},        # 深度思考档位(low/medium/high)；非原生字段，走 extra_args 注入请求体。非推理模型请删掉此行
+    #extra_args={'reasoning_effort': 'medium'},        # 深度思考档位(low/medium/high)；非原生字段，走 extra_args 注入请求体。非推理模型请删掉此行
+    extra_args={'thinking': {'type': 'enabled'}} ,    #(glm-5.1 Kimi-k2.6等) 思考档位；非原生字段，走 extra_args 注入请求体。非推理模型请删掉
     read_timeout=300,                               # 读超时 300s：reasoning=high 单轮常需数十秒~分钟，60s 会误杀
     no_test_connection=True,
     no_timestamp=True,

@@ -79,10 +79,10 @@ dataset_offset = 0                # 同模型复测时，每次加 10
 # 生成参数（可自行修改，键名见 evalscope/perf/arguments.py）：
 #   temperature=0.0   # 采样温度；0=贪心（可复现）
 #   top_p=1.0         # 核采样；temperature=0 时为空操作，留作可调旋钮
-#   extra_args={'reasoning_effort': 'high'}  # 思考档位 low/medium/high；非原生字段，走 extra_args 注入请求体。非推理模型请删掉
+#   extra_args={'reasoning_effort': 'high'} 或者 {'thinking': {'type': 'enabled'}} (Kimi 等) # 思考档位；非原生字段，走 extra_args 注入请求体。非推理模型请删掉
 ```
 
-> **不传时 perf 的内部默认（[arguments.py](../../evalscope/perf/arguments.py#L281)）**：硬默认 `temperature=0.0`、`max_tokens=2048`、`stream=True`、`total_timeout=6h`；`top_p` / `top_k` / `seed` / `reasoning_effort` 默认 `None` → **不发送**，由服务端自有默认决定。脚本里显式写 `max_tokens=16384`、`seed=42`、`extra_args=reasoning_effort` 就是为覆盖这些默认、锁死可复现。
+> **不传时 perf 的内部默认（[arguments.py](../../evalscope/perf/arguments.py#L281)）**：硬默认 `temperature=0.0`、`max_tokens=2048`、`stream=True`、`total_timeout=6h`；`top_p` / `top_k` / `seed` / `reasoning_effort` 默认 `None` → **不发送**，由服务端自有默认决定。脚本里显式写 `max_tokens=16384`、`seed=42`、`extra_args` 就是为覆盖这些默认、锁死可复现。
 
 ### Step 3: 执行与指标验收
 执行 `python scripts/perf/run_perf_one.py`，查看跑出的结果。
