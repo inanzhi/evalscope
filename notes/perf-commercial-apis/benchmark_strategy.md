@@ -39,7 +39,10 @@ evalscope perf \
   --warmup-num 2 \
   --read-timeout 300 \
   --name "longalpaca_<模型>_<厂商>"
-  # 推理模型再加深度思考： --extra-args '{"reasoning_effort":"high"}'  （reasoning_effort 不是 perf 的原生 CLI 参数，只能靠 extra-args 注入请求体；非推理模型不要加）
+  # 推理模型再加深度思考（根据模型要求选择传递方式）：
+  # 选项 A (如 OpenAI o3-mini): --extra-args '{"reasoning_effort":"high"}'
+  # 选项 B (如 Kimi K2 等):     --extra-args '{"thinking":{"type":"enabled"}}'
+  # （reasoning_effort 或 thinking 不是 perf 的原生 CLI 参数，只能靠 extra-args 注入请求体；非推理模型不要加）
 ```
 
 > **不传时 perf 的内部默认（`Arguments` 字段值，见 [arguments.py](../../evalscope/perf/arguments.py#L281)）**：硬默认 `temperature=0.0`、`max_tokens=2048`、`stream=True`、`total_timeout=6h`；而 `top_p` / `top_k` / `seed` / `reasoning_effort` 默认 `None` → **不发送**，由服务端自有默认决定。所以上面显式写 `--temperature 0 --top-p 1.0`、`--max-tokens 512` 是为了**锁死可复现性**，覆盖掉这些默认。
@@ -49,7 +52,7 @@ evalscope perf \
 * `--dataset longalpaca`：使用长文本数据集进行评测。
 * `--dataset-offset 500`：**跳过数据集前 500 条数据**，从第 501 条开始压测，确保测试语料和之前跑过的实验完全不重复。
 * `--max-tokens 512`：强制模型在输出 512 个 token 后截断停止。
-* `--temperature 0` / `--top-p 1.0`：生成采样参数（原生字段，见 [arguments.py](../../evalscope/perf/arguments.py#L314)）。压测求公平、可复现，温度取 0（贪心）；`top_p` 在 temperature=0 时为空操作，列出仅作可调旋钮。要测推理模型的深度思考，追加 `--extra-args '{"reasoning_effort":"high"}'`。⚠️ 注意区分两个工具：`reasoning_effort` **不是 `evalscope perf` 的原生 CLI 参数**（[arguments.py](../../evalscope/perf/arguments.py#L281) 的 `Arguments` 里没有它），只能经 `--extra-args` 由 [openai_api.py:144](../../evalscope/perf/plugin/api/openai_api.py#L144) 的 `payload.update(extra_args)` 注入请求体；而在 `evalscope eval`（accuracy 评测）那边它是 `GenerateConfig` 的原生字段，可直接写进 `--generation-config`——两边机制不同，别混。非推理模型加了会报错。
+* `--temperature 0` / `--top-p 1.0`：生成采样参数（原生字段，见 [arguments.py](../../evalscope/perf/arguments.py#L314)）。压测求公平、可复现，温度取 0（贪心）；`top_p` 在 temperature=0 时为空操作，列出仅作可调旋钮。要测推理模型的深度思考，追加 `--extra-args`。例如 OpenAI o3-mini 系列追加 `--extra-args '{"reasoning_effort":"high"}'`，Kimi K2 系列则追加 `--extra-args '{"thinking":{"type":"enabled"}}'`。⚠️ 注意区分两个工具：`reasoning_effort` 和 `thinking` **不是 `evalscope perf` 的原生 CLI 参数**（[arguments.py](../../evalscope/perf/arguments.py#L281) 的 `Arguments` 里没有它们），只能经 `--extra-args` 由 [openai_api.py:144](../../evalscope/perf/plugin/api/openai_api.py#L144) 的 `payload.update(extra_args)` 注入请求体；而在 `evalscope eval`（accuracy 评测）那边它们是 `GenerateConfig` 的原生字段，可直接写进 `--generation-config`——两边机制不同，别混。非推理模型加了会报错。
 * `--parallel 1 8 16`：并发梯队。按顺序分别执行：单线程（测单点极限速度）、8线程、16线程（测并发吞吐）。
 * `--number 20 80 160`：各梯队对应的总请求量。并发 1 发 20 条，并发 8 发 80 条，并发 16 发 160 条。同一次命令中梯队间的数据也不会重复。
 * `--stream`：**必须开启**。开启流式传输才能精确捕获到首字返回时间（TTFT）。该参数为开关型（`argparse.BooleanOptionalAction`），写 `--stream` 即开启、`--no-stream` 关闭

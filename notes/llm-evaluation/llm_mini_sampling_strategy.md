@@ -140,7 +140,11 @@ native 后端的并发开关是 **`--eval-batch-size`**，它直接决定并发�
 
 **含列表/字典时用 JSON：**
 ```bash
+# 通用 JSON 传参示例
 --generation-config '{"temperature":0,"top_p":0.8,"max_tokens":2048,"seed":42,"reasoning_effort":"high","stop_seqs":["\n\n"],"extra_body":{"enable_thinking":false}}'
+
+# 开启 Kimi K2 等模型的思考模式示例
+--generation-config '{"temperature":1.0,"extra_body":{"thinking":{"type":"enabled"}}}'
 ```
 
 | 类别 | 参数键 |
@@ -172,6 +176,7 @@ def eval_vendor(model, api_url, api_key, vendor):
         'temperature': 0,      # 采样温度；0=贪心（可复现）
         'top_p': 1.0,          # 核采样；temperature=0 时为空操作，留作可调旋钮
         # 'reasoning_effort': 'high',  # 思考档位 low/medium/high；仅推理模型可开
+        # 'extra_body': {'thinking': {'type': 'enabled'}},  # 开启 Kimi 等模型的思考模式
         'timeout': 60,
         'retries': 3, 'retry_interval': 5,
     }
