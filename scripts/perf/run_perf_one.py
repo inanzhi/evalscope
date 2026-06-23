@@ -58,6 +58,18 @@ VENDORS = {
         session_cache=True,
     ),
 
+    'sensetime-prod': dict(
+        url='https://api.sensenova.cn/compatible-mode/v2/chat/completions',
+        api_key='sk-Z2DDGSm9h4vKM3MtJlkARnj2T9xzT8zm',
+        session_cache=False,
+    ),
+
+    'sensetime-stage': dict(
+        url='https://api.stage.sensenova.cn/compatible-mode/v2/chat/completions',
+        api_key='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiIyWUk1cWQ5UGRlcHB2M09CZ0FNbHVCYzlhMDQiLCJleHAiOjQ4MzgwNjcwODksIm5iZiI6MTcxNjAwMzA4NH0.XNvnPrOusCtmddP0AyomxgSoacc_VIyVss_Wrd-DwP8',
+        session_cache=False,
+    ),
+
     'aliyun': dict(
         url='https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
         api_key='sk-2f1a437b944f477aa996a3de09daaeb5',
@@ -85,7 +97,14 @@ PROFILES = [
     'glm-5.1_tencent',
     'kimi-k2.6_tencent',
     'glm-5.1_aliyun',
-    'kimi-k2.6_aliyun'
+    'kimi-k2.6_aliyun',
+    'SenseChat-Character-Max-v2-Cache_sensetime-stage',
+    'SenseChat-Character-Max-v2-Flash-Cache_sensetime-stage',
+    'SenseChat-Character-Agt-v2-Cache_sensetime-stage',
+    'SenseChat-Character-Dev-v2-Cache_sensetime-stage',
+
+    'SenseChat-Character-Max-v2_sensetime-prod',
+    'SenseChat-Character-Max-v2-Flash_sensetime-prod',
 ]
 
 
