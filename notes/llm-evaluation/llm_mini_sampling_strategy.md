@@ -215,4 +215,22 @@ eval_vendor('deepseek-v3.2', 'https://api.vendor-b.com/v1', 'KEY_B', vendor='ten
 - **为什么要显式传**：同一款模型打不同厂商（如 `deepseek-v3.2` 同时测百炼/腾讯云）时，`model_id` 会自动重名，报告里两家分不清。手动设成 `deepseek-v3.2_bailian` / `deepseek-v3.2_tencent` 即可区分。
 - **和 perf 的 `--name` 不是一回事**：perf 压测的 `--name` 是结果库 db 名 + 输出子目录名，**同秒并发会撞库**才必须带厂商；而 `evalscope eval` 的输出路径是 `<work_dir>/<时间戳>/...`（默认带时间戳，[config.py:167](../../evalscope/config.py#L167)），不会撞车，`model_id` 纯粹是为了**报告可读 / 多厂商可区分**，机制不同别混。
 
+### 3.7 查看实际发送的请求 payload（调试用）
+
+排查"模型参数有没有真发出去"（如 `extra_body` 里的思考开关、`reasoning_effort`）时，需要看实际请求体。两个来源：
+
+- **`outputs/<时间戳>/predictions/` 下的 JSONL**：`messages` 字段是发送的对话内容，但**不含**完整采样参数和 `extra_body`，只能看 prompt。
+- **想看逐字节、平铺后的真实请求体**：native 后端默认不落盘原始 HTTP body，用 OpenAI SDK 自带的 debug 日志（零侵入，自动覆盖同步/异步/流式）：
+
+```bash
+# Linux / macOS
+export OPENAI_LOG=debug
+# Windows PowerShell
+$env:OPENAI_LOG = "debug"
+```
+
+启用后 SDK 会打印 `Request options`，其中 `json_data` 即为最终发送的请求体（`extra_body` 已平铺合并到顶层、`NOT_GIVEN` 字段已剔除、`timeout`/`extra_headers` 分离不进 body）。日志输出到控制台 stderr，需要存档时 `2>` 重定向到文件，调试完取消该环境变量即可。
+
+> 这是定位「[思考参数注入](#34-模型生成参数)抄错位置导致静默失效」一类问题的最快手段——直接对比发出去的 body 里有没有那个键。
+
 通过这种方式，你可以用最低的成本，快速且高精度地描绘出不同供应商大模型的"能力雷达图"。
