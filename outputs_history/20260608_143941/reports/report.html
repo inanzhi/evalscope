@@ -1,0 +1,3142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Evaluation Report — deepseek-v4-flash-202605_tencent</title>
+  <style>
+/* ── Reset ────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* ── Design tokens ───────────────────────────────────────────── */
+:root {
+  --bg:             #0c0c1a;
+  --bg-card:        #12122b;
+  --bg-card2:       #16163a;
+  --bg-deep:        #09091a;
+  --bg-hover:       #1b1b3a;
+  --border:         rgba(129, 109, 248, 0.10);
+  --border-md:      rgba(129, 109, 248, 0.18);
+  --border-strong:  rgba(129, 109, 248, 0.28);
+  --text:           #e2e8f0;
+  --text-muted:     #8896aa;
+  --text-dim:       #505870;
+  --accent:         #816DF8;
+  --accent-dim:     rgba(129, 109, 248, 0.12);
+  --accent-glow:    rgba(129, 109, 248, 0.25);
+  --accent-dark:    #5B3FD6;
+  --purple:         #a78bfa;
+  --purple-dim:     rgba(167, 139, 250, 0.12);
+  --green:          #0F9C7E;
+  --green-dim:      rgba(15, 156, 126, 0.12);
+  --yellow:         #fbbf24;
+  --radius-xs:      4px;
+  --radius-sm:      8px;
+  --radius:         12px;
+  --radius-lg:      16px;
+  --radius-xl:      20px;
+  --shadow-sm:      0 2px 8px rgba(0,0,0,0.4);
+  --shadow:         0 4px 20px rgba(0,0,0,0.55);
+  --shadow-lg:      0 8px 40px rgba(0,0,0,0.6);
+  --transition:     0.18s ease;
+}
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.65;
+  font-size: 15px;
+  min-height: 100vh;
+}
+
+/* thin global scrollbar */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(129,109,248,0.2); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(129,109,248,0.38); }
+* { scrollbar-width: thin; scrollbar-color: rgba(129,109,248,0.2) transparent; }
+
+/* ── Layout ──────────────────────────────────────────────────── */
+.container {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 1.5rem 1.5rem 5rem;
+}
+
+/* ── Floating TOC ────────────────────────────────────────────── */
+.toc {
+  position: fixed;
+  right: 1.5rem;
+  top: 4.5rem;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.5rem;
+  pointer-events: none;
+}
+.toc > * { pointer-events: auto; }
+
+.toc-toggle-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--bg-card2);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--accent);
+  transition: background var(--transition), transform var(--transition), box-shadow var(--transition);
+  flex-shrink: 0;
+}
+.toc-toggle-btn:hover {
+  background: var(--bg-hover);
+  transform: scale(1.08);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.toc-toggle-btn svg { display: block; }
+
+.toc-panel {
+  background: var(--bg-card2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 1rem 0.75rem 1rem 1rem;
+  width: 220px;
+  max-height: calc(100vh - 9rem);
+  overflow-y: auto;
+  box-shadow: var(--shadow-lg);
+  display: none;
+  animation: toc-in 0.15s ease;
+}
+.toc.expanded .toc-panel { display: block; }
+
+@keyframes toc-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.toc-heading {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-dim);
+  margin-bottom: 0.65rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  padding-left: 0.25rem;
+}
+
+.toc-list, .toc-sub {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.toc-sub { margin-left: 0.6rem; margin-top: 1px; }
+
+.toc-link {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  padding: 0.3rem 0.5rem;
+  border-radius: var(--radius-sm);
+  transition: color var(--transition), background var(--transition);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+.toc-link:hover { color: var(--accent); background: var(--accent-dim); }
+.toc-link.active { color: var(--accent); background: var(--accent-dim); font-weight: 600; }
+
+.toc-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+  opacity: 0.4;
+  transition: opacity var(--transition);
+}
+.toc-link.active .toc-dot { opacity: 1; }
+.toc-sub-link { font-size: 0.75rem; color: var(--text-dim); }
+
+/* ── Back-to-top button ──────────────────────────────────────── */
+.back-to-top {
+  position: fixed;
+  right: 1.5rem;
+  bottom: 2rem;
+  z-index: 200;
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  background: var(--bg-card2);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--accent);
+  text-decoration: none;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition), transform var(--transition), box-shadow var(--transition);
+}
+.back-to-top.visible { opacity: 1; pointer-events: auto; }
+.back-to-top:hover { transform: translateY(-2px); box-shadow: 0 0 0 3px var(--accent-glow); }
+
+/* ── Brand bar (fixed top-left, above container) ───────────── */
+.brand-bar {
+  position: fixed;
+  top: 0.85rem;
+  left: 1.5rem;
+  z-index: 300;
+}
+.brand-logo {
+  display: block;
+  line-height: 0;
+  text-decoration: none;
+  color: inherit;
+}
+.brand-logo svg {
+  height: 20px;
+  width: auto;
+}
+
+/* ── Header card ─────────────────────────────────────────────── */
+.report-header {
+  background: linear-gradient(140deg, #0e0e28 0%, #13163a 55%, #0b1024 100%);
+  border: 1px solid var(--border-md);
+  border-radius: var(--radius-xl);
+  padding: 2.75rem 2.5rem 2.25rem;
+  margin-bottom: 2.25rem;
+  box-shadow: var(--shadow-lg);
+  position: relative;
+  overflow: hidden;
+}
+.report-header::before {
+  content: '';
+  position: absolute;
+  top: -60%; right: -8%;
+  width: 480px; height: 480px;
+  background: radial-gradient(circle, rgba(129,109,248,0.08) 0%, transparent 65%);
+  pointer-events: none;
+}
+.report-header::after {
+  content: '';
+  position: absolute;
+  bottom: -50%; left: -5%;
+  width: 350px; height: 350px;
+  background: radial-gradient(circle, rgba(167,139,250,0.06) 0%, transparent 65%);
+  pointer-events: none;
+}
+.header-inner { position: relative; z-index: 1; }
+
+.header-eyebrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+.header-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: rgba(129,109,248,0.1);
+  border: 1px solid rgba(129,109,248,0.28);
+  border-radius: 20px;
+  padding: 0.22rem 0.9rem;
+  font-size: 0.73rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+.header-badge a { color: inherit; text-decoration: none; }
+.header-badge a:hover { text-decoration: underline; }
+
+.report-title {
+  font-size: 2.4rem;
+  font-weight: 800;
+  background: linear-gradient(130deg, #e2e8f0 30%, var(--accent) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  margin-bottom: 1.75rem;
+}
+
+.meta-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+.meta-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border-md);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.9rem;
+  min-width: 0;
+}
+.meta-chip-label {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-dim);
+}
+.meta-chip-value {
+  font-size: 0.85rem;
+  color: var(--text);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 320px;
+}
+
+/* ── Section ─────────────────────────────────────────────────── */
+.section { margin-bottom: 3rem; }
+
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  margin-bottom: 1.5rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--border-md);
+}
+.section-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px; height: 38px;
+  background: var(--accent-dim);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.section-title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+/* ── Card ────────────────────────────────────────────────────── */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 1.25rem;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+.card:hover { border-color: var(--border-md); }
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.8rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255,255,255,0.015);
+}
+.card-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.card-badge {
+  font-size: 0.7rem;
+  background: var(--accent-dim);
+  color: var(--accent);
+  border-radius: 20px;
+  padding: 0.15rem 0.6rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ── Sub-card ─────────────────────────────────────────────────── */
+.sub-card {
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 1rem;
+  overflow: hidden;
+}
+.sub-card-header {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  padding: 0.55rem 1rem;
+  border-bottom: 1px solid var(--border);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* ── Chart wrap ──────────────────────────────────────────────── */
+.chart-wrap { padding: 0.75rem; min-height: 350px; }
+.chart-wrap > div { width: 100% !important; }
+
+/* ── Tables ──────────────────────────────────────────────────── */
+.table-wrap {
+  overflow-x: auto;
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+  background: transparent;
+}
+
+thead tr { background: rgba(255,255,255,0.025); }
+
+th {
+  padding: 0.7rem 1.1rem;
+  text-align: left;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid var(--border-md);
+  white-space: nowrap;
+}
+td {
+  padding: 0.6rem 1.1rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+tr:last-child td { border-bottom: none; }
+tbody tr:hover td { background: rgba(129,109,248,0.04); }
+
+.score-cell {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9rem;
+}
+.num-cell {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+}
+
+/* inline tags */
+.tag {
+  display: inline-block;
+  background: var(--purple-dim);
+  color: var(--purple);
+  border-radius: var(--radius-xs);
+  padding: 0.08em 0.5em;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+.metric-tag {
+  display: inline-block;
+  background: var(--accent-dim);
+  color: var(--accent);
+  border-radius: var(--radius-xs);
+  padding: 0.08em 0.5em;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+/* ── Dataset accordion card ──────────────────────────────────── */
+.ds-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 0.9rem;
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--transition), box-shadow var(--transition);
+  overflow: hidden;
+}
+.ds-card:hover { border-color: var(--border-md); }
+.ds-card[open] { border-color: var(--border-strong); box-shadow: var(--shadow); }
+
+.ds-summary {
+  padding: 0.95rem 1.25rem;
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  user-select: none;
+  background: rgba(255,255,255,0.02);
+  transition: background var(--transition);
+}
+.ds-summary::-webkit-details-marker { display: none; }
+.ds-summary:hover { background: rgba(129,109,248,0.04); }
+.ds-card[open] .ds-summary { background: rgba(129,109,248,0.05); border-bottom: 1px solid var(--border); }
+
+.ds-summary-left {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
+}
+.ds-arrow {
+  display: flex;
+  align-items: center;
+  color: var(--accent);
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+.ds-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ds-summary-right { flex-shrink: 0; }
+
+.score-pill {
+  display: inline-block;
+  padding: 0.22rem 0.8rem;
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid transparent;
+  /* dynamic color via JS */
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.ds-body { padding: 1.25rem; }
+
+/* ── Inner toggles (description / analysis) ──────────────────── */
+.inner-toggle { margin-bottom: 0.85rem; }
+
+.inner-toggle > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  list-style: none;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  padding: 0.3rem 0.65rem;
+  user-select: none;
+  border-radius: 20px;
+  border: 1px solid rgba(129,109,248,0.25);
+  background: rgba(129,109,248,0.07);
+  transition: color var(--transition), background var(--transition), border-color var(--transition), box-shadow var(--transition);
+}
+.inner-toggle > summary::-webkit-details-marker { display: none; }
+.inner-toggle > summary:hover {
+  color: #fff;
+  background: rgba(129,109,248,0.18);
+  border-color: rgba(129,109,248,0.5);
+  box-shadow: 0 0 8px rgba(129,109,248,0.2);
+}
+.inner-toggle[open] > summary {
+  color: #fff;
+  background: rgba(129,109,248,0.15);
+  border-color: rgba(129,109,248,0.45);
+}
+
+.inner-arrow {
+  display: inline-flex;
+  align-items: center;
+  color: inherit;
+  transition: transform 0.18s ease;
+}
+
+/* ── Description block ───────────────────────────────────────── */
+.ds-description {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  padding: 1rem 1.25rem;
+  background: var(--bg-deep);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--accent-dark);
+  word-break: break-word;
+  line-height: 1.75;
+  margin-bottom: 0.5rem;
+}
+.ds-description p { margin-bottom: 0.6rem; }
+.ds-description p:last-child { margin-bottom: 0; }
+.ds-description ul, .ds-description ol { padding-left: 1.4rem; margin-bottom: 0.6rem; }
+.ds-description li { margin-bottom: 0.2rem; }
+.ds-description strong { color: var(--text); font-weight: 600; }
+.ds-description em { font-style: italic; }
+.ds-description code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.82rem;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+  color: var(--yellow);
+}
+.ds-description pre { background: var(--bg-hover); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.75rem 1rem; overflow-x: auto; margin-bottom: 0.6rem; }
+.ds-description pre code { background: transparent; border: none; padding: 0; color: var(--text); }
+.ds-description h2, .ds-description h3 { font-size: 0.9rem; font-weight: 600; color: var(--accent); margin: 1rem 0 0.35rem; border-bottom: 1px solid var(--border); padding-bottom: 0.2rem; }
+.ds-description table { font-size: 0.82rem; margin-bottom: 0.6rem; background: transparent; }
+.ds-description th { font-size: 0.8rem; padding: 0.4rem 0.7rem; }
+.ds-description td { padding: 0.35rem 0.7rem; }
+.ds-description hr { border: none; border-top: 1px solid var(--border); margin: 0.75rem 0; }
+
+/* ── Analysis block ──────────────────────────────────────────── */
+.analysis-section {
+  font-size: 0.875rem;
+  color: var(--text);
+  padding: 1rem 1.25rem;
+  background: var(--bg-deep);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--green);
+  word-break: break-word;
+  line-height: 1.75;
+  margin-bottom: 0.5rem;
+}
+.analysis-section p { margin-bottom: 0.6rem; }
+.analysis-section p:last-child { margin-bottom: 0; }
+.analysis-section ul, .analysis-section ol { padding-left: 1.4rem; margin-bottom: 0.6rem; }
+.analysis-section li { margin-bottom: 0.2rem; }
+.analysis-section strong { color: var(--text); font-weight: 600; }
+.analysis-section em { color: var(--text-muted); font-style: italic; }
+.analysis-section code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 0.82rem;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+  color: var(--yellow);
+}
+.analysis-section pre { background: var(--bg-hover); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.75rem 1rem; overflow-x: auto; margin-bottom: 0.6rem; }
+.analysis-section pre code { background: transparent; border: none; padding: 0; color: var(--text); }
+.analysis-section h2, .analysis-section h3 { font-size: 0.9rem; font-weight: 600; color: var(--accent); margin: 1rem 0 0.35rem; border-bottom: 1px solid var(--border); padding-bottom: 0.2rem; }
+.analysis-section h2:first-child, .analysis-section h3:first-child { margin-top: 0; }
+.analysis-section blockquote { border-left: 3px solid var(--border-strong); margin: 0.5rem 0; padding: 0.3rem 0.85rem; color: var(--text-muted); font-style: italic; }
+.analysis-section hr { border: none; border-top: 1px solid var(--border); margin: 0.75rem 0; }
+.analysis-section table { font-size: 0.82rem; margin-bottom: 0.6rem; background: transparent; }
+.analysis-section th { font-size: 0.8rem; padding: 0.4rem 0.7rem; }
+.analysis-section td { padding: 0.35rem 0.7rem; }
+
+/* ── Model tag ───────────────────────────────────────────────── */
+.model-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--bg-deep);
+  border: 1px solid var(--border-md);
+  border-radius: var(--radius-sm);
+  padding: 0.25rem 0.7rem;
+  margin: 0.5rem 0 0.75rem;
+}
+
+/* ── Footer ──────────────────────────────────────────────────── */
+.report-footer {
+  margin-top: 4rem;
+  padding: 1.5rem;
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  border-top: 1px solid var(--border);
+}
+.report-footer a { color: var(--accent); text-decoration: none; }
+.report-footer a:hover { text-decoration: underline; }
+
+/* ── Language switcher (shared: eval + perf reports) ────────── */
+.lang-switcher {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border-md);
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.lang-btn {
+  padding: 0.28rem 0.65rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+}
+.lang-btn:hover  { background: rgba(255,255,255,0.06); color: var(--text); }
+.lang-btn.active { background: var(--accent); color: #0d1117; }
+
+/* ── Responsive ──────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .report-title { font-size: 1.8rem; }
+  .report-header { padding: 2rem 1.5rem 1.75rem; }
+  .container { padding: 1.25rem 1rem 4rem; }
+  .toc { right: 0.75rem; top: auto; bottom: 5rem; }
+}
+@media (max-width: 600px) {
+  .report-title { font-size: 1.5rem; }
+  .report-header { padding: 1.5rem 1.1rem 1.4rem; border-radius: var(--radius); }
+  .meta-chip-value { max-width: 220px; }
+  .ds-name { max-width: 180px; }
+  .toc-panel { width: 185px; }
+}
+  </style>
+  <!-- Plotly.js via CDN -->
+  <script src="https://resources.modelscope.cn/third-part/js/plotly/plotly-2.35.2.min.js" charset="utf-8"></script>
+</head>
+<body>
+
+<!-- ── Floating Table of Contents ────────────────────────────── -->
+<nav class="toc" id="toc">
+  <button class="toc-toggle-btn" id="toc-toggle" title="Toggle table of contents" aria-label="Toggle table of contents">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+      <line x1="3" y1="6" x2="21" y2="6"/>
+      <line x1="3" y1="12" x2="15" y2="12"/>
+      <line x1="3" y1="18" x2="18" y2="18"/>
+    </svg>
+  </button>
+  <div class="toc-panel" id="toc-panel" role="navigation" aria-label="Page contents">
+    <div class="toc-heading" data-i18n="toc.title">Contents</div>
+    <ul class="toc-list">
+      <li>
+        <a href="#section-overview" class="toc-link" data-section="section-overview">
+          <span class="toc-dot"></span><span data-i18n="nav.overview">Overview</span>
+        </a>
+      </li>
+      <li>
+        <a href="#section-results" class="toc-link" data-section="section-results">
+          <span class="toc-dot"></span><span data-i18n="nav.results">Results by Dataset</span>
+        </a>
+        
+        <ul class="toc-sub">
+          
+          <li>
+            <a href="#ds-1" class="toc-link toc-sub-link" data-section="ds-1" title="C-MMLU">
+              <span class="toc-dot"></span>C-MMLU
+            </a>
+          </li>
+          
+        </ul>
+        
+      </li>
+    </ul>
+  </div>
+</nav>
+
+<!-- ── Back to top ────────────────────────────────────────────── -->
+<a href="#top" class="back-to-top" id="back-to-top" aria-label="Back to top">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+    <polyline points="18 15 12 9 6 15"/>
+  </svg>
+</a>
+
+<div class="brand-bar">
+  <!-- ── Brand logo ─────────────────────────────────────────── -->
+<a class="brand-logo" href="https://modelscope.cn/" target="_blank" rel="noopener" aria-label="ModelScope">
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" width="152" height="20" viewBox="0 0 151.58 20"><path d="M68.452 7.063h-2.827v9.242h8.168V7.063h-5.34zm2.513 7.24h-2.513V9.066h2.513v5.237z" fill="#D8D8E3"/><path d="M113.03 7.063v2.001 5.237 2.003h7.539v-2.003h-4.712V9.065h4.712V7.063h-4.712-2.827z" fill="#D8D8E3"/><path d="M125.353 7.063h-2.827v9.242h8.168V7.063h-5.34zm2.513 7.24h-2.513V9.066h2.513v5.237z" fill="#D8D8E3"/><path d="M135.742 7.063h-2.827v12.631h2.827v-3.389h5.34V7.063h-5.34zm2.513 7.24h-2.513V9.066h2.513v5.237z" fill="#D8D8E3"/><path d="M81.494 7.063h-5.34v9.242h8.168V3.674h-2.828v3.39zm0 7.24h-2.513V9.066h2.513v5.237z" fill="#D8D8E3"/><path d="M97.48 3.674h2.827v12.63H97.48z" fill="#D8D8E3"/><path d="M89.584 7.063h-2.827v9.319h8.168v-2.08h-5.34v-1.54h5.34V7.064h-5.34zm2.513 3.698h-2.513V9.066h2.513v1.695z" fill="#D8D8E3"/><path d="M148.753 7.063h-5.34v9.242h8.167v-2.003h-5.34v-1.502h5.34V7.063h-2.827zm0 3.736h-2.513V9.066h2.513v1.733z" fill="#D8D8E3"/><path d="M102.732 5.051v2.001 2.417 1.981.021h5.34v2.83h-5.34v2.003h5.34 2.828v-4.833-2.003h-2.828-2.513V7.052h5.34V5.051h-5.34-2.827z" fill="#D8D8E3"/><path d="M51.923 5.214h-2.825v2.772 2.773h-2.828v2.773h2.828v2.772h2.827v-2.772h-2.827v-2.773h2.827V7.986h2.826V5.214h-2.828z" fill="#D8D8E3"/><path d="M54.752 10.76v2.772h2.828V10.76 7.986h-2.828v2.773z" fill="#D8D8E3"/><path d="M57.581 5.214v2.772h2.828v2.773 2.773 2.772h2.826v-2.772-2.773-2.773-2.772h-2.826-2.828z" fill="#D8D8E3"/><path fill="#624AFF" d="M0 7.886h4.312v4.228H0z"/><path fill="#624AFF" d="M16.665 12.114h4.311v4.228h-4.311z"/><path d="M29.6 16.342h-4.312V20h8.042v-7.886H29.6v4.228z" fill="#624AFF"/><path fill="#36CFD1" d="M20.977 7.886h4.311v4.228h-4.311z"/><path fill="#36CFD1" d="M0 3.658h4.312v4.228H0z"/><path fill="#624AFF" d="M33.33 7.886h4.311v4.228H33.33z"/><path fill="#36CFD1" d="M33.33 3.658h4.311v4.228H33.33z"/><path d="M25.288 0v3.658H29.6v4.228h3.73V0h-8.042z" fill="#624AFF"/><path fill="#36CFD1" d="M12.354 7.886h4.311v4.228h-4.311z"/><path d="M8.042 3.658h4.312V0H4.312v7.886h3.73V3.658z" fill="#624AFF"/><path d="M8.042 12.114H4.312V20h8.042v-3.658H8.042v-4.228z" fill="#624AFF"/></svg>
+</a>
+</div>
+
+<div class="container" id="top">
+
+  <!-- ── Header ──────────────────────────────────────────────── -->
+<header class="report-header">
+  <div class="header-inner">
+    <div class="header-eyebrow">
+      <span class="header-badge">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+        </svg>
+        <a href="https://github.com/modelscope/evalscope" target="_blank" rel="noopener">EvalScope</a>
+      </span>
+      <!-- Language toggle: EN / 中文 -->
+      <div class="lang-switcher" role="group" aria-label="Language selection">
+        <button class="lang-btn active" data-lang="en">EN</button>
+        <button class="lang-btn" data-lang="zh">中文</button>
+      </div>
+    </div>
+    <h1 class="report-title" data-i18n="header.title">Evaluation Report</h1>
+    <div class="meta-chips">
+      <div class="meta-chip">
+        <span class="meta-chip-label" data-i18n="meta.models">Model(s)</span>
+        <span class="meta-chip-value" title="deepseek-v4-flash-202605_tencent">deepseek-v4-flash-202605_tencent</span>
+      </div>
+      <div class="meta-chip">
+        <span class="meta-chip-label" data-i18n="meta.datasets">Datasets</span>
+        <span class="meta-chip-value" title="cmmlu">cmmlu</span>
+      </div>
+      <div class="meta-chip">
+        <span class="meta-chip-label" data-i18n="meta.generated_at">Generated at</span>
+        <span class="meta-chip-value">2026-06-08 15:15:14</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+  <!-- ── Overview ────────────────────────────────────────────── -->
+  <section class="section" id="section-overview">
+    <div class="section-header">
+      <div class="section-icon">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+          <rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>
+        </svg>
+      </div>
+      <h2 class="section-title" data-i18n="section.overview">Overview</h2>
+    </div>
+
+    
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title" data-i18n="card.score_summary">Score Summary</span>
+        <span class="card-badge">1 <span data-i18n="badge.entries">entries</span></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th data-i18n="col.dataset">Dataset</th>
+              <th data-i18n="col.model">Model</th>
+              <th data-i18n="col.metric">Metric</th>
+              <th data-i18n="col.score">Score</th>
+              <th data-i18n="col.num">Num</th>
+            </tr>
+          </thead>
+          <tbody>
+            
+            <tr>
+              <td><span class="tag">C-MMLU</span></td>
+              <td>deepseek-v4-flash-202605_tencent</td>
+              <td><span class="metric-tag">mean_acc</span></td>
+              <td class="score-cell">0.9164</td>
+              <td class="num-cell">3350</td>
+            </tr>
+            
+          </tbody>
+        </table>
+      </div>
+    </div>
+    
+
+    
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title" data-i18n="card.overview_chart">Overall Score Chart</span>
+      </div>
+      <div class="chart-wrap"><div>                            <div id="9c33a0fd-1f18-4bd9-b675-00f0ddf14873" class="plotly-graph-div" style="height:100%; width:100%;"></div>            <script>                window.PLOTLYENV=window.PLOTLYENV || {};                                if (document.getElementById("9c33a0fd-1f18-4bd9-b675-00f0ddf14873")) {                    Plotly.newPlot(                        "9c33a0fd-1f18-4bd9-b675-00f0ddf14873",                        [{"hovertemplate":"Dataset=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"","marker":{"color":"#636efa","pattern":{"shape":""}},"name":"","orientation":"v","showlegend":false,"text":{"dtype":"f8","bdata":"pb3BFyZT7T8="},"textposition":"outside","x":["C-MMLU"],"xaxis":"x","y":{"dtype":"f8","bdata":"pb3BFyZT7T8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}","width":0.2}],                        {"template":{"data":{"barpolar":[{"marker":{"line":{"color":"rgb(17,17,17)","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"barpolar"}],"bar":[{"error_x":{"color":"#f2f5fa"},"error_y":{"color":"#f2f5fa"},"marker":{"line":{"color":"rgb(17,17,17)","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"bar"}],"carpet":[{"aaxis":{"endlinecolor":"#A2B1C6","gridcolor":"#506784","linecolor":"#506784","minorgridcolor":"#506784","startlinecolor":"#A2B1C6"},"baxis":{"endlinecolor":"#A2B1C6","gridcolor":"#506784","linecolor":"#506784","minorgridcolor":"#506784","startlinecolor":"#A2B1C6"},"type":"carpet"}],"choropleth":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"choropleth"}],"contourcarpet":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"contourcarpet"}],"contour":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"contour"}],"heatmap":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"heatmap"}],"histogram2dcontour":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"histogram2dcontour"}],"histogram2d":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"histogram2d"}],"histogram":[{"marker":{"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"histogram"}],"mesh3d":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"mesh3d"}],"parcoords":[{"line":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"parcoords"}],"pie":[{"automargin":true,"type":"pie"}],"scatter3d":[{"line":{"colorbar":{"outlinewidth":0,"ticks":""}},"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatter3d"}],"scattercarpet":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattercarpet"}],"scattergeo":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattergeo"}],"scattergl":[{"marker":{"line":{"color":"#283442"}},"type":"scattergl"}],"scattermapbox":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattermapbox"}],"scattermap":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattermap"}],"scatterpolargl":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterpolargl"}],"scatterpolar":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterpolar"}],"scatter":[{"marker":{"line":{"color":"#283442"}},"type":"scatter"}],"scatterternary":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterternary"}],"surface":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"surface"}],"table":[{"cells":{"fill":{"color":"#506784"},"line":{"color":"rgb(17,17,17)"}},"header":{"fill":{"color":"#2a3f5f"},"line":{"color":"rgb(17,17,17)"}},"type":"table"}]},"layout":{"annotationdefaults":{"arrowcolor":"#f2f5fa","arrowhead":0,"arrowwidth":1},"autotypenumbers":"strict","coloraxis":{"colorbar":{"outlinewidth":0,"ticks":""}},"colorscale":{"diverging":[[0,"#8e0152"],[0.1,"#c51b7d"],[0.2,"#de77ae"],[0.3,"#f1b6da"],[0.4,"#fde0ef"],[0.5,"#f7f7f7"],[0.6,"#e6f5d0"],[0.7,"#b8e186"],[0.8,"#7fbc41"],[0.9,"#4d9221"],[1,"#276419"]],"sequential":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"sequentialminus":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]},"colorway":["#636efa","#EF553B","#00cc96","#ab63fa","#FFA15A","#19d3f3","#FF6692","#B6E880","#FF97FF","#FECB52"],"font":{"color":"#f2f5fa"},"geo":{"bgcolor":"rgb(17,17,17)","lakecolor":"rgb(17,17,17)","landcolor":"rgb(17,17,17)","showlakes":true,"showland":true,"subunitcolor":"#506784"},"hoverlabel":{"align":"left"},"hovermode":"closest","mapbox":{"style":"dark"},"paper_bgcolor":"rgb(17,17,17)","plot_bgcolor":"rgb(17,17,17)","polar":{"angularaxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""},"bgcolor":"rgb(17,17,17)","radialaxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""}},"scene":{"xaxis":{"backgroundcolor":"rgb(17,17,17)","gridcolor":"#506784","gridwidth":2,"linecolor":"#506784","showbackground":true,"ticks":"","zerolinecolor":"#C8D4E3"},"yaxis":{"backgroundcolor":"rgb(17,17,17)","gridcolor":"#506784","gridwidth":2,"linecolor":"#506784","showbackground":true,"ticks":"","zerolinecolor":"#C8D4E3"},"zaxis":{"backgroundcolor":"rgb(17,17,17)","gridcolor":"#506784","gridwidth":2,"linecolor":"#506784","showbackground":true,"ticks":"","zerolinecolor":"#C8D4E3"}},"shapedefaults":{"line":{"color":"#f2f5fa"}},"sliderdefaults":{"bgcolor":"#C8D4E3","bordercolor":"rgb(17,17,17)","borderwidth":1,"tickwidth":0},"ternary":{"aaxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""},"baxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""},"bgcolor":"rgb(17,17,17)","caxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""}},"title":{"x":0.05},"updatemenudefaults":{"bgcolor":"#506784","borderwidth":0},"xaxis":{"automargin":true,"gridcolor":"#283442","linecolor":"#506784","ticks":"","title":{"standoff":15},"zerolinecolor":"#283442","zerolinewidth":2},"yaxis":{"automargin":true,"gridcolor":"#283442","linecolor":"#506784","ticks":"","title":{"standoff":15},"zerolinecolor":"#283442","zerolinewidth":2}}},"xaxis":{"anchor":"y","domain":[0.0,1.0],"title":{"text":"Dataset"}},"yaxis":{"anchor":"x","domain":[0.0,1.0],"title":{"text":"Score"},"range":[0,1]},"legend":{"tracegroupgap":0},"margin":{"t":60},"barmode":"relative","uniformtext":{"minsize":12,"mode":"hide"}},                        {"responsive": true}                    )                };            </script>        </div></div>
+    </div>
+    
+
+    
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title" data-i18n="card.score_dist">Score Distribution</span>
+      </div>
+      <div class="chart-wrap"><div>                            <div id="d9943ea0-009b-4bce-912f-7f813c1a0c0a" class="plotly-graph-div" style="height:600px; width:100%;"></div>            <script>                window.PLOTLYENV=window.PLOTLYENV || {};                                if (document.getElementById("d9943ea0-009b-4bce-912f-7f813c1a0c0a")) {                    Plotly.newPlot(                        "d9943ea0-009b-4bce-912f-7f813c1a0c0a",                        [{"branchvalues":"total","customdata":{"dtype":"f8","bdata":"cT0K16Nw7T9xPQrXo3DtP1yPwvUoXO8\u002fKVyPwvUo7D+4HoXrUbjuP83MzMzMzOw\u002fzczMzMzM7D8AAAAAAADwPz0K16NwPeo\u002fKVyPwvUo7D\u002fhehSuR+HqP3E9CtejcO0\u002fFK5H4XoU7j\u002fNzMzMzMzsP3E9CtejcO0\u002fFK5H4XoU7j9xPQrXo3DtP3E9CtejcO0\u002fhetRuB6F6z+4HoXrUbjuPxSuR+F6FO4\u002fFK5H4XoU7j89CtejcD3qP7gehetRuO4\u002fuB6F61G47j+4HoXrUbjuP83MzMzMzOw\u002fFK5H4XoU7j+4HoXrUbjuPxSuR+F6FO4\u002fXI\u002fC9Shc7z8pXI\u002fC9SjsP3E9CtejcO0\u002fXI\u002fC9Shc7z9cj8L1KFzvPxSuR+F6FO4\u002fzczMzMzM7D\u002fhehSuR+HqPylcj8L1KOw\u002fhetRuB6F6z9xPQrXo3DtPwAAAAAAAPA\u002fPQrXo3A96j+4HoXrUbjuP7gehetRuO4\u002fzczMzMzM7D+4HoXrUbjuPxSuR+F6FO4\u002fAAAAAAAA8D+4HoXrUbjuP7gehetRuO4\u002fuB6F61G47j89CtejcD3qP+F6FK5H4eo\u002f4XoUrkfh6j9cj8L1KFzvP7gehetRuO4\u002fPQrXo3A96j9cj8L1KFzvPxSuR+F6FO4\u002fKVyPwvUo7D+F61G4HoXrPwAAAAAAAPA\u002fzczMzMzM7D8K16NwPQrnP3E9CtejcO0\u002f4XoUrkfh6j\u002fJdr6fGi\u002ftP50t1dlSne0\u002fBl5Z4JUF7j9U7YYgulPtPwlkDaP9puw\u002f9O9ap0tT7T8=","shape":"73, 1"},"domain":{"x":[0.0,1.0],"y":[0.0,1.0]},"hovertemplate":"labels=%{label}\u003cbr\u003eNum=%{value}\u003cbr\u003eparent=%{parent}\u003cbr\u003eid=%{id}\u003cbr\u003eScore=%{color}\u003cextra\u003e\u003c\u002fextra\u003e","ids":["cmmlu\u002fChina specific\u002fancient_chinese","cmmlu\u002fChina specific\u002fchinese_civil_service_exam","cmmlu\u002fChina specific\u002fchinese_driving_rule","cmmlu\u002fChina specific\u002fchinese_food_culture","cmmlu\u002fChina specific\u002fchinese_foreign_policy","cmmlu\u002fChina specific\u002fchinese_history","cmmlu\u002fChina specific\u002fchinese_literature","cmmlu\u002fChina specific\u002fchinese_teacher_qualification","cmmlu\u002fChina specific\u002fconstruction_project_management","cmmlu\u002fChina specific\u002felementary_chinese","cmmlu\u002fChina specific\u002felementary_commonsense","cmmlu\u002fChina specific\u002fethnology","cmmlu\u002fChina specific\u002fhigh_school_politics","cmmlu\u002fChina specific\u002fmodern_chinese","cmmlu\u002fChina specific\u002ftraditional_chinese_medicine","cmmlu\u002fHumanities\u002farts","cmmlu\u002fHumanities\u002fcollege_law","cmmlu\u002fHumanities\u002fglobal_facts","cmmlu\u002fHumanities\u002finternational_law","cmmlu\u002fHumanities\u002fjurisprudence","cmmlu\u002fHumanities\u002flogical","cmmlu\u002fHumanities\u002fmarxist_theory","cmmlu\u002fHumanities\u002fphilosophy","cmmlu\u002fHumanities\u002fprofessional_law","cmmlu\u002fHumanities\u002fworld_history","cmmlu\u002fHumanities\u002fworld_religions","cmmlu\u002fOther\u002fagronomy","cmmlu\u002fOther\u002fclinical_knowledge","cmmlu\u002fOther\u002fcollege_medicine","cmmlu\u002fOther\u002fcomputer_security","cmmlu\u002fOther\u002felementary_information_and_technology","cmmlu\u002fOther\u002ffood_science","cmmlu\u002fOther\u002fhuman_sexuality","cmmlu\u002fOther\u002flegal_and_moral_basis","cmmlu\u002fOther\u002fnutrition","cmmlu\u002fOther\u002fprofessional_medicine","cmmlu\u002fOther\u002fsports_science","cmmlu\u002fSTEM\u002fanatomy","cmmlu\u002fSTEM\u002fastronomy","cmmlu\u002fSTEM\u002fcollege_actuarial_science","cmmlu\u002fSTEM\u002fcollege_engineering_hydrology","cmmlu\u002fSTEM\u002fcollege_mathematics","cmmlu\u002fSTEM\u002fcollege_medical_statistics","cmmlu\u002fSTEM\u002fcomputer_science","cmmlu\u002fSTEM\u002fconceptual_physics","cmmlu\u002fSTEM\u002felectrical_engineering","cmmlu\u002fSTEM\u002felementary_mathematics","cmmlu\u002fSTEM\u002fgenetics","cmmlu\u002fSTEM\u002fhigh_school_biology","cmmlu\u002fSTEM\u002fhigh_school_chemistry","cmmlu\u002fSTEM\u002fhigh_school_mathematics","cmmlu\u002fSTEM\u002fhigh_school_physics","cmmlu\u002fSTEM\u002fmachine_learning","cmmlu\u002fSTEM\u002fvirology","cmmlu\u002fSocial Science\u002fbusiness_ethics","cmmlu\u002fSocial Science\u002fcollege_education","cmmlu\u002fSocial Science\u002feconomics","cmmlu\u002fSocial Science\u002feducation","cmmlu\u002fSocial Science\u002fhigh_school_geography","cmmlu\u002fSocial Science\u002fjournalism","cmmlu\u002fSocial Science\u002fmanagement","cmmlu\u002fSocial Science\u002fmarketing","cmmlu\u002fSocial Science\u002fprofessional_accounting","cmmlu\u002fSocial Science\u002fprofessional_psychology","cmmlu\u002fSocial Science\u002fpublic_relations","cmmlu\u002fSocial Science\u002fsecurity_study","cmmlu\u002fSocial Science\u002fsociology","cmmlu\u002fChina specific","cmmlu\u002fHumanities","cmmlu\u002fOther","cmmlu\u002fSTEM","cmmlu\u002fSocial Science","cmmlu"],"labels":["ancient_chinese","chinese_civil_service_exam","chinese_driving_rule","chinese_food_culture","chinese_foreign_policy","chinese_history","chinese_literature","chinese_teacher_qualification","construction_project_management","elementary_chinese","elementary_commonsense","ethnology","high_school_politics","modern_chinese","traditional_chinese_medicine","arts","college_law","global_facts","international_law","jurisprudence","logical","marxist_theory","philosophy","professional_law","world_history","world_religions","agronomy","clinical_knowledge","college_medicine","computer_security","elementary_information_and_technology","food_science","human_sexuality","legal_and_moral_basis","nutrition","professional_medicine","sports_science","anatomy","astronomy","college_actuarial_science","college_engineering_hydrology","college_mathematics","college_medical_statistics","computer_science","conceptual_physics","electrical_engineering","elementary_mathematics","genetics","high_school_biology","high_school_chemistry","high_school_mathematics","high_school_physics","machine_learning","virology","business_ethics","college_education","economics","education","high_school_geography","journalism","management","marketing","professional_accounting","professional_psychology","public_relations","security_study","sociology","China specific","Humanities","Other","STEM","Social Science","cmmlu"],"marker":{"coloraxis":"coloraxis","colors":{"dtype":"f8","bdata":"cT0K16Nw7T9xPQrXo3DtP1yPwvUoXO8\u002fKVyPwvUo7D+4HoXrUbjuP83MzMzMzOw\u002fzczMzMzM7D8AAAAAAADwPz0K16NwPeo\u002fKVyPwvUo7D\u002fhehSuR+HqP3E9CtejcO0\u002fFK5H4XoU7j\u002fNzMzMzMzsP3E9CtejcO0\u002fFK5H4XoU7j9xPQrXo3DtP3E9CtejcO0\u002fhetRuB6F6z+4HoXrUbjuPxSuR+F6FO4\u002fFK5H4XoU7j89CtejcD3qP7gehetRuO4\u002fuB6F61G47j+4HoXrUbjuP83MzMzMzOw\u002fFK5H4XoU7j+4HoXrUbjuPxSuR+F6FO4\u002fXI\u002fC9Shc7z8pXI\u002fC9SjsP3E9CtejcO0\u002fXI\u002fC9Shc7z9cj8L1KFzvPxSuR+F6FO4\u002fzczMzMzM7D\u002fhehSuR+HqPylcj8L1KOw\u002fhetRuB6F6z9xPQrXo3DtPwAAAAAAAPA\u002fPQrXo3A96j+4HoXrUbjuP7gehetRuO4\u002fzczMzMzM7D+4HoXrUbjuPxSuR+F6FO4\u002fAAAAAAAA8D+4HoXrUbjuP7gehetRuO4\u002fuB6F61G47j89CtejcD3qP+F6FK5H4eo\u002f4XoUrkfh6j9cj8L1KFzvP7gehetRuO4\u002fPQrXo3A96j9cj8L1KFzvPxSuR+F6FO4\u002fKVyPwvUo7D+F61G4HoXrPwAAAAAAAPA\u002fzczMzMzM7D8K16NwPQrnP3E9CtejcO0\u002f4XoUrkfh6j\u002fJdr6fGi\u002ftP50t1dlSne0\u002fBl5Z4JUF7j9U7YYgulPtPwlkDaP9puw\u002f9O9ap0tT7T8="}},"maxdepth":4,"name":"","parents":["cmmlu\u002fChina specific","cmmlu\u002fChina specific","cmmlu\u002fChina specific","cmmlu\u002fChina specific","cmmlu\u002fChina specific","cmmlu\u002fChina specific","cmmlu\u002fChina specific","cmmlu\u002fChina specific","cmmlu\u002fChina specific","cmmlu\u002fChina specific","cmmlu\u002fChina specific","cmmlu\u002fChina specific","cmmlu\u002fChina specific","cmmlu\u002fChina specific","cmmlu\u002fChina specific","cmmlu\u002fHumanities","cmmlu\u002fHumanities","cmmlu\u002fHumanities","cmmlu\u002fHumanities","cmmlu\u002fHumanities","cmmlu\u002fHumanities","cmmlu\u002fHumanities","cmmlu\u002fHumanities","cmmlu\u002fHumanities","cmmlu\u002fHumanities","cmmlu\u002fHumanities","cmmlu\u002fOther","cmmlu\u002fOther","cmmlu\u002fOther","cmmlu\u002fOther","cmmlu\u002fOther","cmmlu\u002fOther","cmmlu\u002fOther","cmmlu\u002fOther","cmmlu\u002fOther","cmmlu\u002fOther","cmmlu\u002fOther","cmmlu\u002fSTEM","cmmlu\u002fSTEM","cmmlu\u002fSTEM","cmmlu\u002fSTEM","cmmlu\u002fSTEM","cmmlu\u002fSTEM","cmmlu\u002fSTEM","cmmlu\u002fSTEM","cmmlu\u002fSTEM","cmmlu\u002fSTEM","cmmlu\u002fSTEM","cmmlu\u002fSTEM","cmmlu\u002fSTEM","cmmlu\u002fSTEM","cmmlu\u002fSTEM","cmmlu\u002fSTEM","cmmlu\u002fSTEM","cmmlu\u002fSocial Science","cmmlu\u002fSocial Science","cmmlu\u002fSocial Science","cmmlu\u002fSocial Science","cmmlu\u002fSocial Science","cmmlu\u002fSocial Science","cmmlu\u002fSocial Science","cmmlu\u002fSocial Science","cmmlu\u002fSocial Science","cmmlu\u002fSocial Science","cmmlu\u002fSocial Science","cmmlu\u002fSocial Science","cmmlu\u002fSocial Science","cmmlu","cmmlu","cmmlu","cmmlu","cmmlu",""],"values":{"dtype":"f8","bdata":"AAAAAAAASUAAAAAAAABJQAAAAAAAAElAAAAAAAAASUAAAAAAAABJQAAAAAAAAElAAAAAAAAASUAAAAAAAABJQAAAAAAAAElAAAAAAAAASUAAAAAAAABJQAAAAAAAAElAAAAAAAAASUAAAAAAAABJQAAAAAAAAElAAAAAAAAASUAAAAAAAABJQAAAAAAAAElAAAAAAAAASUAAAAAAAABJQAAAAAAAAElAAAAAAAAASUAAAAAAAABJQAAAAAAAAElAAAAAAAAASUAAAAAAAABJQAAAAAAAAElAAAAAAAAASUAAAAAAAABJQAAAAAAAAElAAAAAAAAASUAAAAAAAABJQAAAAAAAAElAAAAAAAAASUAAAAAAAABJQAAAAAAAAElAAAAAAAAASUAAAAAAAABJQAAAAAAAAElAAAAAAAAASUAAAAAAAABJQAAAAAAAAElAAAAAAAAASUAAAAAAAABJQAAAAAAAAElAAAAAAAAASUAAAAAAAABJQAAAAAAAAElAAAAAAAAASUAAAAAAAABJQAAAAAAAAElAAAAAAAAASUAAAAAAAABJQAAAAAAAAElAAAAAAAAASUAAAAAAAABJQAAAAAAAAElAAAAAAAAASUAAAAAAAABJQAAAAAAAAElAAAAAAAAASUAAAAAAAABJQAAAAAAAAElAAAAAAAAASUAAAAAAAABJQAAAAAAAAElAAAAAAAAASUAAAAAAAHCHQAAAAAAAMIFAAAAAAAAwgUAAAAAAAJCKQAAAAAAAUIRAAAAAAAAsqkA="},"type":"sunburst","insidetextorientation":"radial"}],                        {"template":{"data":{"barpolar":[{"marker":{"line":{"color":"rgb(17,17,17)","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"barpolar"}],"bar":[{"error_x":{"color":"#f2f5fa"},"error_y":{"color":"#f2f5fa"},"marker":{"line":{"color":"rgb(17,17,17)","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"bar"}],"carpet":[{"aaxis":{"endlinecolor":"#A2B1C6","gridcolor":"#506784","linecolor":"#506784","minorgridcolor":"#506784","startlinecolor":"#A2B1C6"},"baxis":{"endlinecolor":"#A2B1C6","gridcolor":"#506784","linecolor":"#506784","minorgridcolor":"#506784","startlinecolor":"#A2B1C6"},"type":"carpet"}],"choropleth":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"choropleth"}],"contourcarpet":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"contourcarpet"}],"contour":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"contour"}],"heatmap":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"heatmap"}],"histogram2dcontour":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"histogram2dcontour"}],"histogram2d":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"histogram2d"}],"histogram":[{"marker":{"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"histogram"}],"mesh3d":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"mesh3d"}],"parcoords":[{"line":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"parcoords"}],"pie":[{"automargin":true,"type":"pie"}],"scatter3d":[{"line":{"colorbar":{"outlinewidth":0,"ticks":""}},"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatter3d"}],"scattercarpet":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattercarpet"}],"scattergeo":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattergeo"}],"scattergl":[{"marker":{"line":{"color":"#283442"}},"type":"scattergl"}],"scattermapbox":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattermapbox"}],"scattermap":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattermap"}],"scatterpolargl":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterpolargl"}],"scatterpolar":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterpolar"}],"scatter":[{"marker":{"line":{"color":"#283442"}},"type":"scatter"}],"scatterternary":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterternary"}],"surface":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"surface"}],"table":[{"cells":{"fill":{"color":"#506784"},"line":{"color":"rgb(17,17,17)"}},"header":{"fill":{"color":"#2a3f5f"},"line":{"color":"rgb(17,17,17)"}},"type":"table"}]},"layout":{"annotationdefaults":{"arrowcolor":"#f2f5fa","arrowhead":0,"arrowwidth":1},"autotypenumbers":"strict","coloraxis":{"colorbar":{"outlinewidth":0,"ticks":""}},"colorscale":{"diverging":[[0,"#8e0152"],[0.1,"#c51b7d"],[0.2,"#de77ae"],[0.3,"#f1b6da"],[0.4,"#fde0ef"],[0.5,"#f7f7f7"],[0.6,"#e6f5d0"],[0.7,"#b8e186"],[0.8,"#7fbc41"],[0.9,"#4d9221"],[1,"#276419"]],"sequential":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"sequentialminus":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]},"colorway":["#636efa","#EF553B","#00cc96","#ab63fa","#FFA15A","#19d3f3","#FF6692","#B6E880","#FF97FF","#FECB52"],"font":{"color":"#f2f5fa"},"geo":{"bgcolor":"rgb(17,17,17)","lakecolor":"rgb(17,17,17)","landcolor":"rgb(17,17,17)","showlakes":true,"showland":true,"subunitcolor":"#506784"},"hoverlabel":{"align":"left"},"hovermode":"closest","mapbox":{"style":"dark"},"paper_bgcolor":"rgb(17,17,17)","plot_bgcolor":"rgb(17,17,17)","polar":{"angularaxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""},"bgcolor":"rgb(17,17,17)","radialaxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""}},"scene":{"xaxis":{"backgroundcolor":"rgb(17,17,17)","gridcolor":"#506784","gridwidth":2,"linecolor":"#506784","showbackground":true,"ticks":"","zerolinecolor":"#C8D4E3"},"yaxis":{"backgroundcolor":"rgb(17,17,17)","gridcolor":"#506784","gridwidth":2,"linecolor":"#506784","showbackground":true,"ticks":"","zerolinecolor":"#C8D4E3"},"zaxis":{"backgroundcolor":"rgb(17,17,17)","gridcolor":"#506784","gridwidth":2,"linecolor":"#506784","showbackground":true,"ticks":"","zerolinecolor":"#C8D4E3"}},"shapedefaults":{"line":{"color":"#f2f5fa"}},"sliderdefaults":{"bgcolor":"#C8D4E3","bordercolor":"rgb(17,17,17)","borderwidth":1,"tickwidth":0},"ternary":{"aaxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""},"baxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""},"bgcolor":"rgb(17,17,17)","caxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""}},"title":{"x":0.05},"updatemenudefaults":{"bgcolor":"#506784","borderwidth":0},"xaxis":{"automargin":true,"gridcolor":"#283442","linecolor":"#506784","ticks":"","title":{"standoff":15},"zerolinecolor":"#283442","zerolinewidth":2},"yaxis":{"automargin":true,"gridcolor":"#283442","linecolor":"#506784","ticks":"","title":{"standoff":15},"zerolinecolor":"#283442","zerolinewidth":2}}},"coloraxis":{"colorbar":{"title":{"text":"Score"}},"colorscale":[[0.0,"rgb(165,0,38)"],[0.1,"rgb(215,48,39)"],[0.2,"rgb(244,109,67)"],[0.3,"rgb(253,174,97)"],[0.4,"rgb(254,224,139)"],[0.5,"rgb(255,255,191)"],[0.6,"rgb(217,239,139)"],[0.7,"rgb(166,217,106)"],[0.8,"rgb(102,189,99)"],[0.9,"rgb(26,152,80)"],[1.0,"rgb(0,104,55)"]],"cmid":0.9164179104477612,"cmin":0,"cmax":1},"legend":{"tracegroupgap":0},"margin":{"t":10,"l":10,"r":10,"b":10},"height":600},                        {"responsive": true}                    )                };            </script>        </div></div>
+    </div>
+    
+
+  </section>
+
+  <!-- ── Results by Dataset ───────────────────────────────────── -->
+  <section class="section" id="section-results">
+    <div class="section-header">
+      <div class="section-icon">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M9 11l3 3L22 4"/>
+          <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+        </svg>
+      </div>
+      <h2 class="section-title" data-i18n="section.results">Results by Dataset</h2>
+    </div>
+
+    
+    <details class="ds-card" id="ds-1" open>
+      <summary class="ds-summary">
+        <div class="ds-summary-left">
+          <span class="ds-arrow">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </span>
+          <span class="ds-name">C-MMLU</span>
+        </div>
+        <div class="ds-summary-right">
+          <span class="score-pill" data-score="0.9164">0.9164</span>
+        </div>
+      </summary>
+
+      <div class="ds-body">
+
+        
+        <details class="inner-toggle">
+          <summary>
+            <span class="inner-arrow">
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">
+                <polyline points="9 18 15 12 9 6"/>
+              </svg>
+            </span>
+            <span data-i18n="toggle.description">Description</span>
+          </summary>
+          <div class="ds-description">
+            
+            <div class="desc-lang-content" data-desc-lang="en"><h2>Overview</h2>
+<p>C-MMLU (Chinese Massive Multitask Language Understanding) is a comprehensive Chinese evaluation benchmark covering 67 subjects across STEM, humanities, social sciences, and China-specific topics. It evaluates models' knowledge and reasoning in Chinese contexts.</p>
+<h2>Task Description</h2>
+<ul>
+<li><strong>Task Type</strong>: Multiple-Choice Question Answering (Chinese)</li>
+<li><strong>Input</strong>: Chinese question with four answer choices (A, B, C, D)</li>
+<li><strong>Output</strong>: Single correct answer letter</li>
+<li><strong>Subjects</strong>: 67 subjects organized into categories including China-specific topics</li>
+</ul>
+<h2>Key Features</h2>
+<ul>
+<li>67 subjects covering diverse Chinese knowledge domains</li>
+<li>Includes China-specific topics (Chinese history, literature, civil service exam, etc.)</li>
+<li>Questions from elementary to professional levels</li>
+<li>Tests both general knowledge and China-specific cultural knowledge</li>
+<li>Standard benchmark for Chinese language model evaluation</li>
+</ul>
+<h2>Evaluation Notes</h2>
+<ul>
+<li>Default configuration uses <strong>0-shot</strong> evaluation</li>
+<li>Uses Chinese Chain-of-Thought (CoT) prompting template</li>
+<li>Results can be aggregated by subject or category</li>
+<li>Categories: STEM, Humanities, Social Science, China-specific, Other</li>
+<li>Evaluates on test split</li>
+</ul>
+<h2>Properties</h2>
+<table>
+<thead>
+<tr>
+<th>Property</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Benchmark Name</strong></td>
+<td><code>cmmlu</code></td>
+</tr>
+<tr>
+<td><strong>Dataset ID</strong></td>
+<td><a href="https://modelscope.cn/datasets/evalscope/cmmlu/summary">evalscope/cmmlu</a></td>
+</tr>
+<tr>
+<td><strong>Paper</strong></td>
+<td>N/A</td>
+</tr>
+<tr>
+<td><strong>Tags</strong></td>
+<td><code>Chinese</code>, <code>Knowledge</code>, <code>MCQ</code></td>
+</tr>
+<tr>
+<td><strong>Metrics</strong></td>
+<td><code>acc</code></td>
+</tr>
+<tr>
+<td><strong>Default Shots</strong></td>
+<td>0-shot</td>
+</tr>
+<tr>
+<td><strong>Evaluation Split</strong></td>
+<td><code>test</code></td>
+</tr>
+</tbody>
+</table>
+<h2>Data Statistics</h2>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Total Samples</td>
+<td>11,582</td>
+</tr>
+<tr>
+<td>Prompt Length (Mean)</td>
+<td>197.87 chars</td>
+</tr>
+<tr>
+<td>Prompt Length (Min/Max)</td>
+<td>134 / 999 chars</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Per-Subset Statistics:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Subset</th>
+<th>Samples</th>
+<th>Prompt Mean</th>
+<th>Prompt Min</th>
+<th>Prompt Max</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>agronomy</code></td>
+<td>169</td>
+<td>168.76</td>
+<td>142</td>
+<td>266</td>
+</tr>
+<tr>
+<td><code>anatomy</code></td>
+<td>148</td>
+<td>157.72</td>
+<td>141</td>
+<td>224</td>
+</tr>
+<tr>
+<td><code>ancient_chinese</code></td>
+<td>164</td>
+<td>178.6</td>
+<td>144</td>
+<td>367</td>
+</tr>
+<tr>
+<td><code>arts</code></td>
+<td>160</td>
+<td>161.22</td>
+<td>141</td>
+<td>233</td>
+</tr>
+<tr>
+<td><code>astronomy</code></td>
+<td>165</td>
+<td>191.31</td>
+<td>143</td>
+<td>404</td>
+</tr>
+<tr>
+<td><code>business_ethics</code></td>
+<td>209</td>
+<td>175.15</td>
+<td>146</td>
+<td>291</td>
+</tr>
+<tr>
+<td><code>chinese_civil_service_exam</code></td>
+<td>160</td>
+<td>284.88</td>
+<td>143</td>
+<td>554</td>
+</tr>
+<tr>
+<td><code>chinese_driving_rule</code></td>
+<td>131</td>
+<td>181.57</td>
+<td>151</td>
+<td>250</td>
+</tr>
+<tr>
+<td><code>chinese_food_culture</code></td>
+<td>136</td>
+<td>170.49</td>
+<td>139</td>
+<td>270</td>
+</tr>
+<tr>
+<td><code>chinese_foreign_policy</code></td>
+<td>107</td>
+<td>254.16</td>
+<td>150</td>
+<td>381</td>
+</tr>
+<tr>
+<td><code>chinese_history</code></td>
+<td>323</td>
+<td>250.97</td>
+<td>164</td>
+<td>387</td>
+</tr>
+<tr>
+<td><code>chinese_literature</code></td>
+<td>204</td>
+<td>177.55</td>
+<td>145</td>
+<td>397</td>
+</tr>
+<tr>
+<td><code>chinese_teacher_qualification</code></td>
+<td>179</td>
+<td>207.4</td>
+<td>156</td>
+<td>326</td>
+</tr>
+<tr>
+<td><code>college_actuarial_science</code></td>
+<td>106</td>
+<td>270.99</td>
+<td>163</td>
+<td>558</td>
+</tr>
+<tr>
+<td><code>college_education</code></td>
+<td>107</td>
+<td>198.09</td>
+<td>149</td>
+<td>355</td>
+</tr>
+<tr>
+<td><code>college_engineering_hydrology</code></td>
+<td>106</td>
+<td>189.62</td>
+<td>146</td>
+<td>273</td>
+</tr>
+<tr>
+<td><code>college_law</code></td>
+<td>108</td>
+<td>220.14</td>
+<td>157</td>
+<td>310</td>
+</tr>
+<tr>
+<td><code>college_mathematics</code></td>
+<td>105</td>
+<td>343.1</td>
+<td>174</td>
+<td>999</td>
+</tr>
+<tr>
+<td><code>college_medical_statistics</code></td>
+<td>106</td>
+<td>212.85</td>
+<td>151</td>
+<td>450</td>
+</tr>
+<tr>
+<td><code>clinical_knowledge</code></td>
+<td>237</td>
+<td>245.74</td>
+<td>150</td>
+<td>393</td>
+</tr>
+<tr>
+<td><code>college_medicine</code></td>
+<td>273</td>
+<td>187.64</td>
+<td>141</td>
+<td>416</td>
+</tr>
+<tr>
+<td><code>computer_science</code></td>
+<td>204</td>
+<td>187.76</td>
+<td>143</td>
+<td>516</td>
+</tr>
+<tr>
+<td><code>computer_security</code></td>
+<td>171</td>
+<td>214.01</td>
+<td>149</td>
+<td>399</td>
+</tr>
+<tr>
+<td><code>conceptual_physics</code></td>
+<td>147</td>
+<td>222.4</td>
+<td>154</td>
+<td>337</td>
+</tr>
+<tr>
+<td><code>construction_project_management</code></td>
+<td>139</td>
+<td>186.58</td>
+<td>149</td>
+<td>306</td>
+</tr>
+<tr>
+<td><code>economics</code></td>
+<td>159</td>
+<td>184.19</td>
+<td>149</td>
+<td>259</td>
+</tr>
+<tr>
+<td><code>education</code></td>
+<td>163</td>
+<td>169.17</td>
+<td>145</td>
+<td>225</td>
+</tr>
+<tr>
+<td><code>elementary_chinese</code></td>
+<td>252</td>
+<td>174.84</td>
+<td>142</td>
+<td>368</td>
+</tr>
+<tr>
+<td><code>elementary_commonsense</code></td>
+<td>198</td>
+<td>163.93</td>
+<td>139</td>
+<td>247</td>
+</tr>
+<tr>
+<td><code>elementary_information_and_technology</code></td>
+<td>238</td>
+<td>181.63</td>
+<td>143</td>
+<td>275</td>
+</tr>
+<tr>
+<td><code>electrical_engineering</code></td>
+<td>172</td>
+<td>183.77</td>
+<td>148</td>
+<td>358</td>
+</tr>
+<tr>
+<td><code>elementary_mathematics</code></td>
+<td>230</td>
+<td>184.92</td>
+<td>145</td>
+<td>320</td>
+</tr>
+<tr>
+<td><code>ethnology</code></td>
+<td>135</td>
+<td>176.41</td>
+<td>145</td>
+<td>294</td>
+</tr>
+<tr>
+<td><code>food_science</code></td>
+<td>143</td>
+<td>165.87</td>
+<td>141</td>
+<td>240</td>
+</tr>
+<tr>
+<td><code>genetics</code></td>
+<td>176</td>
+<td>187.56</td>
+<td>146</td>
+<td>283</td>
+</tr>
+<tr>
+<td><code>global_facts</code></td>
+<td>149</td>
+<td>182.32</td>
+<td>146</td>
+<td>329</td>
+</tr>
+<tr>
+<td><code>high_school_biology</code></td>
+<td>169</td>
+<td>267.46</td>
+<td>177</td>
+<td>486</td>
+</tr>
+<tr>
+<td><code>high_school_chemistry</code></td>
+<td>132</td>
+<td>260.74</td>
+<td>160</td>
+<td>395</td>
+</tr>
+<tr>
+<td><code>high_school_geography</code></td>
+<td>118</td>
+<td>207.08</td>
+<td>142</td>
+<td>377</td>
+</tr>
+<tr>
+<td><code>high_school_mathematics</code></td>
+<td>164</td>
+<td>203.72</td>
+<td>151</td>
+<td>356</td>
+</tr>
+<tr>
+<td><code>high_school_physics</code></td>
+<td>110</td>
+<td>223.11</td>
+<td>152</td>
+<td>353</td>
+</tr>
+<tr>
+<td><code>high_school_politics</code></td>
+<td>143</td>
+<td>269.18</td>
+<td>174</td>
+<td>386</td>
+</tr>
+<tr>
+<td><code>human_sexuality</code></td>
+<td>126</td>
+<td>175.63</td>
+<td>139</td>
+<td>261</td>
+</tr>
+<tr>
+<td><code>international_law</code></td>
+<td>185</td>
+<td>199.09</td>
+<td>150</td>
+<td>385</td>
+</tr>
+<tr>
+<td><code>journalism</code></td>
+<td>172</td>
+<td>172.25</td>
+<td>142</td>
+<td>234</td>
+</tr>
+<tr>
+<td><code>jurisprudence</code></td>
+<td>411</td>
+<td>226.57</td>
+<td>146</td>
+<td>514</td>
+</tr>
+<tr>
+<td><code>legal_and_moral_basis</code></td>
+<td>214</td>
+<td>205.67</td>
+<td>154</td>
+<td>317</td>
+</tr>
+<tr>
+<td><code>logical</code></td>
+<td>123</td>
+<td>181.72</td>
+<td>143</td>
+<td>427</td>
+</tr>
+<tr>
+<td><code>machine_learning</code></td>
+<td>122</td>
+<td>213.32</td>
+<td>155</td>
+<td>419</td>
+</tr>
+<tr>
+<td><code>management</code></td>
+<td>210</td>
+<td>180.32</td>
+<td>145</td>
+<td>287</td>
+</tr>
+<tr>
+<td><code>marketing</code></td>
+<td>180</td>
+<td>185.59</td>
+<td>144</td>
+<td>247</td>
+</tr>
+<tr>
+<td><code>marxist_theory</code></td>
+<td>189</td>
+<td>190.72</td>
+<td>145</td>
+<td>273</td>
+</tr>
+<tr>
+<td><code>modern_chinese</code></td>
+<td>116</td>
+<td>207.66</td>
+<td>142</td>
+<td>471</td>
+</tr>
+<tr>
+<td><code>nutrition</code></td>
+<td>145</td>
+<td>173.48</td>
+<td>144</td>
+<td>267</td>
+</tr>
+<tr>
+<td><code>philosophy</code></td>
+<td>105</td>
+<td>179.91</td>
+<td>143</td>
+<td>359</td>
+</tr>
+<tr>
+<td><code>professional_accounting</code></td>
+<td>175</td>
+<td>183.38</td>
+<td>147</td>
+<td>281</td>
+</tr>
+<tr>
+<td><code>professional_law</code></td>
+<td>211</td>
+<td>231.1</td>
+<td>150</td>
+<td>414</td>
+</tr>
+<tr>
+<td><code>professional_medicine</code></td>
+<td>376</td>
+<td>174.87</td>
+<td>144</td>
+<td>319</td>
+</tr>
+<tr>
+<td><code>professional_psychology</code></td>
+<td>232</td>
+<td>173.55</td>
+<td>142</td>
+<td>273</td>
+</tr>
+<tr>
+<td><code>public_relations</code></td>
+<td>174</td>
+<td>178.06</td>
+<td>144</td>
+<td>263</td>
+</tr>
+<tr>
+<td><code>security_study</code></td>
+<td>135</td>
+<td>186.07</td>
+<td>145</td>
+<td>302</td>
+</tr>
+<tr>
+<td><code>sociology</code></td>
+<td>226</td>
+<td>173.89</td>
+<td>145</td>
+<td>384</td>
+</tr>
+<tr>
+<td><code>sports_science</code></td>
+<td>165</td>
+<td>170.49</td>
+<td>141</td>
+<td>283</td>
+</tr>
+<tr>
+<td><code>traditional_chinese_medicine</code></td>
+<td>185</td>
+<td>165.38</td>
+<td>134</td>
+<td>240</td>
+</tr>
+<tr>
+<td><code>virology</code></td>
+<td>169</td>
+<td>176.32</td>
+<td>144</td>
+<td>266</td>
+</tr>
+<tr>
+<td><code>world_history</code></td>
+<td>161</td>
+<td>258.64</td>
+<td>167</td>
+<td>388</td>
+</tr>
+<tr>
+<td><code>world_religions</code></td>
+<td>160</td>
+<td>163.08</td>
+<td>142</td>
+<td>235</td>
+</tr>
+</tbody>
+</table>
+<h2>Sample Example</h2>
+<p><strong>Subset</strong>: <code>agronomy</code></p>
+<pre><code class="language-json">{
+  &quot;input&quot;: [
+    {
+      &quot;id&quot;: &quot;4e04de48&quot;,
+      &quot;content&quot;: &quot;回答下面的单项选择题，请选出其中的正确答案。你的回答的最后一行应该是这样的格式：\&quot;答案：[LETTER]\&quot;（不带引号），其中 [LETTER] 是 A,B,C,D 中的一个。请在回答前进行一步步思考。\n\n问题：在农业生产中被当作极其重要的劳动对象发挥作用，最主要的不可替代的基本生产资料是\n选项：\nA) 农业生产工具\nB) 土地\nC) 劳动力\nD) 资金\n&quot;
+    }
+  ],
+  &quot;choices&quot;: [
+    &quot;农业生产工具&quot;,
+    &quot;土地&quot;,
+    &quot;劳动力&quot;,
+    &quot;资金&quot;
+  ],
+  &quot;target&quot;: &quot;B&quot;,
+  &quot;id&quot;: 0,
+  &quot;group_id&quot;: 0,
+  &quot;subset_key&quot;: &quot;agronomy&quot;,
+  &quot;metadata&quot;: {
+    &quot;subject&quot;: &quot;agronomy&quot;
+  }
+}
+</code></pre>
+<h2>Prompt Template</h2>
+<p><strong>Prompt Template:</strong></p>
+<pre><code class="language-text">回答下面的单项选择题，请选出其中的正确答案。你的回答的最后一行应该是这样的格式：&quot;答案：[LETTER]&quot;（不带引号），其中 [LETTER] 是 {letters} 中的一个。请在回答前进行一步步思考。
+
+问题：{question}
+选项：
+{choices}
+
+</code></pre></div>
+            
+            
+            <div class="desc-lang-content" data-desc-lang="zh" style="display:none"><h2>概述</h2>
+<p>C-MMLU（Chinese Massive Multitask Language Understanding，中文大规模多任务语言理解）是一个全面的中文评估基准，涵盖 STEM、人文、社会科学以及中国特有主题等 67 个学科领域，用于评估模型在中文语境下的知识与推理能力。</p>
+<h2>任务描述</h2>
+<ul>
+<li><strong>任务类型</strong>：多项选择题问答（中文）</li>
+<li><strong>输入</strong>：一道包含四个选项（A、B、C、D）的中文问题</li>
+<li><strong>输出</strong>：单个正确答案的字母</li>
+<li><strong>学科范围</strong>：67 个学科，按类别组织，包括中国特有主题</li>
+</ul>
+<h2>主要特点</h2>
+<ul>
+<li>覆盖 67 个多样化的中文知识领域</li>
+<li>包含中国特有主题（如中国历史、文学、公务员考试等）</li>
+<li>题目难度从基础教育到专业水平不等</li>
+<li>同时考察通用知识与中国特有的文化知识</li>
+<li>是中文语言模型评估的标准基准之一</li>
+</ul>
+<h2>评估说明</h2>
+<ul>
+<li>默认配置使用 <strong>0-shot</strong> 评估方式</li>
+<li>使用中文思维链（Chain-of-Thought, CoT）提示模板</li>
+<li>结果可按学科或类别进行聚合</li>
+<li>类别包括：STEM、人文、社会科学、中国特有、其他</li>
+<li>在测试集（test split）上进行评估</li>
+</ul>
+<h2>属性</h2>
+<table>
+<thead>
+<tr>
+<th>属性</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>基准测试名称</strong></td>
+<td><code>cmmlu</code></td>
+</tr>
+<tr>
+<td><strong>数据集 ID</strong></td>
+<td><a href="https://modelscope.cn/datasets/evalscope/cmmlu/summary">evalscope/cmmlu</a></td>
+</tr>
+<tr>
+<td><strong>论文</strong></td>
+<td>N/A</td>
+</tr>
+<tr>
+<td><strong>标签</strong></td>
+<td><code>Chinese</code>, <code>Knowledge</code>, <code>MCQ</code></td>
+</tr>
+<tr>
+<td><strong>指标</strong></td>
+<td><code>acc</code></td>
+</tr>
+<tr>
+<td><strong>默认示例数</strong></td>
+<td>0-shot</td>
+</tr>
+<tr>
+<td><strong>评估分割</strong></td>
+<td><code>test</code></td>
+</tr>
+</tbody>
+</table>
+<h2>数据统计</h2>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>总样本数</td>
+<td>11,582</td>
+</tr>
+<tr>
+<td>提示词长度（平均）</td>
+<td>197.87 字符</td>
+</tr>
+<tr>
+<td>提示词长度（最小/最大）</td>
+<td>134 / 999 字符</td>
+</tr>
+</tbody>
+</table>
+<p><strong>各子集统计信息：</strong></p>
+<table>
+<thead>
+<tr>
+<th>子集</th>
+<th>样本数</th>
+<th>提示平均长度</th>
+<th>提示最小长度</th>
+<th>提示最大长度</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>agronomy</code></td>
+<td>169</td>
+<td>168.76</td>
+<td>142</td>
+<td>266</td>
+</tr>
+<tr>
+<td><code>anatomy</code></td>
+<td>148</td>
+<td>157.72</td>
+<td>141</td>
+<td>224</td>
+</tr>
+<tr>
+<td><code>ancient_chinese</code></td>
+<td>164</td>
+<td>178.6</td>
+<td>144</td>
+<td>367</td>
+</tr>
+<tr>
+<td><code>arts</code></td>
+<td>160</td>
+<td>161.22</td>
+<td>141</td>
+<td>233</td>
+</tr>
+<tr>
+<td><code>astronomy</code></td>
+<td>165</td>
+<td>191.31</td>
+<td>143</td>
+<td>404</td>
+</tr>
+<tr>
+<td><code>business_ethics</code></td>
+<td>209</td>
+<td>175.15</td>
+<td>146</td>
+<td>291</td>
+</tr>
+<tr>
+<td><code>chinese_civil_service_exam</code></td>
+<td>160</td>
+<td>284.88</td>
+<td>143</td>
+<td>554</td>
+</tr>
+<tr>
+<td><code>chinese_driving_rule</code></td>
+<td>131</td>
+<td>181.57</td>
+<td>151</td>
+<td>250</td>
+</tr>
+<tr>
+<td><code>chinese_food_culture</code></td>
+<td>136</td>
+<td>170.49</td>
+<td>139</td>
+<td>270</td>
+</tr>
+<tr>
+<td><code>chinese_foreign_policy</code></td>
+<td>107</td>
+<td>254.16</td>
+<td>150</td>
+<td>381</td>
+</tr>
+<tr>
+<td><code>chinese_history</code></td>
+<td>323</td>
+<td>250.97</td>
+<td>164</td>
+<td>387</td>
+</tr>
+<tr>
+<td><code>chinese_literature</code></td>
+<td>204</td>
+<td>177.55</td>
+<td>145</td>
+<td>397</td>
+</tr>
+<tr>
+<td><code>chinese_teacher_qualification</code></td>
+<td>179</td>
+<td>207.4</td>
+<td>156</td>
+<td>326</td>
+</tr>
+<tr>
+<td><code>college_actuarial_science</code></td>
+<td>106</td>
+<td>270.99</td>
+<td>163</td>
+<td>558</td>
+</tr>
+<tr>
+<td><code>college_education</code></td>
+<td>107</td>
+<td>198.09</td>
+<td>149</td>
+<td>355</td>
+</tr>
+<tr>
+<td><code>college_engineering_hydrology</code></td>
+<td>106</td>
+<td>189.62</td>
+<td>146</td>
+<td>273</td>
+</tr>
+<tr>
+<td><code>college_law</code></td>
+<td>108</td>
+<td>220.14</td>
+<td>157</td>
+<td>310</td>
+</tr>
+<tr>
+<td><code>college_mathematics</code></td>
+<td>105</td>
+<td>343.1</td>
+<td>174</td>
+<td>999</td>
+</tr>
+<tr>
+<td><code>college_medical_statistics</code></td>
+<td>106</td>
+<td>212.85</td>
+<td>151</td>
+<td>450</td>
+</tr>
+<tr>
+<td><code>clinical_knowledge</code></td>
+<td>237</td>
+<td>245.74</td>
+<td>150</td>
+<td>393</td>
+</tr>
+<tr>
+<td><code>college_medicine</code></td>
+<td>273</td>
+<td>187.64</td>
+<td>141</td>
+<td>416</td>
+</tr>
+<tr>
+<td><code>computer_science</code></td>
+<td>204</td>
+<td>187.76</td>
+<td>143</td>
+<td>516</td>
+</tr>
+<tr>
+<td><code>computer_security</code></td>
+<td>171</td>
+<td>214.01</td>
+<td>149</td>
+<td>399</td>
+</tr>
+<tr>
+<td><code>conceptual_physics</code></td>
+<td>147</td>
+<td>222.4</td>
+<td>154</td>
+<td>337</td>
+</tr>
+<tr>
+<td><code>construction_project_management</code></td>
+<td>139</td>
+<td>186.58</td>
+<td>149</td>
+<td>306</td>
+</tr>
+<tr>
+<td><code>economics</code></td>
+<td>159</td>
+<td>184.19</td>
+<td>149</td>
+<td>259</td>
+</tr>
+<tr>
+<td><code>education</code></td>
+<td>163</td>
+<td>169.17</td>
+<td>145</td>
+<td>225</td>
+</tr>
+<tr>
+<td><code>elementary_chinese</code></td>
+<td>252</td>
+<td>174.84</td>
+<td>142</td>
+<td>368</td>
+</tr>
+<tr>
+<td><code>elementary_commonsense</code></td>
+<td>198</td>
+<td>163.93</td>
+<td>139</td>
+<td>247</td>
+</tr>
+<tr>
+<td><code>elementary_information_and_technology</code></td>
+<td>238</td>
+<td>181.63</td>
+<td>143</td>
+<td>275</td>
+</tr>
+<tr>
+<td><code>electrical_engineering</code></td>
+<td>172</td>
+<td>183.77</td>
+<td>148</td>
+<td>358</td>
+</tr>
+<tr>
+<td><code>elementary_mathematics</code></td>
+<td>230</td>
+<td>184.92</td>
+<td>145</td>
+<td>320</td>
+</tr>
+<tr>
+<td><code>ethnology</code></td>
+<td>135</td>
+<td>176.41</td>
+<td>145</td>
+<td>294</td>
+</tr>
+<tr>
+<td><code>food_science</code></td>
+<td>143</td>
+<td>165.87</td>
+<td>141</td>
+<td>240</td>
+</tr>
+<tr>
+<td><code>genetics</code></td>
+<td>176</td>
+<td>187.56</td>
+<td>146</td>
+<td>283</td>
+</tr>
+<tr>
+<td><code>global_facts</code></td>
+<td>149</td>
+<td>182.32</td>
+<td>146</td>
+<td>329</td>
+</tr>
+<tr>
+<td><code>high_school_biology</code></td>
+<td>169</td>
+<td>267.46</td>
+<td>177</td>
+<td>486</td>
+</tr>
+<tr>
+<td><code>high_school_chemistry</code></td>
+<td>132</td>
+<td>260.74</td>
+<td>160</td>
+<td>395</td>
+</tr>
+<tr>
+<td><code>high_school_geography</code></td>
+<td>118</td>
+<td>207.08</td>
+<td>142</td>
+<td>377</td>
+</tr>
+<tr>
+<td><code>high_school_mathematics</code></td>
+<td>164</td>
+<td>203.72</td>
+<td>151</td>
+<td>356</td>
+</tr>
+<tr>
+<td><code>high_school_physics</code></td>
+<td>110</td>
+<td>223.11</td>
+<td>152</td>
+<td>353</td>
+</tr>
+<tr>
+<td><code>high_school_politics</code></td>
+<td>143</td>
+<td>269.18</td>
+<td>174</td>
+<td>386</td>
+</tr>
+<tr>
+<td><code>human_sexuality</code></td>
+<td>126</td>
+<td>175.63</td>
+<td>139</td>
+<td>261</td>
+</tr>
+<tr>
+<td><code>international_law</code></td>
+<td>185</td>
+<td>199.09</td>
+<td>150</td>
+<td>385</td>
+</tr>
+<tr>
+<td><code>journalism</code></td>
+<td>172</td>
+<td>172.25</td>
+<td>142</td>
+<td>234</td>
+</tr>
+<tr>
+<td><code>jurisprudence</code></td>
+<td>411</td>
+<td>226.57</td>
+<td>146</td>
+<td>514</td>
+</tr>
+<tr>
+<td><code>legal_and_moral_basis</code></td>
+<td>214</td>
+<td>205.67</td>
+<td>154</td>
+<td>317</td>
+</tr>
+<tr>
+<td><code>logical</code></td>
+<td>123</td>
+<td>181.72</td>
+<td>143</td>
+<td>427</td>
+</tr>
+<tr>
+<td><code>machine_learning</code></td>
+<td>122</td>
+<td>213.32</td>
+<td>155</td>
+<td>419</td>
+</tr>
+<tr>
+<td><code>management</code></td>
+<td>210</td>
+<td>180.32</td>
+<td>145</td>
+<td>287</td>
+</tr>
+<tr>
+<td><code>marketing</code></td>
+<td>180</td>
+<td>185.59</td>
+<td>144</td>
+<td>247</td>
+</tr>
+<tr>
+<td><code>marxist_theory</code></td>
+<td>189</td>
+<td>190.72</td>
+<td>145</td>
+<td>273</td>
+</tr>
+<tr>
+<td><code>modern_chinese</code></td>
+<td>116</td>
+<td>207.66</td>
+<td>142</td>
+<td>471</td>
+</tr>
+<tr>
+<td><code>nutrition</code></td>
+<td>145</td>
+<td>173.48</td>
+<td>144</td>
+<td>267</td>
+</tr>
+<tr>
+<td><code>philosophy</code></td>
+<td>105</td>
+<td>179.91</td>
+<td>143</td>
+<td>359</td>
+</tr>
+<tr>
+<td><code>professional_accounting</code></td>
+<td>175</td>
+<td>183.38</td>
+<td>147</td>
+<td>281</td>
+</tr>
+<tr>
+<td><code>professional_law</code></td>
+<td>211</td>
+<td>231.1</td>
+<td>150</td>
+<td>414</td>
+</tr>
+<tr>
+<td><code>professional_medicine</code></td>
+<td>376</td>
+<td>174.87</td>
+<td>144</td>
+<td>319</td>
+</tr>
+<tr>
+<td><code>professional_psychology</code></td>
+<td>232</td>
+<td>173.55</td>
+<td>142</td>
+<td>273</td>
+</tr>
+<tr>
+<td><code>public_relations</code></td>
+<td>174</td>
+<td>178.06</td>
+<td>144</td>
+<td>263</td>
+</tr>
+<tr>
+<td><code>security_study</code></td>
+<td>135</td>
+<td>186.07</td>
+<td>145</td>
+<td>302</td>
+</tr>
+<tr>
+<td><code>sociology</code></td>
+<td>226</td>
+<td>173.89</td>
+<td>145</td>
+<td>384</td>
+</tr>
+<tr>
+<td><code>sports_science</code></td>
+<td>165</td>
+<td>170.49</td>
+<td>141</td>
+<td>283</td>
+</tr>
+<tr>
+<td><code>traditional_chinese_medicine</code></td>
+<td>185</td>
+<td>165.38</td>
+<td>134</td>
+<td>240</td>
+</tr>
+<tr>
+<td><code>virology</code></td>
+<td>169</td>
+<td>176.32</td>
+<td>144</td>
+<td>266</td>
+</tr>
+<tr>
+<td><code>world_history</code></td>
+<td>161</td>
+<td>258.64</td>
+<td>167</td>
+<td>388</td>
+</tr>
+<tr>
+<td><code>world_religions</code></td>
+<td>160</td>
+<td>163.08</td>
+<td>142</td>
+<td>235</td>
+</tr>
+</tbody>
+</table>
+<h2>样例示例</h2>
+<p><strong>子集</strong>: <code>agronomy</code></p>
+<pre><code class="language-json">{
+  &quot;input&quot;: [
+    {
+      &quot;id&quot;: &quot;4e04de48&quot;,
+      &quot;content&quot;: &quot;回答下面的单项选择题，请选出其中的正确答案。你的回答的最后一行应该是这样的格式：\&quot;答案：[LETTER]\&quot;（不带引号），其中 [LETTER] 是 A,B,C,D 中的一个。请在回答前进行一步步思考。\n\n问题：在农业生产中被当作极其重要的劳动对象发挥作用，最主要的不可替代的基本生产资料是\n选项：\nA) 农业生产工具\nB) 土地\nC) 劳动力\nD) 资金\n&quot;
+    }
+  ],
+  &quot;choices&quot;: [
+    &quot;农业生产工具&quot;,
+    &quot;土地&quot;,
+    &quot;劳动力&quot;,
+    &quot;资金&quot;
+  ],
+  &quot;target&quot;: &quot;B&quot;,
+  &quot;id&quot;: 0,
+  &quot;group_id&quot;: 0,
+  &quot;subset_key&quot;: &quot;agronomy&quot;,
+  &quot;metadata&quot;: {
+    &quot;subject&quot;: &quot;agronomy&quot;
+  }
+}
+</code></pre>
+<h2>提示模板</h2>
+<p><strong>提示模板：</strong></p>
+<pre><code class="language-text">回答下面的单项选择题，请选出其中的正确答案。你的回答的最后一行应该是这样的格式：&quot;答案：[LETTER]&quot;（不带引号），其中 [LETTER] 是 {letters} 中的一个。请在回答前进行一步步思考。
+
+问题：{question}
+选项：
+{choices}
+
+</code></pre></div>
+            
+          </div>
+        </details>
+        
+
+        
+
+          
+
+          
+          <div class="card" style="margin-bottom:1rem;">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    
+                    <th data-i18n="col.category">Category</th>
+                    
+                    <th data-i18n="col.subset">Subset</th>
+                    <th data-i18n="col.metric">Metric</th>
+                    <th data-i18n="col.score">Score</th>
+                    <th data-i18n="col.num">Num</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">China specific</span></td>
+                    
+                    <td>ancient_chinese</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9200</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">China specific</span></td>
+                    
+                    <td>chinese_civil_service_exam</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9200</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">China specific</span></td>
+                    
+                    <td>chinese_driving_rule</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9800</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">China specific</span></td>
+                    
+                    <td>chinese_food_culture</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.8800</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">China specific</span></td>
+                    
+                    <td>chinese_foreign_policy</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9600</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">China specific</span></td>
+                    
+                    <td>chinese_history</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9000</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">China specific</span></td>
+                    
+                    <td>chinese_literature</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9000</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">China specific</span></td>
+                    
+                    <td>chinese_teacher_qualification</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">1.0000</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">China specific</span></td>
+                    
+                    <td>construction_project_management</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.8200</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">China specific</span></td>
+                    
+                    <td>elementary_chinese</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.8800</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">China specific</span></td>
+                    
+                    <td>elementary_commonsense</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.8400</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">China specific</span></td>
+                    
+                    <td>ethnology</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9200</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">China specific</span></td>
+                    
+                    <td>high_school_politics</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9400</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">China specific</span></td>
+                    
+                    <td>modern_chinese</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9000</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">China specific</span></td>
+                    
+                    <td>traditional_chinese_medicine</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9200</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Humanities</span></td>
+                    
+                    <td>arts</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9400</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Humanities</span></td>
+                    
+                    <td>college_law</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9200</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Humanities</span></td>
+                    
+                    <td>global_facts</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9200</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Humanities</span></td>
+                    
+                    <td>international_law</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.8600</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Humanities</span></td>
+                    
+                    <td>jurisprudence</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9600</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Humanities</span></td>
+                    
+                    <td>logical</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9400</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Humanities</span></td>
+                    
+                    <td>marxist_theory</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9400</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Humanities</span></td>
+                    
+                    <td>philosophy</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.8200</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Humanities</span></td>
+                    
+                    <td>professional_law</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9600</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Humanities</span></td>
+                    
+                    <td>world_history</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9600</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Humanities</span></td>
+                    
+                    <td>world_religions</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9600</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Other</span></td>
+                    
+                    <td>agronomy</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9000</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Other</span></td>
+                    
+                    <td>clinical_knowledge</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9400</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Other</span></td>
+                    
+                    <td>college_medicine</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9600</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Other</span></td>
+                    
+                    <td>computer_security</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9400</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Other</span></td>
+                    
+                    <td>elementary_information_and_technology</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9800</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Other</span></td>
+                    
+                    <td>food_science</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.8800</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Other</span></td>
+                    
+                    <td>human_sexuality</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9200</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Other</span></td>
+                    
+                    <td>legal_and_moral_basis</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9800</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Other</span></td>
+                    
+                    <td>nutrition</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9800</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Other</span></td>
+                    
+                    <td>professional_medicine</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9400</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Other</span></td>
+                    
+                    <td>sports_science</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9000</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">STEM</span></td>
+                    
+                    <td>anatomy</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.8400</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">STEM</span></td>
+                    
+                    <td>astronomy</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.8800</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">STEM</span></td>
+                    
+                    <td>college_actuarial_science</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.8600</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">STEM</span></td>
+                    
+                    <td>college_engineering_hydrology</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9200</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">STEM</span></td>
+                    
+                    <td>college_mathematics</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">1.0000</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">STEM</span></td>
+                    
+                    <td>college_medical_statistics</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.8200</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">STEM</span></td>
+                    
+                    <td>computer_science</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9600</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">STEM</span></td>
+                    
+                    <td>conceptual_physics</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9600</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">STEM</span></td>
+                    
+                    <td>electrical_engineering</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9000</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">STEM</span></td>
+                    
+                    <td>elementary_mathematics</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9600</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">STEM</span></td>
+                    
+                    <td>genetics</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9400</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">STEM</span></td>
+                    
+                    <td>high_school_biology</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">1.0000</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">STEM</span></td>
+                    
+                    <td>high_school_chemistry</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9600</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">STEM</span></td>
+                    
+                    <td>high_school_mathematics</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9600</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">STEM</span></td>
+                    
+                    <td>high_school_physics</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9600</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">STEM</span></td>
+                    
+                    <td>machine_learning</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.8200</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">STEM</span></td>
+                    
+                    <td>virology</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.8400</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Social Science</span></td>
+                    
+                    <td>business_ethics</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.8400</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Social Science</span></td>
+                    
+                    <td>college_education</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9800</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Social Science</span></td>
+                    
+                    <td>economics</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9600</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Social Science</span></td>
+                    
+                    <td>education</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.8200</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Social Science</span></td>
+                    
+                    <td>high_school_geography</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9800</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Social Science</span></td>
+                    
+                    <td>journalism</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9400</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Social Science</span></td>
+                    
+                    <td>management</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.8800</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Social Science</span></td>
+                    
+                    <td>marketing</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.8600</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Social Science</span></td>
+                    
+                    <td>professional_accounting</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">1.0000</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Social Science</span></td>
+                    
+                    <td>professional_psychology</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9000</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Social Science</span></td>
+                    
+                    <td>public_relations</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.7200</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Social Science</span></td>
+                    
+                    <td>security_study</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.9200</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                  <tr>
+                    
+                    <td><span class="tag">Social Science</span></td>
+                    
+                    <td>sociology</td>
+                    <td><span class="metric-tag">mean_acc</span></td>
+                    <td class="score-cell">0.8400</td>
+                    <td class="num-cell">50</td>
+                  </tr>
+                  
+                </tbody>
+              </table>
+            </div>
+          </div>
+          
+
+          
+          <div class="sub-card">
+            <div class="sub-card-header">
+              C-MMLU &middot; <span data-i18n="card.subset_scores">Subset Scores</span>
+            </div>
+            <div class="chart-wrap"><div>                            <div id="chart-cmmlu-deepseek-v4-flash-202605_tencent" class="plotly-graph-div" style="height:100%; width:100%;"></div>            <script>                window.PLOTLYENV=window.PLOTLYENV || {};                                if (document.getElementById("chart-cmmlu-deepseek-v4-flash-202605_tencent")) {                    Plotly.newPlot(                        "chart-cmmlu-deepseek-v4-flash-202605_tencent",                        [{"alignmentgroup":"True","hovertemplate":"Subset=ancient_chinese\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"ancient_chinese","marker":{"color":"#636efa","pattern":{"shape":""}},"name":"ancient_chinese","offsetgroup":"ancient_chinese","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"cT0K16Nw7T8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"cT0K16Nw7T8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=chinese_civil_service_exam\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"chinese_civil_service_exam","marker":{"color":"#EF553B","pattern":{"shape":""}},"name":"chinese_civil_service_exam","offsetgroup":"chinese_civil_service_exam","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"cT0K16Nw7T8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"cT0K16Nw7T8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=chinese_driving_rule\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"chinese_driving_rule","marker":{"color":"#00cc96","pattern":{"shape":""}},"name":"chinese_driving_rule","offsetgroup":"chinese_driving_rule","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"XI\u002fC9Shc7z8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"XI\u002fC9Shc7z8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=chinese_food_culture\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"chinese_food_culture","marker":{"color":"#ab63fa","pattern":{"shape":""}},"name":"chinese_food_culture","offsetgroup":"chinese_food_culture","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"KVyPwvUo7D8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"KVyPwvUo7D8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=chinese_foreign_policy\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"chinese_foreign_policy","marker":{"color":"#FFA15A","pattern":{"shape":""}},"name":"chinese_foreign_policy","offsetgroup":"chinese_foreign_policy","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"uB6F61G47j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"uB6F61G47j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=chinese_history\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"chinese_history","marker":{"color":"#19d3f3","pattern":{"shape":""}},"name":"chinese_history","offsetgroup":"chinese_history","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"zczMzMzM7D8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"zczMzMzM7D8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=chinese_literature\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"chinese_literature","marker":{"color":"#FF6692","pattern":{"shape":""}},"name":"chinese_literature","offsetgroup":"chinese_literature","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"zczMzMzM7D8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"zczMzMzM7D8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=chinese_teacher_qualification\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"chinese_teacher_qualification","marker":{"color":"#B6E880","pattern":{"shape":""}},"name":"chinese_teacher_qualification","offsetgroup":"chinese_teacher_qualification","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"AAAAAAAA8D8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA8D8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=construction_project_management\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"construction_project_management","marker":{"color":"#FF97FF","pattern":{"shape":""}},"name":"construction_project_management","offsetgroup":"construction_project_management","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"PQrXo3A96j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"PQrXo3A96j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=elementary_chinese\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"elementary_chinese","marker":{"color":"#FECB52","pattern":{"shape":""}},"name":"elementary_chinese","offsetgroup":"elementary_chinese","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"KVyPwvUo7D8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"KVyPwvUo7D8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=elementary_commonsense\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"elementary_commonsense","marker":{"color":"#636efa","pattern":{"shape":""}},"name":"elementary_commonsense","offsetgroup":"elementary_commonsense","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"4XoUrkfh6j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"4XoUrkfh6j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=ethnology\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"ethnology","marker":{"color":"#EF553B","pattern":{"shape":""}},"name":"ethnology","offsetgroup":"ethnology","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"cT0K16Nw7T8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"cT0K16Nw7T8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=high_school_politics\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"high_school_politics","marker":{"color":"#00cc96","pattern":{"shape":""}},"name":"high_school_politics","offsetgroup":"high_school_politics","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"FK5H4XoU7j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"FK5H4XoU7j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=modern_chinese\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"modern_chinese","marker":{"color":"#ab63fa","pattern":{"shape":""}},"name":"modern_chinese","offsetgroup":"modern_chinese","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"zczMzMzM7D8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"zczMzMzM7D8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=traditional_chinese_medicine\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"traditional_chinese_medicine","marker":{"color":"#FFA15A","pattern":{"shape":""}},"name":"traditional_chinese_medicine","offsetgroup":"traditional_chinese_medicine","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"cT0K16Nw7T8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"cT0K16Nw7T8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=arts\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"arts","marker":{"color":"#19d3f3","pattern":{"shape":""}},"name":"arts","offsetgroup":"arts","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"FK5H4XoU7j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"FK5H4XoU7j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=college_law\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"college_law","marker":{"color":"#FF6692","pattern":{"shape":""}},"name":"college_law","offsetgroup":"college_law","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"cT0K16Nw7T8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"cT0K16Nw7T8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=global_facts\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"global_facts","marker":{"color":"#B6E880","pattern":{"shape":""}},"name":"global_facts","offsetgroup":"global_facts","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"cT0K16Nw7T8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"cT0K16Nw7T8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=international_law\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"international_law","marker":{"color":"#FF97FF","pattern":{"shape":""}},"name":"international_law","offsetgroup":"international_law","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"hetRuB6F6z8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"hetRuB6F6z8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=jurisprudence\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"jurisprudence","marker":{"color":"#FECB52","pattern":{"shape":""}},"name":"jurisprudence","offsetgroup":"jurisprudence","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"uB6F61G47j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"uB6F61G47j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=logical\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"logical","marker":{"color":"#636efa","pattern":{"shape":""}},"name":"logical","offsetgroup":"logical","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"FK5H4XoU7j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"FK5H4XoU7j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=marxist_theory\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"marxist_theory","marker":{"color":"#EF553B","pattern":{"shape":""}},"name":"marxist_theory","offsetgroup":"marxist_theory","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"FK5H4XoU7j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"FK5H4XoU7j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=philosophy\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"philosophy","marker":{"color":"#00cc96","pattern":{"shape":""}},"name":"philosophy","offsetgroup":"philosophy","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"PQrXo3A96j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"PQrXo3A96j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=professional_law\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"professional_law","marker":{"color":"#ab63fa","pattern":{"shape":""}},"name":"professional_law","offsetgroup":"professional_law","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"uB6F61G47j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"uB6F61G47j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=world_history\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"world_history","marker":{"color":"#FFA15A","pattern":{"shape":""}},"name":"world_history","offsetgroup":"world_history","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"uB6F61G47j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"uB6F61G47j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=world_religions\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"world_religions","marker":{"color":"#19d3f3","pattern":{"shape":""}},"name":"world_religions","offsetgroup":"world_religions","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"uB6F61G47j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"uB6F61G47j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=agronomy\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"agronomy","marker":{"color":"#FF6692","pattern":{"shape":""}},"name":"agronomy","offsetgroup":"agronomy","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"zczMzMzM7D8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"zczMzMzM7D8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=clinical_knowledge\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"clinical_knowledge","marker":{"color":"#B6E880","pattern":{"shape":""}},"name":"clinical_knowledge","offsetgroup":"clinical_knowledge","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"FK5H4XoU7j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"FK5H4XoU7j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=college_medicine\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"college_medicine","marker":{"color":"#FF97FF","pattern":{"shape":""}},"name":"college_medicine","offsetgroup":"college_medicine","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"uB6F61G47j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"uB6F61G47j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=computer_security\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"computer_security","marker":{"color":"#FECB52","pattern":{"shape":""}},"name":"computer_security","offsetgroup":"computer_security","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"FK5H4XoU7j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"FK5H4XoU7j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=elementary_information_and_technology\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"elementary_information_and_technology","marker":{"color":"#636efa","pattern":{"shape":""}},"name":"elementary_information_and_technology","offsetgroup":"elementary_information_and_technology","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"XI\u002fC9Shc7z8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"XI\u002fC9Shc7z8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=food_science\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"food_science","marker":{"color":"#EF553B","pattern":{"shape":""}},"name":"food_science","offsetgroup":"food_science","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"KVyPwvUo7D8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"KVyPwvUo7D8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=human_sexuality\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"human_sexuality","marker":{"color":"#00cc96","pattern":{"shape":""}},"name":"human_sexuality","offsetgroup":"human_sexuality","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"cT0K16Nw7T8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"cT0K16Nw7T8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=legal_and_moral_basis\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"legal_and_moral_basis","marker":{"color":"#ab63fa","pattern":{"shape":""}},"name":"legal_and_moral_basis","offsetgroup":"legal_and_moral_basis","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"XI\u002fC9Shc7z8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"XI\u002fC9Shc7z8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=nutrition\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"nutrition","marker":{"color":"#FFA15A","pattern":{"shape":""}},"name":"nutrition","offsetgroup":"nutrition","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"XI\u002fC9Shc7z8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"XI\u002fC9Shc7z8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=professional_medicine\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"professional_medicine","marker":{"color":"#19d3f3","pattern":{"shape":""}},"name":"professional_medicine","offsetgroup":"professional_medicine","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"FK5H4XoU7j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"FK5H4XoU7j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=sports_science\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"sports_science","marker":{"color":"#FF6692","pattern":{"shape":""}},"name":"sports_science","offsetgroup":"sports_science","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"zczMzMzM7D8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"zczMzMzM7D8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=anatomy\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"anatomy","marker":{"color":"#B6E880","pattern":{"shape":""}},"name":"anatomy","offsetgroup":"anatomy","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"4XoUrkfh6j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"4XoUrkfh6j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=astronomy\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"astronomy","marker":{"color":"#FF97FF","pattern":{"shape":""}},"name":"astronomy","offsetgroup":"astronomy","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"KVyPwvUo7D8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"KVyPwvUo7D8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=college_actuarial_science\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"college_actuarial_science","marker":{"color":"#FECB52","pattern":{"shape":""}},"name":"college_actuarial_science","offsetgroup":"college_actuarial_science","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"hetRuB6F6z8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"hetRuB6F6z8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=college_engineering_hydrology\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"college_engineering_hydrology","marker":{"color":"#636efa","pattern":{"shape":""}},"name":"college_engineering_hydrology","offsetgroup":"college_engineering_hydrology","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"cT0K16Nw7T8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"cT0K16Nw7T8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=college_mathematics\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"college_mathematics","marker":{"color":"#EF553B","pattern":{"shape":""}},"name":"college_mathematics","offsetgroup":"college_mathematics","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"AAAAAAAA8D8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA8D8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=college_medical_statistics\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"college_medical_statistics","marker":{"color":"#00cc96","pattern":{"shape":""}},"name":"college_medical_statistics","offsetgroup":"college_medical_statistics","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"PQrXo3A96j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"PQrXo3A96j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=computer_science\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"computer_science","marker":{"color":"#ab63fa","pattern":{"shape":""}},"name":"computer_science","offsetgroup":"computer_science","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"uB6F61G47j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"uB6F61G47j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=conceptual_physics\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"conceptual_physics","marker":{"color":"#FFA15A","pattern":{"shape":""}},"name":"conceptual_physics","offsetgroup":"conceptual_physics","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"uB6F61G47j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"uB6F61G47j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=electrical_engineering\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"electrical_engineering","marker":{"color":"#19d3f3","pattern":{"shape":""}},"name":"electrical_engineering","offsetgroup":"electrical_engineering","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"zczMzMzM7D8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"zczMzMzM7D8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=elementary_mathematics\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"elementary_mathematics","marker":{"color":"#FF6692","pattern":{"shape":""}},"name":"elementary_mathematics","offsetgroup":"elementary_mathematics","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"uB6F61G47j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"uB6F61G47j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=genetics\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"genetics","marker":{"color":"#B6E880","pattern":{"shape":""}},"name":"genetics","offsetgroup":"genetics","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"FK5H4XoU7j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"FK5H4XoU7j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=high_school_biology\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"high_school_biology","marker":{"color":"#FF97FF","pattern":{"shape":""}},"name":"high_school_biology","offsetgroup":"high_school_biology","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"AAAAAAAA8D8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA8D8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=high_school_chemistry\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"high_school_chemistry","marker":{"color":"#FECB52","pattern":{"shape":""}},"name":"high_school_chemistry","offsetgroup":"high_school_chemistry","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"uB6F61G47j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"uB6F61G47j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=high_school_mathematics\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"high_school_mathematics","marker":{"color":"#636efa","pattern":{"shape":""}},"name":"high_school_mathematics","offsetgroup":"high_school_mathematics","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"uB6F61G47j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"uB6F61G47j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=high_school_physics\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"high_school_physics","marker":{"color":"#EF553B","pattern":{"shape":""}},"name":"high_school_physics","offsetgroup":"high_school_physics","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"uB6F61G47j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"uB6F61G47j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=machine_learning\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"machine_learning","marker":{"color":"#00cc96","pattern":{"shape":""}},"name":"machine_learning","offsetgroup":"machine_learning","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"PQrXo3A96j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"PQrXo3A96j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=virology\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"virology","marker":{"color":"#ab63fa","pattern":{"shape":""}},"name":"virology","offsetgroup":"virology","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"4XoUrkfh6j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"4XoUrkfh6j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=business_ethics\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"business_ethics","marker":{"color":"#FFA15A","pattern":{"shape":""}},"name":"business_ethics","offsetgroup":"business_ethics","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"4XoUrkfh6j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"4XoUrkfh6j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=college_education\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"college_education","marker":{"color":"#19d3f3","pattern":{"shape":""}},"name":"college_education","offsetgroup":"college_education","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"XI\u002fC9Shc7z8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"XI\u002fC9Shc7z8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=economics\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"economics","marker":{"color":"#FF6692","pattern":{"shape":""}},"name":"economics","offsetgroup":"economics","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"uB6F61G47j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"uB6F61G47j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=education\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"education","marker":{"color":"#B6E880","pattern":{"shape":""}},"name":"education","offsetgroup":"education","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"PQrXo3A96j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"PQrXo3A96j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=high_school_geography\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"high_school_geography","marker":{"color":"#FF97FF","pattern":{"shape":""}},"name":"high_school_geography","offsetgroup":"high_school_geography","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"XI\u002fC9Shc7z8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"XI\u002fC9Shc7z8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=journalism\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"journalism","marker":{"color":"#FECB52","pattern":{"shape":""}},"name":"journalism","offsetgroup":"journalism","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"FK5H4XoU7j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"FK5H4XoU7j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=management\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"management","marker":{"color":"#636efa","pattern":{"shape":""}},"name":"management","offsetgroup":"management","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"KVyPwvUo7D8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"KVyPwvUo7D8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=marketing\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"marketing","marker":{"color":"#EF553B","pattern":{"shape":""}},"name":"marketing","offsetgroup":"marketing","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"hetRuB6F6z8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"hetRuB6F6z8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=professional_accounting\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"professional_accounting","marker":{"color":"#00cc96","pattern":{"shape":""}},"name":"professional_accounting","offsetgroup":"professional_accounting","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"AAAAAAAA8D8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"AAAAAAAA8D8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=professional_psychology\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"professional_psychology","marker":{"color":"#ab63fa","pattern":{"shape":""}},"name":"professional_psychology","offsetgroup":"professional_psychology","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"zczMzMzM7D8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"zczMzMzM7D8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=public_relations\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"public_relations","marker":{"color":"#FFA15A","pattern":{"shape":""}},"name":"public_relations","offsetgroup":"public_relations","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"CtejcD0K5z8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"CtejcD0K5z8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=security_study\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"security_study","marker":{"color":"#19d3f3","pattern":{"shape":""}},"name":"security_study","offsetgroup":"security_study","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"cT0K16Nw7T8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"cT0K16Nw7T8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"},{"alignmentgroup":"True","hovertemplate":"Subset=sociology\u003cbr\u003eMetric=%{x}\u003cbr\u003eScore=%{text}\u003cextra\u003e\u003c\u002fextra\u003e","legendgroup":"sociology","marker":{"color":"#FF6692","pattern":{"shape":""}},"name":"sociology","offsetgroup":"sociology","orientation":"v","showlegend":true,"text":{"dtype":"f8","bdata":"4XoUrkfh6j8="},"textposition":"outside","x":["mean_acc"],"xaxis":"x","y":{"dtype":"f8","bdata":"4XoUrkfh6j8="},"yaxis":"y","type":"bar","texttemplate":"%{text:.2f}"}],                        {"template":{"data":{"barpolar":[{"marker":{"line":{"color":"rgb(17,17,17)","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"barpolar"}],"bar":[{"error_x":{"color":"#f2f5fa"},"error_y":{"color":"#f2f5fa"},"marker":{"line":{"color":"rgb(17,17,17)","width":0.5},"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"bar"}],"carpet":[{"aaxis":{"endlinecolor":"#A2B1C6","gridcolor":"#506784","linecolor":"#506784","minorgridcolor":"#506784","startlinecolor":"#A2B1C6"},"baxis":{"endlinecolor":"#A2B1C6","gridcolor":"#506784","linecolor":"#506784","minorgridcolor":"#506784","startlinecolor":"#A2B1C6"},"type":"carpet"}],"choropleth":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"choropleth"}],"contourcarpet":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"contourcarpet"}],"contour":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"contour"}],"heatmap":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"heatmap"}],"histogram2dcontour":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"histogram2dcontour"}],"histogram2d":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"histogram2d"}],"histogram":[{"marker":{"pattern":{"fillmode":"overlay","size":10,"solidity":0.2}},"type":"histogram"}],"mesh3d":[{"colorbar":{"outlinewidth":0,"ticks":""},"type":"mesh3d"}],"parcoords":[{"line":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"parcoords"}],"pie":[{"automargin":true,"type":"pie"}],"scatter3d":[{"line":{"colorbar":{"outlinewidth":0,"ticks":""}},"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatter3d"}],"scattercarpet":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattercarpet"}],"scattergeo":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattergeo"}],"scattergl":[{"marker":{"line":{"color":"#283442"}},"type":"scattergl"}],"scattermapbox":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattermapbox"}],"scattermap":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scattermap"}],"scatterpolargl":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterpolargl"}],"scatterpolar":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterpolar"}],"scatter":[{"marker":{"line":{"color":"#283442"}},"type":"scatter"}],"scatterternary":[{"marker":{"colorbar":{"outlinewidth":0,"ticks":""}},"type":"scatterternary"}],"surface":[{"colorbar":{"outlinewidth":0,"ticks":""},"colorscale":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"type":"surface"}],"table":[{"cells":{"fill":{"color":"#506784"},"line":{"color":"rgb(17,17,17)"}},"header":{"fill":{"color":"#2a3f5f"},"line":{"color":"rgb(17,17,17)"}},"type":"table"}]},"layout":{"annotationdefaults":{"arrowcolor":"#f2f5fa","arrowhead":0,"arrowwidth":1},"autotypenumbers":"strict","coloraxis":{"colorbar":{"outlinewidth":0,"ticks":""}},"colorscale":{"diverging":[[0,"#8e0152"],[0.1,"#c51b7d"],[0.2,"#de77ae"],[0.3,"#f1b6da"],[0.4,"#fde0ef"],[0.5,"#f7f7f7"],[0.6,"#e6f5d0"],[0.7,"#b8e186"],[0.8,"#7fbc41"],[0.9,"#4d9221"],[1,"#276419"]],"sequential":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]],"sequentialminus":[[0.0,"#0d0887"],[0.1111111111111111,"#46039f"],[0.2222222222222222,"#7201a8"],[0.3333333333333333,"#9c179e"],[0.4444444444444444,"#bd3786"],[0.5555555555555556,"#d8576b"],[0.6666666666666666,"#ed7953"],[0.7777777777777778,"#fb9f3a"],[0.8888888888888888,"#fdca26"],[1.0,"#f0f921"]]},"colorway":["#636efa","#EF553B","#00cc96","#ab63fa","#FFA15A","#19d3f3","#FF6692","#B6E880","#FF97FF","#FECB52"],"font":{"color":"#f2f5fa"},"geo":{"bgcolor":"rgb(17,17,17)","lakecolor":"rgb(17,17,17)","landcolor":"rgb(17,17,17)","showlakes":true,"showland":true,"subunitcolor":"#506784"},"hoverlabel":{"align":"left"},"hovermode":"closest","mapbox":{"style":"dark"},"paper_bgcolor":"rgb(17,17,17)","plot_bgcolor":"rgb(17,17,17)","polar":{"angularaxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""},"bgcolor":"rgb(17,17,17)","radialaxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""}},"scene":{"xaxis":{"backgroundcolor":"rgb(17,17,17)","gridcolor":"#506784","gridwidth":2,"linecolor":"#506784","showbackground":true,"ticks":"","zerolinecolor":"#C8D4E3"},"yaxis":{"backgroundcolor":"rgb(17,17,17)","gridcolor":"#506784","gridwidth":2,"linecolor":"#506784","showbackground":true,"ticks":"","zerolinecolor":"#C8D4E3"},"zaxis":{"backgroundcolor":"rgb(17,17,17)","gridcolor":"#506784","gridwidth":2,"linecolor":"#506784","showbackground":true,"ticks":"","zerolinecolor":"#C8D4E3"}},"shapedefaults":{"line":{"color":"#f2f5fa"}},"sliderdefaults":{"bgcolor":"#C8D4E3","bordercolor":"rgb(17,17,17)","borderwidth":1,"tickwidth":0},"ternary":{"aaxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""},"baxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""},"bgcolor":"rgb(17,17,17)","caxis":{"gridcolor":"#506784","linecolor":"#506784","ticks":""}},"title":{"x":0.05},"updatemenudefaults":{"bgcolor":"#506784","borderwidth":0},"xaxis":{"automargin":true,"gridcolor":"#283442","linecolor":"#506784","ticks":"","title":{"standoff":15},"zerolinecolor":"#283442","zerolinewidth":2},"yaxis":{"automargin":true,"gridcolor":"#283442","linecolor":"#506784","ticks":"","title":{"standoff":15},"zerolinecolor":"#283442","zerolinewidth":2}}},"xaxis":{"anchor":"y","domain":[0.0,1.0],"title":{"text":"Metric"}},"yaxis":{"anchor":"x","domain":[0.0,1.0],"title":{"text":"Score"},"range":[0,1]},"legend":{"title":{"text":"Subset"},"tracegroupgap":0},"margin":{"t":60},"barmode":"group","uniformtext":{"minsize":12,"mode":"hide"}},                        {"responsive": true}                    )                };            </script>        </div></div>
+          </div>
+          
+
+          
+
+        
+
+      </div>
+    </details>
+    
+
+  </section>
+
+  <!-- ── Footer ──────────────────────────────────────────────── -->
+  <!-- ── Footer ──────────────────────────────────────────────── -->
+<footer class="report-footer">
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+  </svg>
+  <span data-i18n="footer.generated_by">Generated by</span>
+  <a href="https://github.com/modelscope/evalscope" target="_blank" rel="noopener">EvalScope</a>
+</footer>
+
+</div><!-- /container -->
+
+<script>
+(function () {
+  'use strict';
+
+var DEFAULT_LANG = 'en';
+
+/* ═══════════════════════════════════════════════════════════════════
+ * i18n dictionary — Evaluation Report
+ *
+ * Keys follow a dot-notation namespace:
+ *   toc.*        — floating table of contents
+ *   nav.*        — TOC link labels
+ *   header.*     — page header text
+ *   meta.*       — header meta-chip labels
+ *   section.*    — section heading titles
+ *   card.*       — card / sub-card heading titles
+ *   col.*        — table column headers
+ *   badge.*      — inline count suffixes
+ *   toggle.*     — collapsible inner-toggle labels
+ *   footer.*     — footer text
+ *
+ * To add a new language, duplicate the `en` block, change the key,
+ * and provide translated values. No other code changes required.
+ * ═══════════════════════════════════════════════════════════════════ */
+var I18N = {
+
+  en: {
+    /* ── Navigation / TOC ─────────────────────── */
+    'toc.title':         'Contents',
+    'nav.overview':      'Overview',
+    'nav.results':       'Results by Dataset',
+
+    /* ── Page header ──────────────────────────── */
+    'header.title':      'Evaluation Report',
+    'meta.models':       'Model(s)',
+    'meta.datasets':     'Datasets',
+    'meta.generated_at': 'Generated at',
+
+    /* ── Section headings ─────────────────────── */
+    'section.overview':  'Overview',
+    'section.results':   'Results by Dataset',
+
+    /* ── Card titles ──────────────────────────── */
+    'card.score_summary':  'Score Summary',
+    'card.overview_chart': 'Overall Score Chart',
+    'card.score_dist':     'Score Distribution',
+    'card.subset_scores':  'Subset Scores',
+
+    /* ── Table column headers ─────────────────── */
+    'col.dataset':   'Dataset',
+    'col.model':     'Model',
+    'col.metric':    'Metric',
+    'col.score':     'Score',
+    'col.num':       'Num',
+    'col.subset':    'Subset',
+    'col.category':  'Category',
+
+    /* ── Inline badge suffixes ────────────────── */
+    'badge.entries': 'entries',
+
+    /* ── Collapsible toggle labels ────────────── */
+    'toggle.description': 'Description',
+    'toggle.analysis':    'Analysis',
+
+    /* ── Footer ───────────────────────────────── */
+    'footer.generated_by': 'Generated by',
+  },
+
+  zh: {
+    /* ── Navigation / TOC ─────────────────────── */
+    'toc.title':         '目录',
+    'nav.overview':      '概览',
+    'nav.results':       '数据集结果',
+
+    /* ── Page header ──────────────────────────── */
+    'header.title':      '评测报告',
+    'meta.models':       '模型',
+    'meta.datasets':     '数据集',
+    'meta.generated_at': '生成时间',
+
+    /* ── Section headings ─────────────────────── */
+    'section.overview':  '概览',
+    'section.results':   '数据集结果',
+
+    /* ── Card titles ──────────────────────────── */
+    'card.score_summary':  '分数汇总',
+    'card.overview_chart': '整体分数图表',
+    'card.score_dist':     '分数分布',
+    'card.subset_scores':  '子集分数',
+
+    /* ── Table column headers ─────────────────── */
+    'col.dataset':   '数据集',
+    'col.model':     '模型',
+    'col.metric':    '指标',
+    'col.score':     '分数',
+    'col.num':       '数量',
+    'col.subset':    '子集',
+    'col.category':  '类别',
+
+    /* ── Inline badge suffixes ────────────────── */
+    'badge.entries': '条记录',
+
+    /* ── Collapsible toggle labels ────────────── */
+    'toggle.description': '数据集描述',
+    'toggle.analysis':    '分析',
+
+    /* ── Footer ───────────────────────────────── */
+    'footer.generated_by': '由以下工具生成',
+  },
+
+}; /* end I18N */
+/* ── Language switcher ─────────────────────────────────────────── */
+
+/**
+ * Apply a language to the page.
+ *
+ * Walks every element carrying a [data-i18n] attribute and replaces
+ * its textContent with the matching translation. Falls back silently
+ * when a key is absent (element keeps its original text).
+ *
+ * The `.desc-lang-content` handling is a safe no-op on pages that do
+ * not contain description blocks (e.g. the perf report).
+ *
+ * @param {string} lang - Language code: 'en' | 'zh'
+ */
+function setLang(lang) {
+  if (!I18N[lang]) return;
+  var dict = I18N[lang];
+
+  /* Update all translated elements */
+  document.querySelectorAll('[data-i18n]').forEach(function (el) {
+    var key = el.dataset.i18n;
+    if (Object.prototype.hasOwnProperty.call(dict, key)) {
+      el.textContent = dict[key];
+    }
+  });
+
+  /* Show the matching description language, hide the other (eval only; no-op on perf) */
+  document.querySelectorAll('.desc-lang-content').forEach(function (el) {
+    el.style.display = (el.dataset.descLang === lang) ? '' : 'none';
+  });
+
+  /* Highlight the active lang button */
+  document.querySelectorAll('.lang-btn').forEach(function (btn) {
+    btn.classList.toggle('active', btn.dataset.lang === lang);
+  });
+
+  /* Update <html lang> for accessibility / SEO */
+  document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+
+  /* Persist selection across page reloads (shared key across all reports) */
+  try { localStorage.setItem('evalscope-lang', lang); } catch (e) { /* ignore */ }
+}
+
+/* Bind click handlers to the EN / 中文 toggle buttons */
+document.querySelectorAll('.lang-btn').forEach(function (btn) {
+  btn.addEventListener('click', function () { setLang(btn.dataset.lang); });
+});
+
+/* Restore the last-selected language on page load,
+   falling back to the server-side DEFAULT_LANG when no stored preference exists */
+(function initLang() {
+  try {
+    var saved = localStorage.getItem('evalscope-lang');
+    setLang((saved && I18N[saved]) ? saved : (DEFAULT_LANG || 'en'));
+  } catch (e) {
+    setLang(DEFAULT_LANG || 'en');
+  }
+}());
+
+/* ── Dataset / run accordion arrow ───────────────────────────── */
+document.querySelectorAll('details.ds-card').forEach(function (el) {
+  var arrow = el.querySelector('.ds-arrow');
+  function sync() {
+    if (arrow) arrow.style.transform = el.open ? 'rotate(90deg)' : 'rotate(0deg)';
+  }
+  sync();
+  el.addEventListener('toggle', function () {
+    sync();
+    /* Plotly responsive resize */
+    if (el.open) window.dispatchEvent(new Event('resize'));
+  });
+});
+
+/* ── Floating TOC toggle ─────────────────────────────────────── */
+var toc       = document.getElementById('toc');
+var tocToggle = document.getElementById('toc-toggle');
+
+/* Auto-expand on wide screens */
+if (window.innerWidth >= 1320) toc.classList.add('expanded');
+
+tocToggle.addEventListener('click', function () {
+  toc.classList.toggle('expanded');
+});
+
+/* Close TOC when clicking outside */
+document.addEventListener('click', function (e) {
+  if (!toc.contains(e.target)) toc.classList.remove('expanded');
+});
+
+/* ── TOC smooth scroll + mobile close ───────────────────────── */
+document.querySelectorAll('.toc-link').forEach(function (link) {
+  link.addEventListener('click', function (e) {
+    var href = link.getAttribute('href');
+    if (!href || !href.startsWith('#')) return;
+    e.preventDefault();
+    var target = document.getElementById(href.slice(1));
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (window.innerWidth < 1320) toc.classList.remove('expanded');
+    }
+  });
+});
+
+/* ── TOC active section via IntersectionObserver ─────────────── */
+var tocSections = [];
+document.querySelectorAll('.toc-link[data-section]').forEach(function (link) {
+  var id = link.dataset.section;
+  var el = document.getElementById(id);
+  if (el) tocSections.push({ id: id, el: el, link: link });
+});
+
+var currentActive = null;
+function setActive(id) {
+  if (currentActive === id) return;
+  currentActive = id;
+  tocSections.forEach(function (s) {
+    s.link.classList.toggle('active', s.id === id);
+  });
+}
+
+if ('IntersectionObserver' in window && tocSections.length) {
+  var obs = new IntersectionObserver(function (entries) {
+    entries.forEach(function (entry) {
+      if (entry.isIntersecting) setActive(entry.target.id);
+    });
+  }, { rootMargin: '-15% 0px -70% 0px', threshold: 0 });
+
+  tocSections.forEach(function (s) { obs.observe(s.el); });
+}
+
+/* ── Back-to-top visibility ──────────────────────────────────── */
+var btt = document.getElementById('back-to-top');
+if (btt) {
+  window.addEventListener('scroll', function () {
+    btt.classList.toggle('visible', window.scrollY > 300);
+  }, { passive: true });
+
+  btt.addEventListener('click', function (e) {
+    e.preventDefault();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+}
+/* ── Score cell gradient colouring ──────────────────────────── */
+function scoreHue(val) {
+  var c = Math.max(0, Math.min(1, val));
+  return Math.round(c * 120); // 0=red, 60=yellow, 120=green
+}
+
+document.querySelectorAll('td.score-cell').forEach(function (cell) {
+  var val = parseFloat(cell.textContent);
+  if (isNaN(val)) return;
+  cell.style.color = 'hsl(' + scoreHue(val) + ', 72%, 62%)';
+});
+
+/* ── Score pill dynamic colour ───────────────────────────────── */
+document.querySelectorAll('.score-pill[data-score]').forEach(function (pill) {
+  var val = parseFloat(pill.dataset.score);
+  if (isNaN(val)) return;
+  var h = scoreHue(val);
+  pill.style.background   = 'hsla(' + h + ', 60%, 30%, 0.32)';
+  pill.style.color         = 'hsl(' + h + ', 72%, 65%)';
+  pill.style.borderColor   = 'hsla(' + h + ', 60%, 50%, 0.35)';
+});
+
+/* ── Inner toggle arrow ──────────────────────────────────────── */
+document.querySelectorAll('details.inner-toggle').forEach(function (el) {
+  var arrow = el.querySelector('.inner-arrow');
+  function sync() {
+    if (arrow) arrow.style.transform = el.open ? 'rotate(90deg)' : 'rotate(0deg)';
+  }
+  sync();
+  el.addEventListener('toggle', sync);
+});
+
+}());
+</script>
+
+</body>
+</html>

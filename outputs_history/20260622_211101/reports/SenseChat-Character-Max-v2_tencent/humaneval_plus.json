@@ -1,0 +1,118 @@
+{
+    "name": "SenseChat-Character-Max-v2_tencent@humaneval_plus",
+    "dataset_name": "humaneval_plus",
+    "dataset_pretty_name": "HumanEvalPlus",
+    "dataset_description": "\n## Overview\n\nHumanEval Plus is a rigorous extension of OpenAI's HumanEval benchmark, designed to address high false-positive rates in code generation evaluation. It augments the original test cases with tens of thousands of automatically generated inputs to expose edge-case bugs and functional errors.\n\n## Task Description\n\n- **Task Type**: Code Generation (Python)\n- **Input**: Function signature with docstring describing expected behavior\n- **Output**: Complete Python function implementation\n- **Test Coverage**: Massively expanded compared to original HumanEval\n\n## Key Features\n\n- 164 problems from original HumanEval with enhanced test suites\n- Tens of thousands of additional test cases per problem\n- LLM-based and mutation-based test input generation\n- Exposes edge cases and bugs missed by original HumanEval\n- Much stricter and more accurate correctness evaluation\n\n## Evaluation Notes\n\n- Default configuration uses **0-shot** evaluation\n- **Security Warning**: By default, code is executed in the local environment. We strongly recommend using sandbox execution. See the [sandbox documentation](https://evalscope.readthedocs.io/en/latest/user_guides/sandbox.html) for details.\n- Supports `pass@k` metric calculation\n- Default timeout is 300 seconds to accommodate extensive test suites\n- Uses custom Docker image with numpy pre-installed\n",
+    "model_name": "SenseChat-Character-Max-v2_tencent",
+    "score": 0.9451,
+    "metrics": [
+        {
+            "name": "mean_acc",
+            "num": 164,
+            "score": 0.9451,
+            "macro_score": 0.9451,
+            "categories": [
+                {
+                    "name": [
+                        "default"
+                    ],
+                    "num": 164,
+                    "score": 0.9451,
+                    "macro_score": 0.9451,
+                    "subsets": [
+                        {
+                            "name": "default",
+                            "score": 0.9451,
+                            "num": 164,
+                            "is_aggregate": false
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "mean_acc_pass@1",
+            "num": 164,
+            "score": 0.9451,
+            "macro_score": 0.9451,
+            "categories": [
+                {
+                    "name": [
+                        "default"
+                    ],
+                    "num": 164,
+                    "score": 0.9451,
+                    "macro_score": 0.9451,
+                    "subsets": [
+                        {
+                            "name": "default",
+                            "score": 0.9451,
+                            "num": 164,
+                            "is_aggregate": false
+                        }
+                    ]
+                }
+            ]
+        }
+    ],
+    "analysis": "N/A",
+    "perf_metrics": {
+        "summary": {
+            "n_samples": 164,
+            "latency": {
+                "mean": 13.998372,
+                "std": 25.387952,
+                "min": 2.563,
+                "25%": 5.52325,
+                "50%": 7.9925,
+                "75%": 11.543,
+                "90%": 20.0284,
+                "99%": 115.51916,
+                "max": 249.859
+            },
+            "throughput": {
+                "avg_output_tps": 58.28,
+                "avg_req_ps": 0.0714
+            },
+            "usage": {
+                "input_tokens": {
+                    "mean": 163.073171,
+                    "std": 64.363954,
+                    "min": 67.0,
+                    "25%": 120.0,
+                    "50%": 146.5,
+                    "75%": 189.25,
+                    "90%": 255.0,
+                    "99%": 342.18,
+                    "max": 421.0
+                },
+                "output_tokens": {
+                    "mean": 815.859756,
+                    "std": 697.811829,
+                    "min": 164.0,
+                    "25%": 399.25,
+                    "50%": 624.5,
+                    "75%": 927.5,
+                    "90%": 1396.0,
+                    "99%": 3617.01,
+                    "max": 4107.0
+                },
+                "total_tokens": {
+                    "mean": 978.932927,
+                    "std": 723.601339,
+                    "min": 234.0,
+                    "25%": 542.0,
+                    "50%": 795.0,
+                    "75%": 1084.25,
+                    "90%": 1565.3,
+                    "99%": 3833.17,
+                    "max": 4436.0
+                },
+                "total_input_tokens": 26744,
+                "total_output_tokens": 133801,
+                "total_tokens_count": 160545
+            }
+        }
+    },
+    "num": 164
+}

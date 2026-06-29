@@ -1,0 +1,530 @@
+{
+    "name": "glm-5.1_tencent@cmmlu",
+    "dataset_name": "cmmlu",
+    "dataset_pretty_name": "C-MMLU",
+    "dataset_description": "\n## Overview\n\nC-MMLU (Chinese Massive Multitask Language Understanding) is a comprehensive Chinese evaluation benchmark covering 67 subjects across STEM, humanities, social sciences, and China-specific topics. It evaluates models' knowledge and reasoning in Chinese contexts.\n\n## Task Description\n\n- **Task Type**: Multiple-Choice Question Answering (Chinese)\n- **Input**: Chinese question with four answer choices (A, B, C, D)\n- **Output**: Single correct answer letter\n- **Subjects**: 67 subjects organized into categories including China-specific topics\n\n## Key Features\n\n- 67 subjects covering diverse Chinese knowledge domains\n- Includes China-specific topics (Chinese history, literature, civil service exam, etc.)\n- Questions from elementary to professional levels\n- Tests both general knowledge and China-specific cultural knowledge\n- Standard benchmark for Chinese language model evaluation\n\n## Evaluation Notes\n\n- Default configuration uses **0-shot** evaluation\n- Uses Chinese Chain-of-Thought (CoT) prompting template\n- Results can be aggregated by subject or category\n- Categories: STEM, Humanities, Social Science, China-specific, Other\n- Evaluates on test split\n",
+    "model_name": "glm-5.1_tencent",
+    "score": 0.8842,
+    "metrics": [
+        {
+            "name": "mean_acc",
+            "num": 3350,
+            "score": 0.8842,
+            "macro_score": 0.885,
+            "categories": [
+                {
+                    "name": [
+                        "China specific"
+                    ],
+                    "num": 750,
+                    "score": 0.8707,
+                    "macro_score": 0.8707,
+                    "subsets": [
+                        {
+                            "name": "ancient_chinese",
+                            "score": 0.82,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "chinese_civil_service_exam",
+                            "score": 0.88,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "chinese_driving_rule",
+                            "score": 0.98,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "chinese_food_culture",
+                            "score": 0.84,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "chinese_foreign_policy",
+                            "score": 0.88,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "chinese_history",
+                            "score": 0.88,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "chinese_literature",
+                            "score": 0.9,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "chinese_teacher_qualification",
+                            "score": 0.98,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "construction_project_management",
+                            "score": 0.74,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "elementary_chinese",
+                            "score": 0.86,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "elementary_commonsense",
+                            "score": 0.86,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "ethnology",
+                            "score": 0.88,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "high_school_politics",
+                            "score": 0.84,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "modern_chinese",
+                            "score": 0.86,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "traditional_chinese_medicine",
+                            "score": 0.86,
+                            "num": 50,
+                            "is_aggregate": false
+                        }
+                    ]
+                },
+                {
+                    "name": [
+                        "Humanities"
+                    ],
+                    "num": 550,
+                    "score": 0.8873,
+                    "macro_score": 0.8873,
+                    "subsets": [
+                        {
+                            "name": "arts",
+                            "score": 0.9,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "college_law",
+                            "score": 0.94,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "global_facts",
+                            "score": 0.8,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "international_law",
+                            "score": 0.78,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "jurisprudence",
+                            "score": 0.94,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "logical",
+                            "score": 0.88,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "marxist_theory",
+                            "score": 0.92,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "philosophy",
+                            "score": 0.84,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "professional_law",
+                            "score": 0.96,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "world_history",
+                            "score": 0.86,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "world_religions",
+                            "score": 0.94,
+                            "num": 50,
+                            "is_aggregate": false
+                        }
+                    ]
+                },
+                {
+                    "name": [
+                        "Other"
+                    ],
+                    "num": 550,
+                    "score": 0.9291,
+                    "macro_score": 0.9291,
+                    "subsets": [
+                        {
+                            "name": "agronomy",
+                            "score": 0.92,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "clinical_knowledge",
+                            "score": 0.9,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "college_medicine",
+                            "score": 0.98,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "computer_security",
+                            "score": 0.88,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "elementary_information_and_technology",
+                            "score": 0.98,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "food_science",
+                            "score": 0.86,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "human_sexuality",
+                            "score": 0.92,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "legal_and_moral_basis",
+                            "score": 0.96,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "nutrition",
+                            "score": 0.98,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "professional_medicine",
+                            "score": 0.96,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "sports_science",
+                            "score": 0.88,
+                            "num": 50,
+                            "is_aggregate": false
+                        }
+                    ]
+                },
+                {
+                    "name": [
+                        "STEM"
+                    ],
+                    "num": 850,
+                    "score": 0.9024,
+                    "macro_score": 0.9024,
+                    "subsets": [
+                        {
+                            "name": "anatomy",
+                            "score": 0.84,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "astronomy",
+                            "score": 0.86,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "college_actuarial_science",
+                            "score": 0.8,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "college_engineering_hydrology",
+                            "score": 0.88,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "college_mathematics",
+                            "score": 0.96,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "college_medical_statistics",
+                            "score": 0.82,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "computer_science",
+                            "score": 0.94,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "conceptual_physics",
+                            "score": 0.94,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "electrical_engineering",
+                            "score": 0.98,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "elementary_mathematics",
+                            "score": 0.96,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "genetics",
+                            "score": 0.88,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "high_school_biology",
+                            "score": 0.92,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "high_school_chemistry",
+                            "score": 0.9,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "high_school_mathematics",
+                            "score": 0.96,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "high_school_physics",
+                            "score": 0.94,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "machine_learning",
+                            "score": 0.88,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "virology",
+                            "score": 0.88,
+                            "num": 50,
+                            "is_aggregate": false
+                        }
+                    ]
+                },
+                {
+                    "name": [
+                        "Social Science"
+                    ],
+                    "num": 650,
+                    "score": 0.8354,
+                    "macro_score": 0.8354,
+                    "subsets": [
+                        {
+                            "name": "business_ethics",
+                            "score": 0.88,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "college_education",
+                            "score": 0.8,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "economics",
+                            "score": 0.92,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "education",
+                            "score": 0.78,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "high_school_geography",
+                            "score": 0.84,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "journalism",
+                            "score": 0.86,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "management",
+                            "score": 0.84,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "marketing",
+                            "score": 0.88,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "professional_accounting",
+                            "score": 1.0,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "professional_psychology",
+                            "score": 0.92,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "public_relations",
+                            "score": 0.62,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "security_study",
+                            "score": 0.9,
+                            "num": 50,
+                            "is_aggregate": false
+                        },
+                        {
+                            "name": "sociology",
+                            "score": 0.62,
+                            "num": 50,
+                            "is_aggregate": false
+                        }
+                    ]
+                }
+            ]
+        }
+    ],
+    "analysis": "N/A",
+    "perf_metrics": {
+        "summary": {
+            "n_samples": 3350,
+            "latency": {
+                "mean": 8.797132,
+                "std": 17.398926,
+                "min": 0.219,
+                "25%": 5.328,
+                "50%": 6.7265,
+                "75%": 8.82875,
+                "90%": 13.6425,
+                "99%": 31.72244,
+                "max": 620.703
+            },
+            "throughput": {
+                "avg_output_tps": 35.94,
+                "avg_req_ps": 0.1137
+            },
+            "usage": {
+                "input_tokens": {
+                    "mean": 122.807463,
+                    "std": 32.652403,
+                    "min": 0.0,
+                    "25%": 101.0,
+                    "50%": 112.0,
+                    "75%": 136.0,
+                    "90%": 165.0,
+                    "99%": 241.51,
+                    "max": 389.0
+                },
+                "output_tokens": {
+                    "mean": 316.146269,
+                    "std": 178.406424,
+                    "min": 0.0,
+                    "25%": 234.0,
+                    "50%": 284.0,
+                    "75%": 353.0,
+                    "90%": 446.0,
+                    "99%": 968.51,
+                    "max": 3765.0
+                },
+                "total_tokens": {
+                    "mean": 438.953731,
+                    "std": 192.073739,
+                    "min": 0.0,
+                    "25%": 343.0,
+                    "50%": 403.0,
+                    "75%": 485.0,
+                    "90%": 597.0,
+                    "99%": 1153.65,
+                    "max": 3939.0
+                },
+                "total_input_tokens": 411405,
+                "total_output_tokens": 1059090,
+                "total_tokens_count": 1470495
+            }
+        }
+    },
+    "num": 3350
+}

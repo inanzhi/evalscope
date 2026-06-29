@@ -1,0 +1,65 @@
+agent_config: null
+analysis_report: false
+api_url: null
+chat_template: null
+collect_perf: true
+dataset_args: {}
+dataset_dir: D:\ms_cache\modelscope\datasets
+dataset_hub: modelscope
+datasets: []
+debug: false
+enable_progress_tracker: false
+eval_backend: VLMEvalKit
+eval_batch_size: 1
+eval_config:
+  data:
+  - Video-MME
+  ignore: true
+  limit: 1
+  mode: all
+  model:
+  - api_base: https://tokenhub.tencentmaas.com/v1/chat/completions
+    img_size: -1
+    key: sk-9k79zoqAsREeYag1xUDT0WKVPLdvORdgh3FR0OTfsGtamvfN
+    max_tokens: 8192
+    name: CustomAPIModel
+    temperature: 0.6
+    thinking:
+      type: disabled
+    top_p: 0.95
+    type: kimi-k2_6
+    video_llm: true
+  nproc: 4
+  retry: 3
+  reuse: false
+  work_dir: outputs/kimi-k2.6_tencent\20260608_110208
+eval_type: mock_llm
+evalscope_version: 0.0.0_dev
+generation_config:
+  batch_size: 1
+ignore_errors: false
+judge_model_args: {}
+judge_strategy: auto
+judge_worker_num: null
+limit: null
+model: text_generation
+model_args: {}
+model_id: text_generation
+model_task: text_generation
+no_timestamp: false
+repeats: 1
+rerun_review: false
+sandbox:
+  default_config: {}
+  enabled: false
+  engine: docker
+  manager_config: {}
+  pool_size: null
+sandbox_manager_config: {}
+sandbox_type: docker
+seed: 42
+stream: null
+timeout: null
+use_cache: null
+use_sandbox: false
+work_dir: outputs/kimi-k2.6_tencent\20260608_110208

@@ -1,0 +1,215 @@
+agent_config: null
+analysis_report: false
+api_url: https://api.sensenova.cn/compatible-mode/v2/chat/completions
+chat_template: null
+collect_perf: true
+dataset_args:
+  cmmlu:
+    aggregation: mean
+    data_statistics: null
+    dataset_id: evalscope/cmmlu
+    default_subset: default
+    description: '
+
+      ## Overview
+
+
+      C-MMLU (Chinese Massive Multitask Language Understanding) is a comprehensive
+      Chinese evaluation benchmark covering 67 subjects across STEM, humanities, social
+      sciences, and China-specific topics. It evaluates models'' knowledge and reasoning
+      in Chinese contexts.
+
+
+      ## Task Description
+
+
+      - **Task Type**: Multiple-Choice Question Answering (Chinese)
+
+      - **Input**: Chinese question with four answer choices (A, B, C, D)
+
+      - **Output**: Single correct answer letter
+
+      - **Subjects**: 67 subjects organized into categories including China-specific
+      topics
+
+
+      ## Key Features
+
+
+      - 67 subjects covering diverse Chinese knowledge domains
+
+      - Includes China-specific topics (Chinese history, literature, civil service
+      exam, etc.)
+
+      - Questions from elementary to professional levels
+
+      - Tests both general knowledge and China-specific cultural knowledge
+
+      - Standard benchmark for Chinese language model evaluation
+
+
+      ## Evaluation Notes
+
+
+      - Default configuration uses **0-shot** evaluation
+
+      - Uses Chinese Chain-of-Thought (CoT) prompting template
+
+      - Results can be aggregated by subject or category
+
+      - Categories: STEM, Humanities, Social Science, China-specific, Other
+
+      - Evaluates on test split
+
+      '
+    eval_split: test
+    extra_params: {}
+    few_shot_num: 0
+    few_shot_prompt_template: null
+    few_shot_random: false
+    filters: null
+    force_redownload: false
+    max_image_bytes: null
+    metric_list:
+    - acc
+    name: cmmlu
+    output_types:
+    - generation
+    paper_url: null
+    pretty_name: C-MMLU
+    prompt_template: '回答下面的单项选择题，请选出其中的正确答案。你的回答的最后一行应该是这样的格式："答案：[LETTER]"（不带引号），其中
+      [LETTER] 是 {letters} 中的一个。请在回答前进行一步步思考。
+
+
+      问题：{question}
+
+      选项：
+
+      {choices}
+
+      '
+    query_template: null
+    review_timeout: null
+    sample_example: null
+    sandbox_config: {}
+    shuffle: false
+    shuffle_choices: false
+    subset_list:
+    - agronomy
+    - anatomy
+    - ancient_chinese
+    - arts
+    - astronomy
+    - business_ethics
+    - chinese_civil_service_exam
+    - chinese_driving_rule
+    - chinese_food_culture
+    - chinese_foreign_policy
+    - chinese_history
+    - chinese_literature
+    - chinese_teacher_qualification
+    - college_actuarial_science
+    - college_education
+    - college_engineering_hydrology
+    - college_law
+    - college_mathematics
+    - college_medical_statistics
+    - clinical_knowledge
+    - college_medicine
+    - computer_science
+    - computer_security
+    - conceptual_physics
+    - construction_project_management
+    - economics
+    - education
+    - elementary_chinese
+    - elementary_commonsense
+    - elementary_information_and_technology
+    - electrical_engineering
+    - elementary_mathematics
+    - ethnology
+    - food_science
+    - genetics
+    - global_facts
+    - high_school_biology
+    - high_school_chemistry
+    - high_school_geography
+    - high_school_mathematics
+    - high_school_physics
+    - high_school_politics
+    - human_sexuality
+    - international_law
+    - journalism
+    - jurisprudence
+    - legal_and_moral_basis
+    - logical
+    - machine_learning
+    - management
+    - marketing
+    - marxist_theory
+    - modern_chinese
+    - nutrition
+    - philosophy
+    - professional_accounting
+    - professional_law
+    - professional_medicine
+    - professional_psychology
+    - public_relations
+    - security_study
+    - sociology
+    - sports_science
+    - traditional_chinese_medicine
+    - virology
+    - world_history
+    - world_religions
+    system_prompt: null
+    tags:
+    - Knowledge
+    - MCQ
+    - Chinese
+    train_split: null
+dataset_dir: D:\ms_cache\modelscope\datasets
+dataset_hub: modelscope
+datasets:
+- cmmlu
+debug: false
+enable_progress_tracker: false
+eval_backend: Native
+eval_batch_size: 16
+eval_config: null
+eval_type: openai_api
+evalscope_version: 0.0.0_dev
+generation_config:
+  batch_size: 16
+  max_tokens: 16384
+  reasoning_effort: high
+  seed: 42
+  temperature: 0.0
+  top_p: 0.95
+ignore_errors: true
+judge_model_args: {}
+judge_strategy: auto
+judge_worker_num: 1
+limit: 50
+model: SenseChat-Character-Max-v2
+model_args:
+  max_retries: 0
+model_id: SenseChat-Character-Max-v2_tencent
+model_task: text_generation
+no_timestamp: false
+repeats: 1
+rerun_review: false
+sandbox:
+  default_config: {}
+  enabled: false
+  engine: docker
+  manager_config: {}
+  pool_size: null
+sandbox_manager_config: {}
+sandbox_type: docker
+seed: 42
+stream: null
+timeout: null
+use_cache: null
+use_sandbox: false
+work_dir: ./outputs\20260623_105653

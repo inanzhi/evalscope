@@ -1,0 +1,118 @@
+{
+    "name": "glm-5.1_tencent@humaneval_plus",
+    "dataset_name": "humaneval_plus",
+    "dataset_pretty_name": "HumanEvalPlus",
+    "dataset_description": "\n## Overview\n\nHumanEval Plus is a rigorous extension of OpenAI's HumanEval benchmark, designed to address high false-positive rates in code generation evaluation. It augments the original test cases with tens of thousands of automatically generated inputs to expose edge-case bugs and functional errors.\n\n## Task Description\n\n- **Task Type**: Code Generation (Python)\n- **Input**: Function signature with docstring describing expected behavior\n- **Output**: Complete Python function implementation\n- **Test Coverage**: Massively expanded compared to original HumanEval\n\n## Key Features\n\n- 164 problems from original HumanEval with enhanced test suites\n- Tens of thousands of additional test cases per problem\n- LLM-based and mutation-based test input generation\n- Exposes edge cases and bugs missed by original HumanEval\n- Much stricter and more accurate correctness evaluation\n\n## Evaluation Notes\n\n- Default configuration uses **0-shot** evaluation\n- **Security Warning**: By default, code is executed in the local environment. We strongly recommend using sandbox execution. See the [sandbox documentation](https://evalscope.readthedocs.io/en/latest/user_guides/sandbox.html) for details.\n- Supports `pass@k` metric calculation\n- Default timeout is 300 seconds to accommodate extensive test suites\n- Uses custom Docker image with numpy pre-installed\n",
+    "model_name": "glm-5.1_tencent",
+    "score": 0.9512,
+    "metrics": [
+        {
+            "name": "mean_acc",
+            "num": 164,
+            "score": 0.9512,
+            "macro_score": 0.9512,
+            "categories": [
+                {
+                    "name": [
+                        "default"
+                    ],
+                    "num": 164,
+                    "score": 0.9512,
+                    "macro_score": 0.9512,
+                    "subsets": [
+                        {
+                            "name": "default",
+                            "score": 0.9512,
+                            "num": 164,
+                            "is_aggregate": false
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "mean_acc_pass@1",
+            "num": 164,
+            "score": 0.9512,
+            "macro_score": 0.9512,
+            "categories": [
+                {
+                    "name": [
+                        "default"
+                    ],
+                    "num": 164,
+                    "score": 0.9512,
+                    "macro_score": 0.9512,
+                    "subsets": [
+                        {
+                            "name": "default",
+                            "score": 0.9512,
+                            "num": 164,
+                            "is_aggregate": false
+                        }
+                    ]
+                }
+            ]
+        }
+    ],
+    "analysis": "N/A",
+    "perf_metrics": {
+        "summary": {
+            "n_samples": 164,
+            "latency": {
+                "mean": 73.909293,
+                "std": 294.154183,
+                "min": 3.812,
+                "25%": 13.61275,
+                "50%": 19.336,
+                "75%": 30.5825,
+                "90%": 62.9691,
+                "99%": 1408.6898,
+                "max": 2568.797
+            },
+            "throughput": {
+                "avg_output_tps": 27.23,
+                "avg_req_ps": 0.0135
+            },
+            "usage": {
+                "input_tokens": {
+                    "mean": 162.542683,
+                    "std": 64.319119,
+                    "min": 69.0,
+                    "25%": 118.0,
+                    "50%": 148.0,
+                    "75%": 185.75,
+                    "90%": 256.7,
+                    "99%": 341.7,
+                    "max": 422.0
+                },
+                "output_tokens": {
+                    "mean": 2012.603659,
+                    "std": 2624.994517,
+                    "min": 33.0,
+                    "25%": 809.0,
+                    "50%": 1269.5,
+                    "75%": 2126.0,
+                    "90%": 3922.9,
+                    "99%": 16384.0,
+                    "max": 16384.0
+                },
+                "total_tokens": {
+                    "mean": 2175.146341,
+                    "std": 2636.285208,
+                    "min": 174.0,
+                    "25%": 944.5,
+                    "50%": 1466.5,
+                    "75%": 2292.75,
+                    "90%": 4066.6,
+                    "99%": 16528.51,
+                    "max": 16669.0
+                },
+                "total_input_tokens": 26657,
+                "total_output_tokens": 330067,
+                "total_tokens_count": 356724
+            }
+        }
+    },
+    "num": 164
+}

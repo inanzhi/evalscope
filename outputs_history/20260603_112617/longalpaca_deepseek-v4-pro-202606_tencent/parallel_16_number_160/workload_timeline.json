@@ -1,0 +1,965 @@
+{
+    "wall_start": 317060.5345023,
+    "points": [
+        {
+            "t": 9.389869,
+            "cum_completion": 374,
+            "cum_new_prompt": 6598,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 10.121315,
+            "cum_completion": 886,
+            "cum_new_prompt": 15334,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 10.515851,
+            "cum_completion": 1398,
+            "cum_new_prompt": 22001,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 10.934463,
+            "cum_completion": 1855,
+            "cum_new_prompt": 30691,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 10.970362,
+            "cum_completion": 2367,
+            "cum_new_prompt": 37037,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 10.992449,
+            "cum_completion": 2879,
+            "cum_new_prompt": 43312,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 12.623018,
+            "cum_completion": 3391,
+            "cum_new_prompt": 51084,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 12.843894,
+            "cum_completion": 3903,
+            "cum_new_prompt": 59108,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 13.278093,
+            "cum_completion": 4415,
+            "cum_new_prompt": 67852,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 13.502482,
+            "cum_completion": 4927,
+            "cum_new_prompt": 73464,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 13.709818,
+            "cum_completion": 5439,
+            "cum_new_prompt": 81150,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 14.027173,
+            "cum_completion": 5951,
+            "cum_new_prompt": 89248,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 14.217407,
+            "cum_completion": 6463,
+            "cum_new_prompt": 96938,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 14.455656,
+            "cum_completion": 6975,
+            "cum_new_prompt": 103362,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 15.25087,
+            "cum_completion": 7487,
+            "cum_new_prompt": 110973,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 15.429365,
+            "cum_completion": 7999,
+            "cum_new_prompt": 118644,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 17.186256,
+            "cum_completion": 8309,
+            "cum_new_prompt": 126219,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 20.793898,
+            "cum_completion": 8556,
+            "cum_new_prompt": 133667,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 21.853325,
+            "cum_completion": 9067,
+            "cum_new_prompt": 142164,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 22.069506,
+            "cum_completion": 9480,
+            "cum_new_prompt": 149812,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 23.98512,
+            "cum_completion": 9992,
+            "cum_new_prompt": 157522,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 25.194405,
+            "cum_completion": 10504,
+            "cum_new_prompt": 163090,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 25.764881,
+            "cum_completion": 11016,
+            "cum_new_prompt": 168169,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 26.018403,
+            "cum_completion": 11528,
+            "cum_new_prompt": 176208,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 26.136233,
+            "cum_completion": 12040,
+            "cum_new_prompt": 183003,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 26.243151,
+            "cum_completion": 12552,
+            "cum_new_prompt": 188865,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 26.792128,
+            "cum_completion": 13064,
+            "cum_new_prompt": 196481,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 26.930859,
+            "cum_completion": 13576,
+            "cum_new_prompt": 203467,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 27.151645,
+            "cum_completion": 14073,
+            "cum_new_prompt": 210340,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 27.585999,
+            "cum_completion": 14585,
+            "cum_new_prompt": 217085,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 27.827887,
+            "cum_completion": 15097,
+            "cum_new_prompt": 224811,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 28.455156,
+            "cum_completion": 15609,
+            "cum_new_prompt": 231458,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 29.880995,
+            "cum_completion": 15917,
+            "cum_new_prompt": 238663,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 31.0935,
+            "cum_completion": 16429,
+            "cum_new_prompt": 245548,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 33.096219,
+            "cum_completion": 16941,
+            "cum_new_prompt": 253671,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 34.947332,
+            "cum_completion": 17424,
+            "cum_new_prompt": 260107,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 35.600009,
+            "cum_completion": 17936,
+            "cum_new_prompt": 267734,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 35.730589,
+            "cum_completion": 18448,
+            "cum_new_prompt": 274457,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 36.253291,
+            "cum_completion": 18960,
+            "cum_new_prompt": 282134,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 37.517116,
+            "cum_completion": 19472,
+            "cum_new_prompt": 288956,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 37.839473,
+            "cum_completion": 19984,
+            "cum_new_prompt": 296447,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 38.035208,
+            "cum_completion": 20496,
+            "cum_new_prompt": 303292,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 38.516159,
+            "cum_completion": 21008,
+            "cum_new_prompt": 310211,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 38.825118,
+            "cum_completion": 21520,
+            "cum_new_prompt": 317886,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 39.324016,
+            "cum_completion": 22032,
+            "cum_new_prompt": 324454,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 40.772988,
+            "cum_completion": 22544,
+            "cum_new_prompt": 331288,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 41.285325,
+            "cum_completion": 23042,
+            "cum_new_prompt": 339443,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 42.708198,
+            "cum_completion": 23554,
+            "cum_new_prompt": 346528,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 43.348514,
+            "cum_completion": 24066,
+            "cum_new_prompt": 354109,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 43.474955,
+            "cum_completion": 24461,
+            "cum_new_prompt": 360685,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 44.140728,
+            "cum_completion": 24973,
+            "cum_new_prompt": 366844,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 46.966688,
+            "cum_completion": 25425,
+            "cum_new_prompt": 373092,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 48.702678,
+            "cum_completion": 25937,
+            "cum_new_prompt": 380329,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 49.150281,
+            "cum_completion": 26449,
+            "cum_new_prompt": 388104,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 49.6034,
+            "cum_completion": 26961,
+            "cum_new_prompt": 396108,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 49.700826,
+            "cum_completion": 27432,
+            "cum_new_prompt": 402129,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 50.224217,
+            "cum_completion": 27944,
+            "cum_new_prompt": 411136,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 50.9906,
+            "cum_completion": 28456,
+            "cum_new_prompt": 418910,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 51.177088,
+            "cum_completion": 28937,
+            "cum_new_prompt": 426836,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 52.437499,
+            "cum_completion": 29449,
+            "cum_new_prompt": 433834,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 52.929917,
+            "cum_completion": 29919,
+            "cum_new_prompt": 440892,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 53.153661,
+            "cum_completion": 30075,
+            "cum_new_prompt": 448832,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 53.715032,
+            "cum_completion": 30587,
+            "cum_new_prompt": 456371,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 53.807809,
+            "cum_completion": 31099,
+            "cum_new_prompt": 463832,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 54.488964,
+            "cum_completion": 31536,
+            "cum_new_prompt": 470282,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 55.976693,
+            "cum_completion": 32048,
+            "cum_new_prompt": 477916,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 56.760407,
+            "cum_completion": 32560,
+            "cum_new_prompt": 484580,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 58.119999,
+            "cum_completion": 32772,
+            "cum_new_prompt": 491034,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 59.891958,
+            "cum_completion": 33284,
+            "cum_new_prompt": 497963,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 60.419204,
+            "cum_completion": 33796,
+            "cum_new_prompt": 505938,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 60.874764,
+            "cum_completion": 34308,
+            "cum_new_prompt": 512416,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 61.853358,
+            "cum_completion": 34820,
+            "cum_new_prompt": 519840,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 63.362425,
+            "cum_completion": 35332,
+            "cum_new_prompt": 526433,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 63.866376,
+            "cum_completion": 35844,
+            "cum_new_prompt": 533515,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 64.065192,
+            "cum_completion": 36356,
+            "cum_new_prompt": 539778,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 64.113437,
+            "cum_completion": 36868,
+            "cum_new_prompt": 547278,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 64.737475,
+            "cum_completion": 37380,
+            "cum_new_prompt": 555142,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 65.982616,
+            "cum_completion": 37892,
+            "cum_new_prompt": 560931,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 66.445905,
+            "cum_completion": 38404,
+            "cum_new_prompt": 567611,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 67.335575,
+            "cum_completion": 38889,
+            "cum_new_prompt": 574457,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 68.102288,
+            "cum_completion": 39401,
+            "cum_new_prompt": 581594,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 68.399988,
+            "cum_completion": 39742,
+            "cum_new_prompt": 588818,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 68.853006,
+            "cum_completion": 40236,
+            "cum_new_prompt": 595399,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 68.97457,
+            "cum_completion": 40748,
+            "cum_new_prompt": 603253,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 69.326036,
+            "cum_completion": 41260,
+            "cum_new_prompt": 609970,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 72.436308,
+            "cum_completion": 41772,
+            "cum_new_prompt": 617815,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 75.199774,
+            "cum_completion": 42284,
+            "cum_new_prompt": 625112,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 75.356728,
+            "cum_completion": 42796,
+            "cum_new_prompt": 631888,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 75.618732,
+            "cum_completion": 43308,
+            "cum_new_prompt": 639235,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 76.312941,
+            "cum_completion": 43784,
+            "cum_new_prompt": 645648,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 76.533261,
+            "cum_completion": 44296,
+            "cum_new_prompt": 652362,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 77.509904,
+            "cum_completion": 44808,
+            "cum_new_prompt": 658702,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 79.044196,
+            "cum_completion": 45320,
+            "cum_new_prompt": 665734,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 79.325269,
+            "cum_completion": 45832,
+            "cum_new_prompt": 674904,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 80.841042,
+            "cum_completion": 46331,
+            "cum_new_prompt": 682204,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 81.380135,
+            "cum_completion": 46843,
+            "cum_new_prompt": 689518,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 81.578745,
+            "cum_completion": 47355,
+            "cum_new_prompt": 696202,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 80.196271,
+            "cum_completion": 47867,
+            "cum_new_prompt": 702790,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 82.512191,
+            "cum_completion": 48379,
+            "cum_new_prompt": 710647,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 82.82012,
+            "cum_completion": 48891,
+            "cum_new_prompt": 717261,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 83.54228,
+            "cum_completion": 49176,
+            "cum_new_prompt": 725259,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 83.698531,
+            "cum_completion": 49688,
+            "cum_new_prompt": 732804,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 83.808826,
+            "cum_completion": 49938,
+            "cum_new_prompt": 740722,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 83.861134,
+            "cum_completion": 50217,
+            "cum_new_prompt": 747613,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 84.360244,
+            "cum_completion": 50729,
+            "cum_new_prompt": 755378,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 87.012069,
+            "cum_completion": 51241,
+            "cum_new_prompt": 763381,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 87.894553,
+            "cum_completion": 51753,
+            "cum_new_prompt": 770850,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 89.191283,
+            "cum_completion": 52157,
+            "cum_new_prompt": 776275,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 89.304189,
+            "cum_completion": 52669,
+            "cum_new_prompt": 784159,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 90.755844,
+            "cum_completion": 52931,
+            "cum_new_prompt": 790093,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 91.284592,
+            "cum_completion": 53443,
+            "cum_new_prompt": 797341,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 91.912651,
+            "cum_completion": 53955,
+            "cum_new_prompt": 804414,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 93.923328,
+            "cum_completion": 54467,
+            "cum_new_prompt": 813451,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 93.982518,
+            "cum_completion": 54979,
+            "cum_new_prompt": 820111,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 94.179878,
+            "cum_completion": 55491,
+            "cum_new_prompt": 828029,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 95.02979,
+            "cum_completion": 56003,
+            "cum_new_prompt": 834558,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 95.122373,
+            "cum_completion": 56515,
+            "cum_new_prompt": 843306,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 95.462504,
+            "cum_completion": 57027,
+            "cum_new_prompt": 851189,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 96.325883,
+            "cum_completion": 57539,
+            "cum_new_prompt": 859300,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 96.323209,
+            "cum_completion": 58039,
+            "cum_new_prompt": 867628,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 97.130055,
+            "cum_completion": 58551,
+            "cum_new_prompt": 875423,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 100.920333,
+            "cum_completion": 59063,
+            "cum_new_prompt": 882271,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 100.933721,
+            "cum_completion": 59575,
+            "cum_new_prompt": 889662,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 102.000323,
+            "cum_completion": 60087,
+            "cum_new_prompt": 896182,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 102.12084,
+            "cum_completion": 60599,
+            "cum_new_prompt": 902835,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 103.497812,
+            "cum_completion": 61050,
+            "cum_new_prompt": 909121,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 103.825808,
+            "cum_completion": 61562,
+            "cum_new_prompt": 916238,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 104.470819,
+            "cum_completion": 62074,
+            "cum_new_prompt": 922847,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 105.601276,
+            "cum_completion": 62502,
+            "cum_new_prompt": 930457,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 106.27746,
+            "cum_completion": 63014,
+            "cum_new_prompt": 936732,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 106.980689,
+            "cum_completion": 63526,
+            "cum_new_prompt": 943697,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 107.533056,
+            "cum_completion": 64038,
+            "cum_new_prompt": 949664,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 108.002516,
+            "cum_completion": 64550,
+            "cum_new_prompt": 956405,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 108.164032,
+            "cum_completion": 65062,
+            "cum_new_prompt": 963671,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 108.544258,
+            "cum_completion": 65574,
+            "cum_new_prompt": 969495,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 109.856435,
+            "cum_completion": 66086,
+            "cum_new_prompt": 975803,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 111.090928,
+            "cum_completion": 66598,
+            "cum_new_prompt": 982901,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 111.534272,
+            "cum_completion": 67110,
+            "cum_new_prompt": 989603,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 113.005924,
+            "cum_completion": 67456,
+            "cum_new_prompt": 997047,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 113.922616,
+            "cum_completion": 67907,
+            "cum_new_prompt": 1004106,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 115.29821,
+            "cum_completion": 68419,
+            "cum_new_prompt": 1010674,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 115.805956,
+            "cum_completion": 68931,
+            "cum_new_prompt": 1019698,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 116.160761,
+            "cum_completion": 69443,
+            "cum_new_prompt": 1025873,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 116.588494,
+            "cum_completion": 69955,
+            "cum_new_prompt": 1033777,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 117.17201,
+            "cum_completion": 70467,
+            "cum_new_prompt": 1040673,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 117.31788,
+            "cum_completion": 70979,
+            "cum_new_prompt": 1048263,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 118.082971,
+            "cum_completion": 71491,
+            "cum_new_prompt": 1054085,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 118.240605,
+            "cum_completion": 72003,
+            "cum_new_prompt": 1060264,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 118.863864,
+            "cum_completion": 72473,
+            "cum_new_prompt": 1066826,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 119.180369,
+            "cum_completion": 72779,
+            "cum_new_prompt": 1074885,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 121.837507,
+            "cum_completion": 73291,
+            "cum_new_prompt": 1081660,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 122.352923,
+            "cum_completion": 73803,
+            "cum_new_prompt": 1088677,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 122.7402,
+            "cum_completion": 74312,
+            "cum_new_prompt": 1095248,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 123.037859,
+            "cum_completion": 74687,
+            "cum_new_prompt": 1101723,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 123.382538,
+            "cum_completion": 75199,
+            "cum_new_prompt": 1108966,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 125.048211,
+            "cum_completion": 75711,
+            "cum_new_prompt": 1122944,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 126.738215,
+            "cum_completion": 76223,
+            "cum_new_prompt": 1130709,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 127.002626,
+            "cum_completion": 76735,
+            "cum_new_prompt": 1136483,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 127.517364,
+            "cum_completion": 77247,
+            "cum_new_prompt": 1144301,
+            "cum_cached_prompt": 0
+        },
+        {
+            "t": 131.726004,
+            "cum_completion": 77759,
+            "cum_new_prompt": 1151540,
+            "cum_cached_prompt": 0
+        }
+    ]
+}
