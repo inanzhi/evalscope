@@ -76,7 +76,7 @@ VENDORS = {
         session_cache=True,
     ),
 
-    'aliyun_junyunkeji': dict(
+    'aliyun-juyunkeji': dict(
         url='https://ws-fv27qx1qcocc0gpl.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions',
         api_key='',
         session_cache=False,
@@ -106,6 +106,7 @@ PROFILES = [
     'glm-5.1_aliyun',
     'kimi-k2.6_aliyun',
     'glm-5.2_aliyun',
+    'glm-5.2_aliyun-juyunkeji',
     'SenseChat-Character-Max-v2-Cache_sensetime-stage',
     'SenseChat-Character-Max-v2-Flash-Cache_sensetime-stage',
     'SenseChat-Character-Agt-v2-Cache_sensetime-stage',
