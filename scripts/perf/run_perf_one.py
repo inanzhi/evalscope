@@ -75,6 +75,12 @@ VENDORS = {
         api_key='',
         session_cache=True,
     ),
+
+    'aliyun_junyunkeji': dict(
+        url='https://ws-fv27qx1qcocc0gpl.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions',
+        api_key='',
+        session_cache=False,
+    ),
 }
 
 # ============================================================================
