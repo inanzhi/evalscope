@@ -141,6 +141,8 @@ private/
 outputs/
 evalscope/outputs/
 results/
+outputs_history/
+results_history/
 evalscope/*_temp.py
 evalscope/data/
 */output_res/*
