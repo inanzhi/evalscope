@@ -55,7 +55,7 @@ VENDORS = {
     'tencent': dict(
         url='https://tokenhub.tencentmaas.com/v1/chat/completions',
         api_key='',
-        session_cache=True,
+        session_cache=False,
     ),
 
     'sensetime-prod': dict(
@@ -73,11 +73,22 @@ VENDORS = {
     'aliyun': dict(
         url='https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
         api_key='',
-        session_cache=True,
+        session_cache=False,
     ),
 
     'aliyun-juyunkeji': dict(
         url='https://ws-fv27qx1qcocc0gpl.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions',
+        api_key='',
+        session_cache=False,
+    ),
+     'aliyun-test': dict(
+        url='https://llm-2uvmqf1kext46chd.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions',
+        api_key='',
+        session_cache=False,
+    ),
+
+    'tencent-test': dict(
+        url='https://tokenhub.tencentmaas.com/v1/chat/completions',
         api_key='',
         session_cache=False,
     ),
@@ -114,6 +125,7 @@ PROFILES = [
 
     'SenseChat-Character-Max-v2_sensetime-prod',
     'SenseChat-Character-Max-v2-Flash_sensetime-prod',
+    'SenseChat-Character-Agt-v3_sensetime-prod',
 ]
 
 
@@ -151,8 +163,8 @@ FIXED = dict(
     temperature=1.0,                                # 采样温度；0=贪心(可复现)。要调就改这里
     top_p=0.95,                                      # 核采样；temperature=0 时为空操作，留作可调旋钮
     stream=True,                                    # 必须开启流式，否则算不出首字延迟 TTFT
-    #extra_args={'reasoning_effort': 'medium'},        # 深度思考档位(low/medium/high)；非原生字段，走 extra_args 注入请求体。非推理模型请删掉此行
-    extra_args={'thinking': {'type': 'enabled'}} ,    #(glm-5.1 Kimi-k2.6等) 思考档位；非原生字段，走 extra_args 注入请求体。非推理模型请删掉
+    extra_args={'reasoning_effort': 'high'},        # 深度思考档位(low/medium/high)；非原生字段，走 extra_args 注入请求体。非推理模型请删掉此行
+    #extra_args={'thinking': {'type': 'enabled'}} ,    #(glm-5.1 Kimi-k2.6等) 思考档位；非原生字段，走 extra_args 注入请求体。非推理模型请删掉
     read_timeout=300,                               # 读超时 300s：reasoning=high 单轮常需数十秒~分钟，60s 会误杀
     no_test_connection=True,
     no_timestamp=True,
