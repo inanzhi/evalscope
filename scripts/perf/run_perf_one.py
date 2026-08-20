@@ -54,7 +54,7 @@ from evalscope.perf.main import run_perf_benchmark
 VENDORS = {
     'tencent': dict(
         url='https://tokenhub.tencentmaas.com/v1/chat/completions',
-        api_key='',
+        api_key='sk-9k79zoqAsREeYag1xUDT0WKVPLdvORdgh3FR0OTfsGtamvfN',
         session_cache=False,
     ),
 
@@ -72,7 +72,7 @@ VENDORS = {
 
     'aliyun': dict(
         url='https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
-        api_key='',
+        api_key='sk-2f1a437b944f477aa996a3de09daaeb5',
         session_cache=False,
     ),
 
@@ -109,6 +109,7 @@ PROFILES = [
     'deepseek-v4-pro-202606_tencent',
     'deepseek-v4-flash_tencent',
     'deepseek-v4-flash-202605_tencent',
+    'deepseek-v4-flash-0731_tencent',
     'deepseek-v4-pro_aliyun',
     'deepseek-v4-flash_aliyun',
     'glm-5.1_tencent',
@@ -118,6 +119,7 @@ PROFILES = [
     'kimi-k2.6_aliyun',
     'glm-5.2_aliyun',
     'glm-5.2_aliyun-juyunkeji',
+    'deepseek-v4-flash-0731_aliyun',
     'SenseChat-Character-Max-v2-Cache_sensetime-stage',
     'SenseChat-Character-Max-v2-Flash-Cache_sensetime-stage',
     'SenseChat-Character-Agt-v2-Cache_sensetime-stage',
