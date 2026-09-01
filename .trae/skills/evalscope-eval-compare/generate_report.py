@@ -69,6 +69,25 @@ CSS = """
   footer{margin-top:60px;padding-top:20px;border-top:1px solid var(--line);color:var(--mut);font-size:13px}
 """
 
+# Metric glossary sourced from docs/zh/user_guides/stress_test/ (quick_start.md + multi_turn.md).
+GLOSSARY = [
+    ('输出吞吐 Output (tok/s)', '每秒钟输出的平均 token 数。'),
+    ('请求吞吐 RPS (req/s)', '每秒钟成功处理的平均请求数。'),
+    ('平均延迟 Latency (s)', '从发送请求到接收完整响应的平均时间。'),
+    ('TTFT (ms)', '从发送请求到收到第一个响应 token 的时间（首 token 延迟）。'),
+    ('TPOT (ms)', '生成每个输出 token 的平均时间（不含首 token）。'),
+    ('平均输出 Token', '每个请求平均生成的输出 token 数。'),
+    ('KV 缓存命中 Cache Hit (%)', 'cached token 占输入 token 比例的前缀缓存命中率（需服务端开启 prefix caching 并返回 cached_tokens）。'),
+    ('首轮 / 后续 TTFT', '多轮对话首轮（冷 prefill）与后续轮（可命中 prefix cache）的首 token 延迟。'),
+    ('TTFAT (s)', '对话起点到末轮首 token 的墙钟时间。'),
+    ('Decode TPS', '对话内每轮 (completion-1)/(latency-ttft) 的算术平均，反映 decode 稳态速度。'),
+    ('Eligible Cache Hit (%)', '分母只算「理论上应能缓存」的 prefix，剔除首轮与当前轮新增内容。'),
+    ('Decoded Tok/Iter', '每次前向推理平均接受的 token 数，反映投机解码 draft 命中效果。'),
+    ('Spec. Accept Rate', '投机解码的近似 token 接受率，越接近 1 说明 draft model 越准。'),
+    ('Pass@1', '代码评测：一次生成即通过全部测试的比例。'),
+    ('Macro', 'CMMLU 各学科准确率的宏平均。'),
+]
+
 
 # --------------------------------------------------------------------------- #
 # Formatting helpers (ported from scripts/perf/generate_deepseek_v4_flash_0731_report.py)
@@ -162,8 +181,8 @@ def load_longalpaca(long_dir: str | None) -> dict | None:
                 'gen_tps': js['Output Throughput (tok/s)'],
                 'rps': js['Req Throughput (req/s)'],
                 'latency': js['Avg Latency (s)'],
-                'ttft': js['TTFT (ms)'],
-                'tpot': js['TPOT (ms)'],
+                'ttft': js['Avg TTFT (ms)'],
+                'tpot': js['Avg TPOT (ms)'],
                 'avg_out': js['Avg Output Tokens'],
             }
         return rows
@@ -183,12 +202,12 @@ def load_swe(swe_dir: str | None) -> dict | None:
             'success_rate': b['Success Requests'] / b['Total Requests'],
             'gen_tps': b['Output Throughput (tok/s)'],
             'latency': b['Avg Latency (s)'],
-            'ttft': b['TTFT (ms)'],
-            'tpot': b['TPOT (ms)'],
+            'ttft': b['Avg TTFT (ms)'],
+            'tpot': b['Avg TPOT (ms)'],
             'kv': b.get('KV Cache Hit Rate (%)'),
-            'first_ttft': b.get('First-Turn TTFT (ms)'),
-            'sub_ttft': b.get('Subsequent-Turn TTFT (ms)'),
-            'decoded_iter': b.get('Decoded Tok/Iter'),
+            'first_ttft': b.get('Avg First-Turn TTFT (ms)'),
+            'sub_ttft': b.get('Avg Subsequent-Turn TTFT (ms)'),
+            'decoded_iter': b.get('Avg Decoded Tok/Iter'),
             'spec_accept': b.get('Spec. Accept Rate'),
             'n_traces': t.get('n_traces'),
             'lat_mean': metrics.get('Latency (s)', {}).get('mean'),
@@ -442,6 +461,18 @@ def section_knowledge(entries: list[dict]) -> str:
     )
 
 
+def section_glossary() -> str:
+    rows = ''.join(
+        f'<tr><td class="model">{escape(name)}</td><td>{escape(desc)}</td></tr>'
+        for name, desc in GLOSSARY
+    )
+    return (
+        '<div class="card"><h3>指标名词说明</h3>'
+        '<div class="lead">术语解释整理自官方压测文档（stress_test）。</div>'
+        f'<table><thead><tr><th>指标</th><th>说明</th></tr></thead><tbody>{rows}</tbody></table></div>'
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Build HTML
 # --------------------------------------------------------------------------- #
@@ -476,17 +507,28 @@ def build_html(entries: list[dict], generated: str) -> str:
         f'每个维度最优数值以蓝色高亮标注。</div>'
         f'<div class="toc">{toc}</div></header>'
     )
+    def rel(p: Any) -> str:
+        try:
+            return str(Path(str(p)).resolve().relative_to(ROOT.resolve()))
+        except ValueError:
+            return str(p)
+
     source_labels = {'cmmlu': 'CMMLU', 'humaneval_plus': 'HumanEval Plus', 'longalpaca': 'LongAlpaca', 'swe': 'SWE-Smith'}
     source_rows = []
     for e in entries:
         src = e.get('sources', {})
-        parts = [f'{source_labels[k]}: {escape(str(v))}' for k, v in src.items() if v]
-        if parts:
-            source_rows.append(f'<li><b>{escape(e["label"])} {escape(e["model"])}</b> — {"；".join(parts)}</li>')
-    sources_html = ('<div><b>数据来源</b></div><ul>' + ''.join(source_rows) + '</ul>') if source_rows else ''
+        items = ''.join(
+            f'<li><span class="muted">{source_labels[k]}</span> <code>{escape(rel(v))}</code></li>'
+            for k, v in src.items() if v
+        )
+        if items:
+            source_rows.append(f'<li><b>{escape(e["label"])} {escape(e["model"])}</b><ul>{items}</ul></li>')
+    sources_html = (
+        '<div class="card"><h3>数据来源</h3><ul>' + ''.join(source_rows) + '</ul></div>'
+    ) if source_rows else ''
+    glossary = section_glossary()
     footer = (
-        f'<footer>{sources_html}<div>生成时间：{escape(generated)} · 统一原则：优先使用 EvalScope summary/report JSON，'
-        f'不展示密钥、URL 等敏感运行参数。</div></footer>'
+        f'<footer>{glossary}{sources_html}<div>生成时间：{escape(generated)}</div></footer>'
     )
 
     return (

@@ -12,6 +12,8 @@ description: "从 YAML 密钥配置文件批量运行 `evalscope perf`，依次�
 
 ## 快速开始
 
+> 环境：本项目用 `.venv` 虚拟环境。合并上游后可能新增依赖，先 `.venv\Scripts\python.exe -m pip install -e ".[perf]"`；跑命令前先激活 `.venv`（`.venv\Scripts\activate`）或用绝对路径。
+
 1. 按下方 schema 写一个密钥 YAML 文件。因含明文 API Key，请**不要纳入版本控制**
    （加入 `.gitignore`）。
 
@@ -32,7 +34,7 @@ description: "从 YAML 密钥配置文件批量运行 `evalscope perf`，依次�
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
 | `--creds` | （必填） | YAML 配置文件路径。 |
-| `--cmd` | `evalscope` | 基础 evalscope 命令（用 venv 时可改，如 `venv/Scripts/evalscope`）。 |
+| `--cmd` | `evalscope` | 基础 evalscope 命令；用 `.venv` 时设为 `.venv/Scripts/evalscope`（Windows）。 |
 | `--dry-run` | 关 | 只打印生成的命令、不实际执行。 |
 | `--only` | （全部） | 逗号分隔的模型名，只跑这些、跳过其余。 |
 | `--skip` | （无） | 逗号分隔的模型名，跳过这些。 |

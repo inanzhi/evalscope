@@ -53,6 +53,17 @@ models:
 - `api_key` 自己填、别贴聊天；`credentials.yaml` 已在 `.gitignore`，不会进 git。
 - cmmlu 默认 `limit: 50`（每子集 50、共 3350 样本）；想全量跑改成 `null`。注意：cmmlu 的 `limit` 是「每个学科子集」的样本数（共 67 个子集），`50` 不是总共 50 个。
 
+## 环境准备
+
+本项目用 `.venv` 虚拟环境。合并上游后可能新增依赖（如 `filetype`、`rich`），先补齐并确认：
+
+```bash
+.venv\Scripts\python.exe -m pip install -e ".[perf]"
+.venv\Scripts\evalscope --version   # 能打印版本号即 OK
+```
+
+下面的命令优先用 `.venv`：先激活（`.venv\Scripts\activate`）或用绝对路径；runner 也可加 `--cmd .venv/Scripts/evalscope` 直接指定。
+
 ## 执行流程
 
 1. 按上方「配置文件」写好 `credentials.yaml`。
@@ -80,7 +91,7 @@ models:
 | 参数 | 默认 | 说明 |
 | --- | --- | --- |
 | `--config` | 必填 | YAML 配置路径 |
-| `--cmd` | `evalscope` | 基础命令（venv 可改，如 `venv/Scripts/evalscope`） |
+| `--cmd` | `evalscope` | 基础命令；用 `.venv` 时设为 `.venv/Scripts/evalscope`（Windows） |
 | `--dry-run` | 关 | 只打印命令不执行 |
 | `--force` | 关 | 强制重跑已完成的项 |
 | `--only` / `--skip` | 全部 | 按模型名过滤 |
