@@ -2,20 +2,24 @@
 # flake8: noqa
 import os
 from datetime import timedelta, timezone
+from enum import Enum
 
 os.environ['MODELSCOPE_LOG_LEVEL'] = '40'  # Set default log level to ERROR
 
-from modelscope.utils.constant import DEFAULT_REPOSITORY_REVISION
-from modelscope.utils.file_utils import get_dataset_cache_root, get_model_cache_root
+
+def _get_modelscope_cache_dir() -> str:
+    return os.path.expanduser(os.getenv('MODELSCOPE_CACHE', '~/.cache/modelscope/hub'))
+
 
 DEFAULT_WORK_DIR = './outputs'
-DEFAULT_MODEL_REVISION = DEFAULT_REPOSITORY_REVISION  # master
-DEFAULT_MODEL_CACHE_DIR = get_model_cache_root()  # ~/.cache/modelscope/hub/models
-DEFAULT_DATASET_CACHE_DIR = get_dataset_cache_root()  # ~/.cache/modelscope/hub/datasets
+DEFAULT_MODEL_REVISION = 'master'
+DEFAULT_MODEL_CACHE_DIR = os.path.join(_get_modelscope_cache_dir(), 'models')  # ~/.cache/modelscope/hub/models
+DEFAULT_DATASET_CACHE_DIR = os.path.join(_get_modelscope_cache_dir(), 'datasets')  # ~/.cache/modelscope/hub/datasets
 DEFAULT_ROOT_CACHE_DIR = DEFAULT_DATASET_CACHE_DIR  # compatible with old version
 DEFAULT_EVALSCOPE_CACHE_DIR = os.path.expanduser(
     os.getenv('EVALSCOPE_CACHE', '~/.cache/evalscope')
 )  # ~/.cache/evalscope
+DATASET_TRANSFORM_BATCH_SIZE = int(os.getenv('DATASET_TF_BATCH_SIZE', '100'))
 HEARTBEAT_INTERVAL_SEC = int(os.getenv('EVALSCOPE_HEARTBEAT_INTERVAL', '60'))  # 60 seconds
 DEFAULT_LANGUAGE = os.getenv('EVALSCOPE_LANGUAGE', 'en')  # default language: 'en' or 'zh'
 USE_OSS = os.getenv('USE_OSS', '0') == '1'  # whether to use OSS/FUSE-mounted filesystem
@@ -50,7 +54,6 @@ class MetricsConstant:
 
 
 class ArenaWinner:
-
     MODEL_A = 'model_a'
     MODEL_B = 'model_b'
     TIE = 'tie'
@@ -69,12 +72,11 @@ class AnswerKeys:
 
 
 class EvalType:
-
     CUSTOM = 'custom'
     MOCK_LLM = 'mock_llm'
     CHECKPOINT = 'llm_ckpt'  # native model checkpoint
-    SERVICE = 'openai_api'  # model service (deprecated)
     TEXT2IMAGE = 'text2image'  # image generation service
+    TEXT2SPEECH = 'text2speech'  # text-to-speech service
     IMAGE_EDITING = 'image_editing'  # image editing service
     OPENAI_API = 'openai_api'
     OPENAI_RESPONSES_API = 'openai_responses_api'
@@ -111,9 +113,57 @@ class JudgeStrategy:
     LLM_RECALL = 'llm_recall'
 
 
+class ScoringPolicy(str, Enum):
+    """What a benchmark's own scoring paths can do, declared by its adapter.
+
+    Encodes two orthogonal facts in one value so that the illegal combination -- no usable rule
+    path yet ``auto`` resolving to rule -- cannot be expressed. Every benchmark always has a
+    judge path because ``DataAdapter`` inherits the generic grader from ``LLMJudgeMixin``, so
+    "supports a judge" needs no field.
+    """
+
+    RULE_DEFAULT = 'rule_default'
+    """Usable rule path; ``auto`` scores by rule."""
+
+    JUDGE_DEFAULT = 'judge_default'
+    """Usable rule path, but ``auto`` scores with the judge because it is more faithful."""
+
+    JUDGE_ONLY = 'judge_only'
+    """No usable rule path: rule scoring would raise or only ever emit zeros."""
+
+    @property
+    def rule_supported(self) -> bool:
+        return self is not ScoringPolicy.JUDGE_ONLY
+
+    @property
+    def judge_by_default(self) -> bool:
+        return self is not ScoringPolicy.RULE_DEFAULT
+
+
 class JudgeScoreType:
     NUMERIC = 'numeric'  # numeric score
     PATTERN = 'pattern'  # pattern matching score
+
+
+class ScoreStatus(str, Enum):
+    """Whether a score is usable, and why it is not.
+
+    A failed judge is not a zero: only ``SUCCESS`` and ``FALLBACK`` carry a score that may
+    enter aggregation. The remaining values mean the score is unavailable and the sample
+    must be excluded from the affected metric rather than counted as 0.
+    """
+
+    SUCCESS = 'success'
+    TRANSPORT_ERROR = 'transport_error'
+    PARSE_ERROR = 'parse_error'
+    INVALID_SESSION = 'invalid_session'
+    FALLBACK = 'fallback'
+    DEGRADED = 'degraded'
+    EXCLUDED = 'excluded'
+
+    @property
+    def is_usable(self) -> bool:
+        return self in (ScoreStatus.SUCCESS, ScoreStatus.FALLBACK, ScoreStatus.DEGRADED)
 
 
 class ModelTask:
@@ -139,6 +189,7 @@ class Tags:
     RETRIEVAL = 'Retrieval'
     FUNCTION_CALLING = 'FunctionCalling'
     TEXT_TO_IMAGE = 'TextToImage'
+    TEXT_TO_SPEECH = 'TextToSpeech'
     IMAGE_EDITING = 'ImageEditing'
     MULTI_MODAL = 'MultiModal'
     MULTI_LINGUAL = 'MultiLingual'
@@ -152,6 +203,7 @@ class Tags:
     SPEECH_RECOGNITION = 'SpeechRecognition'
     AUDIO = 'Audio'
     IMAGE_CAPTIONING = 'ImageCaptioning'
+    VIDEO = 'Video'
 
 
 class FileConstants:
@@ -168,27 +220,29 @@ class VisualizerType:
 # --- Report / Visualization constants (migrated from app.constants) ---
 PLOTLY_THEME = 'plotly_dark'
 PLOTLY_CDN_URL = 'https://resources.modelscope.cn/third-part/js/plotly/plotly-2.35.2.min.js'
-REPORT_TOKEN = '@@'
-MODEL_TOKEN = '::'
-DATASET_TOKEN = ', '
 DEFAULT_BAR_WIDTH = 0.2
-LATEX_DELIMITERS = [{
-    'left': '$$',
-    'right': '$$',
-    'display': True,
-}, {
-    'left': '$',
-    'right': '$',
-    'display': False,
-}, {
-    'left': '\\(',
-    'right': '\\)',
-    'display': False,
-}, {
-    'left': '\\[',
-    'right': '\\]',
-    'display': True,
-}]
+LATEX_DELIMITERS = [
+    {
+        'left': '$$',
+        'right': '$$',
+        'display': True,
+    },
+    {
+        'left': '$',
+        'right': '$',
+        'display': False,
+    },
+    {
+        'left': '\\(',
+        'right': '\\)',
+        'display': False,
+    },
+    {
+        'left': '\\[',
+        'right': '\\]',
+        'display': True,
+    },
+]
 
 
 class LoggingConstants:
@@ -198,10 +252,7 @@ class LoggingConstants:
         '%(asctime)s - %(name)s - %(filename)s - %(funcName)s - %(lineno)d'
         ' - %(log_color)s%(levelname)s%(reset)s: %(message)s'
     )
-    COLOR_SIMPLE_FORMAT = ('%(asctime)s - %(name)s - %(log_color)s%(levelname)s%(reset)s: %(message)s')
+    COLOR_SIMPLE_FORMAT = '%(asctime)s - %(name)s - %(log_color)s%(levelname)s%(reset)s: %(message)s'
     # File output formats (plain)
-    DETAILED_FORMAT = (
-        '%(asctime)s - %(name)s - %(filename)s - %(funcName)s - %(lineno)d'
-        ' - %(levelname)s: %(message)s'
-    )
+    DETAILED_FORMAT = '%(asctime)s - %(name)s - %(filename)s - %(funcName)s - %(lineno)d - %(levelname)s: %(message)s'
     SIMPLE_FORMAT = '%(asctime)s - %(name)s - %(levelname)s: %(message)s'

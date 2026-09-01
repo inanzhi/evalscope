@@ -42,13 +42,14 @@ POPE (Polling-based Object Probing Evaluation) is a benchmark specifically desig
 
 - Default configuration uses **0-shot** evaluation
 - Five metrics: accuracy, precision, recall, F1 score, yes_ratio
-- F1 score is the primary aggregation metric
+- F1 score is the primary metric; accuracy, precision, and recall are auxiliary, and yes_ratio is diagnostic
 - Three subsets: `popular`, `adversarial`, `random`
 - "Popular" and "adversarial" subsets are more challenging
 - yes_ratio indicates model's tendency to answer "yes"
 """,
         dataset_id='lmms-lab/POPE',
         metric_list=['accuracy', 'precision', 'recall', 'f1_score', 'yes_ratio'],
+        primary_metric='f1',
         aggregation='f1',
         subset_list=['popular', 'adversarial', 'random'],
         default_subset='Full',
@@ -56,7 +57,6 @@ POPE (Polling-based Object Probing Evaluation) is a benchmark specifically desig
     )
 )
 class PopeAdapter(VisionLanguageAdapter):
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.split_as_subset = True
@@ -79,7 +79,7 @@ class PopeAdapter(VisionLanguageAdapter):
                 'answer': answer,
                 'category': record.get('category'),
                 'question_id': record.get('question_id'),
-            }
+            },
         )
 
     def match_score(self, original_prediction, filtered_prediction, reference, task_state) -> Score:
@@ -128,7 +128,7 @@ class PopeAdapter(VisionLanguageAdapter):
                 'precision': precision,
                 'recall': recall,
                 'f1_score': f1_score,
-                'yes_ratio': yes_ratio
+                'yes_ratio': yes_ratio,
             }
 
         overall_metrics = compute_metrics(sample_scores)

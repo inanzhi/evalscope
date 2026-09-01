@@ -3,12 +3,12 @@
 
 ## 概述
 
-SWE-bench Lite Agentic 是 SWE-bench Lite 的代理模式（agentic-mode）评估版本。SWE-bench Lite 是 SWE-bench 的一个精选子集，包含来自 11 个热门 Python 仓库的 300 个 Issue-Pull Request 对。模型在每个实例专属的 Docker 容器中自主驱动多轮代理循环，以解决真实的 GitHub 问题。
+SWE-bench Lite Agentic 是 SWE-bench Lite 的代理模式（agentic-mode）评估版本。SWE-bench Lite 是 SWE-bench 的一个精选子集，包含来自 11 个热门 Python 仓库的 300 个 Issue-Pull Request 对。模型在每个实例独立的 Docker 容器中自主驱动多轮代理循环，以解决真实的 GitHub 问题。
 
 ## 任务描述
 
 - **任务类型**：自动化软件工程 / 缺陷修复（代理模式）
-- **输入**：GitHub issue 描述（不提供 oracle 文件上下文）
+- **输入**：GitHub issue 描述（不包含 oracle 文件上下文）
 - **输出**：通过 `git diff` 收集的代码补丁（diff 格式），由模型自主编辑后生成
 - **规模**：300 个精心挑选的测试实例
 
@@ -17,35 +17,34 @@ SWE-bench Lite Agentic 是 SWE-bench Lite 的代理模式（agentic-mode）评�
 - 包含 300 个测试用的 Issue-Pull Request 对
 - 覆盖 11 个热门 Python 仓库
 - 真实世界中的缺陷，且已有验证过的解决方案
-- 每个实例使用独立的 Docker 沙箱环境运行多轮代理循环
+- 每个实例均在独立的 Docker 沙箱中运行多轮代理循环
 - 相比完整版 SWE-bench 更易管理，但仍具挑战性
 
 ## 评估说明
 
-- 评估前需先安装 `pip install swebench==4.1.0`
+- 评估前需先执行 `pip install swebench==4.1.0`
 - 每个仓库的 Docker 镜像会自动构建或拉取
 - 详细设置说明请参阅 [使用文档](https://evalscope.readthedocs.io/zh-cn/latest/third_party/swe_bench.html)
-- 此基准测试是进行初始代理模型对比的常用变体
+- 是用于初步比较代理模型性能的常用基准变体
 
 ## 代理模式
 
-该基准测试在每个实例专属的 SWE-bench Docker 容器内驱动一个多轮代理循环（与 mini-swe-agent 的 `swebench.yaml` 配置一致）。模型通过发出 `bash` 命令来探索 `/testbed` 目录、编辑源文件，并最终通过打印哨兵字符串 `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` 及其后的补丁内容来提交 `git diff` 补丁。
+该基准在每个实例专属的 SWE-bench Docker 容器内驱动一个多轮代理循环（与 mini-swe-agent 的 `swebench.yaml` 配置一致）。模型通过发出 `bash` 命令来探索 `/testbed` 目录、编辑源文件，并最终通过打印哨兵字符串 `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` 及其后的补丁内容来提交 `git diff` 补丁。
 
-`extra_params.action_protocol` 可选择以下两种协议：
-- `toolcall`（默认）：使用 OpenAI 函数调用协议，仅提供一个 `bash` 工具。推荐用于支持工具调用的模型。
-- `backticks`：基于文本的备用方案，每轮期望一个 ` ```mswea_bash_command ``` ` 代码块。适用于不支持函数调用的模型。
+默认的 `swe_bench_toolcall` 策略使用 OpenAI 函数调用，仅提供一个 `bash` 工具。对于不支持函数调用的模型，可通过 `NativeAgentConfig.strategy` 选择 `swe_bench_backticks` 策略；该策略要求每轮输出中包含一个 ` ```mswea_bash_command ``` ` 代码块。
+
 
 ## 属性
 
 | 属性 | 值 |
 |----------|-------|
 | **基准测试名称** | `swe_bench_lite_agentic` |
-| **数据集 ID** | [princeton-nlp/SWE-bench_Lite](https://modelscope.cn/datasets/princeton-nlp/SWE-bench_Lite/summary) |
+| **数据集ID** | [princeton-nlp/SWE-bench_Lite](https://modelscope.cn/datasets/princeton-nlp/SWE-bench_Lite/summary) |
 | **论文** | N/A |
 | **标签** | `Coding` |
-| **指标** | `acc` |
+| **指标** | `accuracy` |
 | **默认示例数** | 0-shot |
-| **评估划分** | `test` |
+| **评估分割** | `test` |
 
 
 ## 数据统计
@@ -136,12 +135,10 @@ SWE-bench Lite Agentic 是 SWE-bench Lite 的代理模式（agentic-mode）评�
 
 | 参数 | 类型 | 默认值 | 描述 |
 |-----------|------|---------|-------------|
-| `action_protocol` | `str` | `toolcall` | 代理动作协议："toolcall"（主流 OpenAI 函数调用方式，与 mini-swe-agent 的 swebench.yaml 一致）或 "backticks"（基于文本的 mswea_bash_command 回退方案，适用于不支持函数调用的模型）。可选项：['toolcall', 'backticks'] |
-| `max_steps` | `int` | `250` | 每个样本的最大代理步数。 |
-| `command_timeout` | `float` | `60.0` | 每个 bash 命令的默认超时时间（秒）。 |
 | `build_docker_images` | `bool` | `True` | 为每个样本在本地构建 Docker 镜像。 |
 | `pull_remote_images_if_available` | `bool` | `True` | 在构建前尝试拉取已存在的远程 Docker 镜像。 |
-| `force_arch` | `str` | `` | 可选地强制指定镜像构建/拉取的目标架构。可选项：['', 'arm64', 'x86_64'] |
+| `force_arch` | `str` | `` | 可选地强制指定镜像构建/拉取的架构。选项：['', 'arm64', 'x86_64'] |
+| `dockerhub_username` | `str` | `swebench` | 远程 SWE-bench 镜像在 DockerHub 上的用户/组织命名空间。 |
 
 ## 使用方法
 
@@ -153,26 +150,31 @@ evalscope eval \
     --api-url OPENAI_API_COMPAT_URL \
     --api-key EMPTY_TOKEN \
     --datasets swe_bench_lite_agentic \
-    --limit 10  # 正式评估时请删除此行
+    --agent-config '{"mode":"native","strategy":"swe_bench_toolcall","max_steps":250}' \
+    --limit 10  # 正式评估时请移除此行
 ```
 
 ### 使用 Python
 
 ```python
-from evalscope import run_task
-from evalscope.config import TaskConfig
+from evalscope import TaskConfig, run_task
+from evalscope.api.agent import NativeAgentConfig
 
 task_cfg = TaskConfig(
     model='YOUR_MODEL',
     api_url='OPENAI_API_COMPAT_URL',
     api_key='EMPTY_TOKEN',
     datasets=['swe_bench_lite_agentic'],
+    agent_config=NativeAgentConfig(
+        strategy='swe_bench_toolcall',
+        max_steps=250,
+    ),
     dataset_args={
         'swe_bench_lite_agentic': {
             # extra_params: {}  # 使用默认额外参数
         }
     },
-    limit=10,  # 正式评估时请删除此行
+    limit=10,  # 正式评估时请移除此行
 )
 
 run_task(task_cfg=task_cfg)

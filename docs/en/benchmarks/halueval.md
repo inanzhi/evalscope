@@ -40,7 +40,7 @@ HaluEval is a large collection of generated and human-annotated hallucinated sam
 | **Dataset ID** | [evalscope/HaluEval](https://modelscope.cn/datasets/evalscope/HaluEval/summary) |
 | **Paper** | N/A |
 | **Tags** | `Hallucination`, `Knowledge`, `Yes/No` |
-| **Metrics** | `accuracy`, `precision`, `recall`, `f1_score`, `yes_ratio` |
+| **Metrics** | `accuracy`, `precision`, `recall`, `f1`, `yes_ratio` |
 | **Default Shots** | 0-shot |
 | **Evaluation Split** | `data` |
 
@@ -129,5 +129,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

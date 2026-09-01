@@ -24,11 +24,11 @@ diverse task categories requiring spatial, compositional, and multi-step visual 
 ## Evaluation Notes
 
 - Default evaluation uses the **test** split (1,215 samples)
-- Primary metric: **Accuracy** (acc)
+- Primary metric: **Accuracy** (`accuracy`)
 - Images are downloaded as `data.zip` from ModelScope and extracted automatically
 - Rule-based scoring: OCR (substring match), jigsaw (grid IoU), spot_difference (set IoU),
   word_search (numeric match), all other tasks (MCQ / numeric judge)
-- **Recommended**: set `judge_strategy=JudgeStrategy.LLM_RECALL` and provide `judge_model_args`
+- **Recommended**: set `judge.strategy='llm_recall'` and provide `judge.models`
   to activate LLM-as-judge as a recall mechanism — the judge is called only when rule-based
   scoring gives 0, providing more accurate evaluation without unnecessary API overhead
 - [Paper](https://arxiv.org/abs/2511.01833) | [GitHub](https://github.com/agents-x-project/TIR-Bench)
@@ -42,7 +42,7 @@ diverse task categories requiring spatial, compositional, and multi-step visual 
 | **Dataset ID** | [evalscope/TIR-Bench](https://modelscope.cn/datasets/evalscope/TIR-Bench/summary) |
 | **Paper** | [Paper](https://arxiv.org/abs/2511.01833) |
 | **Tags** | `MultiModal`, `QA`, `Reasoning` |
-| **Metrics** | `acc` |
+| **Metrics** | `accuracy` |
 | **Default Shots** | 0-shot |
 | **Evaluation Split** | `test` |
 
@@ -152,5 +152,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

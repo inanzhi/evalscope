@@ -16,10 +16,12 @@ Public classes
 from __future__ import annotations
 
 import json
-from pydantic import BaseModel, ConfigDict, Field, field_validator
-from tabulate import tabulate
 from typing import Any, Dict, List, Optional
 
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from tabulate import tabulate
+
+from evalscope.metrics.semantics import format_perf_value
 from evalscope.perf.utils.perf_constants import Metrics, PercentileMetrics
 
 # ---------------------------------------------------------------------------
@@ -45,6 +47,8 @@ class BenchmarkSummary(BaseModel):
     total_requests: int = Field(0, alias=Metrics.TOTAL_REQUESTS)
     succeed_requests: int = Field(0, alias=Metrics.SUCCEED_REQUESTS)
     failed_requests: int = Field(0, alias=Metrics.FAILED_REQUESTS)
+    stream_requests: int = Field(0, alias=Metrics.STREAM_REQUESTS)
+    non_stream_requests: int = Field(0, alias=Metrics.NON_STREAM_REQUESTS)
     request_throughput: float = Field(0.0, alias=Metrics.REQUEST_THROUGHPUT)
     avg_latency: float = Field(0.0, alias=Metrics.AVERAGE_LATENCY)
     avg_input_tokens: float = Field(0.0, alias=Metrics.AVERAGE_INPUT_TOKENS_PER_REQUEST)
@@ -71,7 +75,15 @@ class BenchmarkSummary(BaseModel):
     approx_spec_acceptance_rate: Optional[float] = Field(None, alias=Metrics.APPROX_SPECULATIVE_ACCEPTANCE_RATE)
 
     # Multi-run averaging produces fractional ints; round before validation.
-    @field_validator('concurrency', 'total_requests', 'succeed_requests', 'failed_requests', mode='before')
+    @field_validator(
+        'concurrency',
+        'total_requests',
+        'succeed_requests',
+        'failed_requests',
+        'stream_requests',
+        'non_stream_requests',
+        mode='before',
+    )
     @classmethod
     def _round_to_int(cls, v):
         if isinstance(v, float):
@@ -108,48 +120,67 @@ class BenchmarkSummary(BaseModel):
     def to_table(self) -> str:
         """Render summary metrics as a grouped tabulate table (simple_outline)."""
 
-        def _fmt(v):
-            if isinstance(v, float):
-                return f'{v:.2f}'
-            return str(v)
+        def _fmt(field_key: str, value: float) -> str:
+            return format_perf_value(value, field_key, include_unit=False)
 
         rows = []
 
         # ── General ──
         rows.append(('── General ──', ''))
-        rows.append((Metrics.TIME_TAKEN_FOR_TESTS, _fmt(self.time_taken)))
-        rows.append((Metrics.NUMBER_OF_CONCURRENCY, str(self.concurrency)))
-        rows.append((Metrics.REQUEST_RATE, _fmt(self.request_rate)))
+        rows.append((Metrics.TIME_TAKEN_FOR_TESTS, _fmt(Metrics.TIME_TAKEN_FOR_TESTS, self.time_taken)))
+        rows.append((Metrics.NUMBER_OF_CONCURRENCY, _fmt(Metrics.NUMBER_OF_CONCURRENCY, self.concurrency)))
+        rows.append((Metrics.REQUEST_RATE, _fmt(Metrics.REQUEST_RATE, self.request_rate)))
         rows.append(
             ('Total / Success / Failed', f'{self.total_requests} / {self.succeed_requests} / {self.failed_requests}')
         )
-        rows.append((Metrics.REQUEST_THROUGHPUT, _fmt(self.request_throughput)))
+        if self.stream_requests > 0 and self.non_stream_requests > 0:
+            rows.append(('Stream / Non-Stream', f'{self.stream_requests} / {self.non_stream_requests}'))
+        rows.append((Metrics.REQUEST_THROUGHPUT, _fmt(Metrics.REQUEST_THROUGHPUT, self.request_throughput)))
 
         # ── Latency ──
         rows.append(('── Latency ──', ''))
-        rows.append((Metrics.AVERAGE_LATENCY, _fmt(self.avg_latency)))
+        rows.append((Metrics.AVERAGE_LATENCY, _fmt(Metrics.AVERAGE_LATENCY, self.avg_latency)))
         if self.avg_ttft:
-            rows.append((Metrics.AVERAGE_TIME_TO_FIRST_TOKEN, _fmt(self.avg_ttft)))
+            rows.append((Metrics.AVERAGE_TIME_TO_FIRST_TOKEN, _fmt(Metrics.AVERAGE_TIME_TO_FIRST_TOKEN, self.avg_ttft)))
         if self.avg_tpot:
-            rows.append((Metrics.AVERAGE_TIME_PER_OUTPUT_TOKEN, _fmt(self.avg_tpot)))
+            rows.append(
+                (Metrics.AVERAGE_TIME_PER_OUTPUT_TOKEN, _fmt(Metrics.AVERAGE_TIME_PER_OUTPUT_TOKEN, self.avg_tpot))
+            )
         if self.avg_itl:
-            rows.append((Metrics.AVERAGE_INTER_TOKEN_LATENCY, _fmt(self.avg_itl)))
+            rows.append((Metrics.AVERAGE_INTER_TOKEN_LATENCY, _fmt(Metrics.AVERAGE_INTER_TOKEN_LATENCY, self.avg_itl)))
 
         # ── Tokens ──
         rows.append(('── Tokens ──', ''))
-        rows.append((Metrics.AVERAGE_INPUT_TOKENS_PER_REQUEST, _fmt(self.avg_input_tokens)))
+        rows.append(
+            (
+                Metrics.AVERAGE_INPUT_TOKENS_PER_REQUEST,
+                _fmt(Metrics.AVERAGE_INPUT_TOKENS_PER_REQUEST, self.avg_input_tokens),
+            )
+        )
         if self.avg_output_tokens:
-            rows.append((Metrics.AVERAGE_OUTPUT_TOKENS_PER_REQUEST, _fmt(self.avg_output_tokens)))
+            rows.append(
+                (
+                    Metrics.AVERAGE_OUTPUT_TOKENS_PER_REQUEST,
+                    _fmt(Metrics.AVERAGE_OUTPUT_TOKENS_PER_REQUEST, self.avg_output_tokens),
+                )
+            )
         if self.output_token_throughput:
-            rows.append((Metrics.OUTPUT_TOKEN_THROUGHPUT, _fmt(self.output_token_throughput)))
+            rows.append(
+                (Metrics.OUTPUT_TOKEN_THROUGHPUT, _fmt(Metrics.OUTPUT_TOKEN_THROUGHPUT, self.output_token_throughput))
+            )
         if self.total_token_throughput:
-            rows.append((Metrics.TOTAL_TOKEN_THROUGHPUT, _fmt(self.total_token_throughput)))
+            rows.append(
+                (Metrics.TOTAL_TOKEN_THROUGHPUT, _fmt(Metrics.TOTAL_TOKEN_THROUGHPUT, self.total_token_throughput))
+            )
         if self.input_token_throughput:
-            rows.append((Metrics.INPUT_TOKEN_THROUGHPUT, _fmt(self.input_token_throughput)))
+            rows.append(
+                (Metrics.INPUT_TOKEN_THROUGHPUT, _fmt(Metrics.INPUT_TOKEN_THROUGHPUT, self.input_token_throughput))
+            )
 
         # ── Multi-turn (optional) ──
         multiturn_present = any(
-            v is not None for v in (
+            v is not None
+            for v in (
                 self.avg_turns,
                 self.avg_cached_percent,
                 self.avg_first_turn_ttft,
@@ -159,21 +190,45 @@ class BenchmarkSummary(BaseModel):
         if multiturn_present:
             rows.append(('── Multi-turn ──', ''))
             if self.avg_turns is not None:
-                rows.append((Metrics.AVERAGE_INPUT_TURNS_PER_REQUEST, _fmt(self.avg_turns)))
+                rows.append(
+                    (
+                        Metrics.AVERAGE_INPUT_TURNS_PER_REQUEST,
+                        _fmt(Metrics.AVERAGE_INPUT_TURNS_PER_REQUEST, self.avg_turns),
+                    )
+                )
             if self.avg_cached_percent is not None:
-                rows.append((Metrics.AVERAGE_CACHED_PERCENT, _fmt(self.avg_cached_percent)))
+                rows.append(
+                    (Metrics.AVERAGE_CACHED_PERCENT, _fmt(Metrics.AVERAGE_CACHED_PERCENT, self.avg_cached_percent))
+                )
             if self.avg_first_turn_ttft is not None:
-                rows.append((Metrics.AVERAGE_FIRST_TURN_TTFT, _fmt(self.avg_first_turn_ttft)))
+                rows.append(
+                    (Metrics.AVERAGE_FIRST_TURN_TTFT, _fmt(Metrics.AVERAGE_FIRST_TURN_TTFT, self.avg_first_turn_ttft))
+                )
             if self.avg_subsequent_turn_ttft is not None:
-                rows.append((Metrics.AVERAGE_SUBSEQUENT_TURN_TTFT, _fmt(self.avg_subsequent_turn_ttft)))
+                rows.append(
+                    (
+                        Metrics.AVERAGE_SUBSEQUENT_TURN_TTFT,
+                        _fmt(Metrics.AVERAGE_SUBSEQUENT_TURN_TTFT, self.avg_subsequent_turn_ttft),
+                    )
+                )
 
         # ── Speculative Decoding (optional) ──
         if self.avg_decoded_tokens_per_iter is not None or self.approx_spec_acceptance_rate is not None:
             rows.append(('── Speculative Decoding ──', ''))
             if self.avg_decoded_tokens_per_iter is not None:
-                rows.append((Metrics.AVERAGE_DECODED_TOKENS_PER_ITER, _fmt(self.avg_decoded_tokens_per_iter)))
+                rows.append(
+                    (
+                        Metrics.AVERAGE_DECODED_TOKENS_PER_ITER,
+                        _fmt(Metrics.AVERAGE_DECODED_TOKENS_PER_ITER, self.avg_decoded_tokens_per_iter),
+                    )
+                )
             if self.approx_spec_acceptance_rate is not None:
-                rows.append((Metrics.APPROX_SPECULATIVE_ACCEPTANCE_RATE, _fmt(self.approx_spec_acceptance_rate)))
+                rows.append(
+                    (
+                        Metrics.APPROX_SPECULATIVE_ACCEPTANCE_RATE,
+                        _fmt(Metrics.APPROX_SPECULATIVE_ACCEPTANCE_RATE, self.approx_spec_acceptance_rate),
+                    )
+                )
 
         raw = tabulate(rows, headers=['Metric', 'Value'], tablefmt='simple_outline', colalign=('left', 'right'))
 
@@ -284,9 +339,7 @@ class PercentileResult(BaseModel):
         """
         # Build alias -> field name mapping once at call time
         alias_map = {
-            field_info.alias: name
-            for name, field_info in PercentileRow.model_fields.items()
-            if field_info.alias
+            field_info.alias: name for name, field_info in PercentileRow.model_fields.items() if field_info.alias
         }
         field_name = alias_map.get(alias)
         if field_name is None:
@@ -326,15 +379,17 @@ class PercentileResult(BaseModel):
         """Render percentile results as a formatted table string.
 
         Rows are metrics, columns are percentile labels (e.g. 5%, 10%, ..., 99%).
-        All numeric values are formatted to two decimal places.
+        Numeric values use the semantics declared for their metric key.
         """
         col_data = self.to_columns()
         p_labels = col_data.get(PercentileMetrics.PERCENTILES, [])
-        rows = [[metric] + [f'{v:.2f}' if isinstance(v, (int, float)) else v
-                            for v in values]
-                for metric, values in col_data.items()
-                if metric != PercentileMetrics.PERCENTILES]
-        col_align = ('left', ) + ('right', ) * len(p_labels)
+        rows = [
+            [metric]
+            + [format_perf_value(v, metric, include_unit=False) if isinstance(v, (int, float)) else v for v in values]
+            for metric, values in col_data.items()
+            if metric != PercentileMetrics.PERCENTILES
+        ]
+        col_align = ('left',) + ('right',) * len(p_labels)
         return tabulate(
             rows,
             headers=['Metric'] + p_labels,
@@ -422,14 +477,15 @@ class RunData(BaseModel):
     def name(self) -> str:
         """Human-readable run label.
 
-        * ``parallel_<N>_number_<M>`` directories  → "Parallel N / Number M"
-        * ``rate_<R>_number_<M>`` directories       → "Rate R rps / Number M"
+        * closed-loop (``parallel_<N>_number_<M>``) → "Parallel N / Number M"
+        * open-loop with a fixed rate               → "Rate R rps / Number M"
+        * open-loop with no fixed rate (rate=-1)    → "Open-loop / Number M"
         """
-        import re
-        m = re.match(r'^rate_([\d.]+)_number_(\d+)$', self.dir_name)
-        if m:
-            return f'Rate {m.group(1)} rps / Number {m.group(2)}'
-        return f'Parallel {self.parallel} / Number {self.number}'
+        if not self.is_open_loop:
+            return f'Parallel {self.parallel} / Number {self.number}'
+        if self.rate is not None and self.rate < 0:
+            return f'Open-loop / Number {self.number}'
+        return f'Rate {self.rate} rps / Number {self.number}'
 
     @property
     def success_rate(self) -> float:

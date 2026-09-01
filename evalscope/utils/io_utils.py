@@ -3,19 +3,22 @@ import csv
 import hashlib
 import io
 import json
-import jsonlines as jsonl
-import numpy as np
 import os
 import re
 import string
 import unicodedata
-import yaml
 from datetime import datetime
 from io import BytesIO
-from PIL import Image
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import IO, Any, Dict, List, Literal, Optional, Tuple, Union
 
-from evalscope.constants import BEIJING_TZ, USE_OSS, DumpMode
+import filetype
+import jsonlines as jsonl
+import numpy as np
+import yaml
+from datasets import Dataset
+from PIL import Image
+
+from evalscope.constants import BEIJING_TZ, DATASET_TRANSFORM_BATCH_SIZE, USE_OSS, DumpMode
 from evalscope.utils.logger import get_logger
 
 logger = get_logger()
@@ -103,12 +106,15 @@ class OutputsStructure:
         Returns:
             str: Absolute path to the sub-directory.
         """
-        if self._dirs[attr_name] is None:
-            dir_path = os.path.join(self.outputs_dir, dir_name)
-            if self.is_make:
-                _ensure_dir(dir_path)
-            self._dirs[attr_name] = dir_path
-        return self._dirs[attr_name]  # type: ignore[return-value]
+        subdir = self._dirs.get(attr_name)
+        if subdir is not None:
+            return subdir
+
+        dir_path = os.path.join(self.outputs_dir, dir_name)
+        if self.is_make:
+            _ensure_dir(dir_path)
+        self._dirs[attr_name] = dir_path
+        return dir_path
 
     @property
     def logs_dir(self) -> str:
@@ -137,36 +143,93 @@ class OutputsStructure:
 
 
 # ---------------------------------------------------------------------------
+# Parquet/Arrow utilities
+# ---------------------------------------------------------------------------
+
+
+def undecode_media(
+    dataset: 'Dataset',
+    media_type: List[Literal['image', 'audio', 'video']],
+    batch_size: Optional[int] = None,
+) -> 'Dataset':
+    from datasets.features import Audio, Image, Sequence, Video
+
+    if not isinstance(dataset, Dataset):
+        raise TypeError(f'Expected a datasets.Dataset object, got {type(dataset)} instead.')
+
+    # we did not use cast_column here, because cast_column() does not support batch_size,
+    # the default batch_size=1000 may cause OOM for large datasets
+    # see https://github.com/huggingface/datasets/pull/7910
+    features = dataset.features
+    noupdate = True
+    for col, feat in dataset.features.items():
+        if 'image' in media_type and isinstance(feat, Image):
+            features[col] = Image(decode=False)
+        elif 'audio' in media_type and isinstance(feat, Audio):
+            features[col] = Audio(decode=False)
+        elif 'video' in media_type and isinstance(feat, Video):
+            features[col] = Video(decode=False)
+        elif 'image' in media_type and isinstance(feat, Sequence) and isinstance(feat.feature, Image):
+            features[col] = Sequence(Image(decode=False))
+        elif 'audio' in media_type and isinstance(feat, Sequence) and isinstance(feat.feature, Audio):
+            features[col] = Sequence(Audio(decode=False))
+        elif 'video' in media_type and isinstance(feat, Sequence) and isinstance(feat.feature, Video):
+            features[col] = Sequence(Video(decode=False))
+        else:
+            continue
+        noupdate = False
+
+    if noupdate:
+        return dataset
+
+    # if there are updates, do casting
+    dataset = dataset.cast(features, batch_size=batch_size or DATASET_TRANSFORM_BATCH_SIZE)
+    return dataset
+
+
+def parquet_to_list(parquet_file: str) -> List[Dict[str, Any]]:
+    from datasets import Dataset
+
+    dataset = Dataset.from_parquet(parquet_file)
+    dataset = undecode_media(dataset, media_type=['image', 'audio', 'video'])
+
+    return dataset.to_list()
+
+
+# ---------------------------------------------------------------------------
 # JSONL utilities
 # ---------------------------------------------------------------------------
 
 
-def jsonl_to_list(jsonl_file: str) -> List[Dict[str, Any]]:
+def jsonl_to_list(jsonl_file: str, skip_invalid: bool = False) -> List[Dict[str, Any]]:
     """Read a JSONL file into a list of dicts.
-
-    Attempts to use the ``jsonlines`` library first; falls back to
-    line-by-line ``json.loads`` parsing on any error.
 
     Args:
         jsonl_file (str): Path to the ``.jsonl`` file.
+        skip_invalid (bool): Whether malformed or non-object rows should be
+            logged and skipped. Defaults to ``False`` so dataset inputs do
+            not silently lose records.
 
     Returns:
         List[Dict[str, Any]]: Parsed records.  Returns an empty list and
         logs a warning when the file contains no valid records.
     """
     res_list: List[Dict[str, Any]] = []
-    try:
-        with jsonl.open(jsonl_file, mode='r') as reader:
-            for line in reader.iter(type=dict, allow_none=True, skip_invalid=False):
-                res_list.append(line)
-    except Exception:
-        # Fallback: parse line-by-line with the stdlib json module.
-        res_list = []
-        with open(jsonl_file, 'r', encoding='utf-8') as f:
-            for line in f:
-                stripped = line.strip()
-                if stripped:
-                    res_list.append(json.loads(stripped))
+    with open(jsonl_file, 'r', encoding='utf-8') as f:
+        for line_number, line in enumerate(f, start=1):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                parsed = json.loads(stripped)
+                if not isinstance(parsed, dict):
+                    raise TypeError(f'Expected a JSON object, got {type(parsed).__name__}')
+            except (json.JSONDecodeError, TypeError) as e:
+                if not skip_invalid:
+                    raise
+                logger.warning(f'Skipping invalid JSONL row {line_number} in {jsonl_file}: {e}')
+                continue
+            res_list.append(parsed)
 
     if not res_list:
         logger.warning(f'No data found in {jsonl_file}.')
@@ -188,6 +251,53 @@ def jsonl_to_reader(jsonl_file: str) -> jsonl.Reader:
         jsonlines.Reader: An open reader for the file.
     """
     return jsonl.open(jsonl_file, mode='r')
+
+
+class JsonlWriter:
+    """Persistent writer that appends JSON records to a file.
+
+    Keeps the underlying file handle open between writes so that rapid
+    successive appends do not trigger the NTFS file-lock release latency
+    that causes ``PermissionError`` on Windows.
+
+    Each :meth:`write` serializes the record with :func:`json.dumps`,
+    appends a newline, and flushes the Python buffer so data reaches the
+    OS page cache immediately — readable by other processes and
+    recoverable after a Python-level crash.
+
+    Example::
+
+        writer = JsonlWriter('/tmp/out.jsonl')
+        writer.write({'key': 'value'})
+        writer.close()
+    """
+
+    def __init__(self, path: str) -> None:
+        self._path = path
+        self._file: Optional[IO[str]] = None
+
+    def _ensure_open(self) -> IO[str]:
+        if self._file is None:
+            parent = os.path.dirname(self._path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            self._file = open(self._path, mode='a', encoding='utf-8')
+        return self._file
+
+    def write(self, record: Any) -> None:
+        """Append a single JSON-serializable record and flush."""
+        f = self._ensure_open()
+        f.write(json.dumps(record, ensure_ascii=False) + '\n')
+        f.flush()
+
+    def close(self) -> None:
+        """Close the underlying file handle. Idempotent."""
+        if self._file is not None:
+            try:
+                self._file.close()
+            except Exception:  # noqa: BLE01 - never propagate from cleanup
+                pass
+            self._file = None
 
 
 def dump_jsonl_data(
@@ -328,7 +438,7 @@ def yaml_to_dict(yaml_file: str) -> Any:
     Raises:
         yaml.YAMLError: When the file cannot be parsed.
     """
-    with open(yaml_file, 'r') as f:
+    with open(yaml_file, 'r', encoding='utf-8') as f:
         try:
             return yaml.safe_load(f)
         except yaml.YAMLError as e:
@@ -345,7 +455,7 @@ def dict_to_yaml(d: dict, yaml_file: str) -> None:
             created automatically.
     """
     _ensure_dir(os.path.dirname(yaml_file))
-    with open(yaml_file, 'w') as f:
+    with open(yaml_file, 'w', encoding='utf-8') as f:
         yaml.dump(d, f, default_flow_style=False, allow_unicode=True, Dumper=yaml.SafeDumper)
 
 
@@ -361,7 +471,7 @@ def json_to_dict(json_file: str) -> Any:
     Raises:
         json.JSONDecodeError: When the file cannot be parsed.
     """
-    with open(json_file, 'r') as f:
+    with open(json_file, 'r', encoding='utf-8') as f:
         try:
             return json.load(f)
         except json.JSONDecodeError as e:
@@ -379,7 +489,7 @@ def dict_to_json(d: dict, json_file: str) -> None:
     """
     json_file = os.path.expanduser(json_file)
     _ensure_dir(os.path.dirname(json_file))
-    with open(json_file, 'w') as f:
+    with open(json_file, 'w', encoding='utf-8') as f:
         json.dump(d, f, indent=4, ensure_ascii=False)
 
 
@@ -474,7 +584,7 @@ def safe_filename(s: str, max_length: int = 255) -> str:
         name, ext = os.path.splitext(s)
         ext_len = len(ext)
         if ext_len > 0:
-            s = name[:max_length - ext_len] + ext
+            s = name[: max_length - ext_len] + ext
         else:
             s = s[:max_length]
 
@@ -559,6 +669,7 @@ def bytes_to_base64(
     format: str = 'png',
     add_header: bool = False,
     content_type: str = 'image',
+    guess_mimetype: bool = False,
 ) -> str:
     """Encode raw bytes as a base64 string.
 
@@ -572,12 +683,17 @@ def bytes_to_base64(
         content_type (str): Top-level MIME type (e.g. ``'image'``,
             ``'audio'``).  Used only when *add_header* is ``True``.
             Defaults to ``'image'``.
+        guess_mimetype (bool): When ``True``, detect the MIME type from
+            ``bytes_data`` and use it in the data-URI header. Falls back to
+            ``content_type`` and ``format`` when detection fails.
 
     Returns:
         str: Base64-encoded string, optionally with a data-URI header.
     """
     base64_str = base64.b64encode(bytes_data).decode('utf-8')
     if add_header:
+        if guess_mimetype and (guessed_mime := filetype.guess_mime(bytes_data)):
+            content_type, format = guessed_mime.split('/')
         base64_str = f'data:{content_type}/{format};base64,{base64_str}'
     return base64_str
 
@@ -752,8 +868,7 @@ def compress_image_to_limit(
     try:
         img = Image.open(BytesIO(image_bytes))
     except Exception as exc:
-        logger.warning(f'Failed to open image bytes with PIL, sending original image; '
-                       f'may exceed API limit: {exc}')
+        logger.warning(f'Failed to open image bytes with PIL, sending original image; may exceed API limit: {exc}')
         return image_bytes, 'png'
 
     if img.mode not in ('RGB', 'L'):
@@ -783,8 +898,7 @@ def compress_image_to_limit(
         out = _encode_jpeg(img, quality)
 
     if len(out) > max_bytes:
-        logger.warning(f'Image remains above limit after compression: '
-                       f'size={len(out)} bytes (limit={max_bytes}).')
+        logger.warning(f'Image remains above limit after compression: size={len(out)} bytes (limit={max_bytes}).')
     else:
         logger.info(
             f'Compressed image from {len(image_bytes)} to {len(out)} bytes; '

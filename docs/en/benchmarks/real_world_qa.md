@@ -37,7 +37,7 @@ RealWorldQA is a benchmark contributed by XAI designed to evaluate multimodal AI
 | **Dataset ID** | [lmms-lab/RealWorldQA](https://modelscope.cn/datasets/lmms-lab/RealWorldQA/summary) |
 | **Paper** | N/A |
 | **Tags** | `Knowledge`, `MultiModal`, `QA` |
-| **Metrics** | `acc` |
+| **Metrics** | `accuracy` |
 | **Default Shots** | 0-shot |
 | **Evaluation Split** | `test` |
 
@@ -130,5 +130,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

@@ -8,9 +8,11 @@ warms up.
 
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, Optional
 
 from evalscope.utils.logger import get_logger
+
 from .engine import SandboxEngine, get_enclave_types
 
 logger = get_logger()
@@ -83,9 +85,53 @@ def build_docker_image(image: str, path: str, dockerfile: str = 'Dockerfile') ->
     return build_logs[0]
 
 
+def normalize_docker_build_context(path: str, dockerfile: str = 'Dockerfile') -> tuple[str, str]:
+    """Return absolute build context and dockerfile path relative to it."""
+    build_ctx = os.path.abspath(path)
+    dockerfile_path = dockerfile if os.path.isabs(dockerfile) else os.path.join(build_ctx, dockerfile)
+    dockerfile_path = os.path.abspath(dockerfile_path)
+    try:
+        dockerfile_path = os.path.relpath(dockerfile_path, build_ctx)
+    except ValueError:
+        pass
+    return build_ctx, dockerfile_path
+
+
+def ensure_docker_image_built(
+    image: str,
+    path: str,
+    dockerfile: str = 'Dockerfile',
+    label: str = 'Docker image',
+) -> bool:
+    """Build ``image`` from ``path`` when it is missing from the local Docker daemon."""
+    if not should_build_docker_image(image):
+        return False
+
+    build_ctx, dockerfile_path = normalize_docker_build_context(path, dockerfile)
+    logger.info(f'{label} {image!r} not found. Building from {build_ctx} ...')
+    build_docker_image(image, path=build_ctx, dockerfile=dockerfile_path)
+    logger.info(f'{label} built: {image}')
+    return True
+
+
+def default_docker_build_context() -> tuple[str, str]:
+    """Return the evalscope-bundled Dockerfile build context.
+
+    Mirrors the historical layout in ``evalscope/api/mixin/docker/`` used by
+    benchmarks that opt into the bundled image.
+    """
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    mixin_docker = os.path.normpath(os.path.join(current_dir, '..', 'mixin', 'docker'))
+    dockerfile_path = os.path.join(mixin_docker, 'Dockerfile')
+    return mixin_docker, dockerfile_path
+
+
 __all__ = [
     'build_sandbox_config',
     'build_docker_image',
+    'default_docker_build_context',
+    'ensure_docker_image_built',
     'merge_sandbox_config_dicts',
+    'normalize_docker_build_context',
     'should_build_docker_image',
 ]

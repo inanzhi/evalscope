@@ -6,25 +6,25 @@ HMMT February 2025（MathArena）是一个具有挑战性的评测基准，源�
 
 ## 任务描述
 
-- **任务类型**：竞赛数学问题求解  
-- **输入**：HMMT级别的数学问题  
-- **输出**：包含逐步推理过程的答案  
-- **难度**：高级高中竞赛水平  
+- **任务类型**：竞赛数学问题求解
+- **输入**：HMMT级别的数学问题
+- **输出**：包含逐步推理过程的答案
+- **难度**：高级高中竞赛水平
 
 ## 主要特点
 
-- 题目来自 HMMT 2025 年 2 月竞赛  
-- 四大核心领域：代数（Algebra）、组合数学（Combinatorics）、几何（Geometry）、数论（Number Theory）  
-- 高难度的竞赛级题目  
-- 考察高级数学推理能力  
-- 代表顶尖高中数学竞赛难度  
+- 题目来自 HMMT 2025 年 2 月竞赛
+- 四大核心领域：代数（Algebra）、组合数学（Combinatorics）、几何（Geometry）、数论（Number Theory）
+- 高难度的竞赛级题目
+- 考察高级数学推理能力
+- 代表顶尖高中数学竞赛难度
 
 ## 评测说明
 
-- 默认配置使用 **0-shot** 评测  
-- 答案应使用 `\boxed{}` 格式包裹，以便正确提取  
-- 使用数值准确率（numeric accuracy）作为评估指标  
-- 题目覆盖多个数学领域  
+- 默认配置使用 **0-shot** 评测
+- 答案应使用 `\boxed{}` 格式包裹，以便正确提取
+- 使用数值准确率（numeric accuracy）作为评估指标
+- 题目覆盖多个数学领域
 
 ## 属性
 
@@ -34,7 +34,7 @@ HMMT February 2025（MathArena）是一个具有挑战性的评测基准，源�
 | **数据集ID** | [evalscope/hmmt_feb_2025](https://modelscope.cn/datasets/evalscope/hmmt_feb_2025/summary) |
 | **论文** | N/A |
 | **标签** | `Math`, `Reasoning` |
-| **指标** | `acc` |
+| **指标** | `accuracy` |
 | **默认示例数量** | 0-shot |
 | **评测划分** | `train` |
 

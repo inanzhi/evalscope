@@ -1,18 +1,29 @@
 import json
 import os
-import pandas as pd
+from typing import Any, Dict, List
+
 from flask import Blueprint, current_app, jsonify, request, send_file
 from tabulate import tabulate
-from typing import Any, Dict, List
 
 from evalscope.config import TaskConfig
 from evalscope.constants import EvalType
-from evalscope.report.combinator import get_data_frame, get_report_list
+from evalscope.report import Report
+from evalscope.report.combinator import get_display_data_frame, get_report_list
+from evalscope.service.api_models import (
+    BenchmarksResponse,
+    EvalInvokeResponse,
+    LogResponse,
+    ProgressResponse,
+    TaskStatusResponse,
+)
 from evalscope.utils.logger import get_logger
+
+from ..responses import json_response
 from ..utils import (
     DEFAULT_MULTIMODAL_BENCHMARKS,
     DEFAULT_TEXT_BENCHMARKS,
     OUTPUT_DIR,
+    TaskStoppedError,
     build_benchmark_entry,
     create_log_file,
     discover_all_benchmarks,
@@ -48,7 +59,7 @@ def _build_result_table(work_dir: str) -> str:
         report_list = get_report_list([reports_dir])
         if not report_list:
             return ''
-        df = get_data_frame(report_list, flatten_metrics=True, flatten_categories=True)
+        df = get_display_data_frame(report_list, flatten_metrics=True, flatten_categories=True)
         _CAT_LEVEL_NAMES = ['类别', '子类别', '细分类别']
         new_cols = {}
         for col in df.columns:
@@ -61,10 +72,6 @@ def _build_result_table(work_dir: str) -> str:
                 except ValueError:
                     new_cols[col] = col.replace('Cat.', '类别')
         df = df.rename(columns=new_cols)
-        score_col = _COLUMN_ZH.get('Score', 'Score')
-        if score_col in df.columns:
-            df[score_col] = pd.to_numeric(df[score_col],
-                                          errors='coerce').map(lambda x: f'{x:.4f}' if pd.notna(x) else '')
         return tabulate(df, headers=df.columns, tablefmt='pipe', showindex=False, disable_numparse=True)
     except Exception as e:
         logger.warning(f'Failed to build result table: {e}')
@@ -130,13 +137,15 @@ def _build_task_config(data: dict) -> TaskConfig:
 def _all_results_empty(result) -> bool:
     """Return True when every dataset in the evaluation result produced no scores.
 
-    This happens when ``ignore_errors=True`` and every sample failed: each
-    dataset evaluator returns an empty dict instead of a :class:`Report`.
+    This happens when ``ignore_errors=True`` and every sample failed. Native
+    evaluation returns a mapping of benchmark names to :class:`Report` objects.
     """
     if not result:
         return True
+    if isinstance(result, Report):
+        return result.score is None
     if isinstance(result, dict):
-        return all(not v for v in result.values())
+        return all(_all_results_empty(v) for v in result.values())
     if isinstance(result, list):
         return all(_all_results_empty(r) for r in result)
     return False
@@ -157,12 +166,13 @@ def _execute_task(task_id: str, task_config: TaskConfig, label: str = 'Task'):
             logger.error(f'[{task_id}] {label} produced empty results: {error_msg}')
             return jsonify({'status': 'error', 'task_id': task_id, 'error': error_msg}), 500
         logger.info(f'[{task_id}] {label} completed successfully')
-        return jsonify({
-            'status': 'completed',
-            'task_id': task_id,
-            'result': serialize_result(result),
-            'table': table_str
-        })
+        return json_response(
+            EvalInvokeResponse,
+            {'status': 'completed', 'task_id': task_id, 'result': serialize_result(result), 'table': table_str},
+        )
+    except TaskStoppedError:
+        logger.info(f'[{task_id}] {label} stopped by user.')
+        return json_response(EvalInvokeResponse, {'status': 'stopped', 'task_id': task_id})
     except Exception as e:
         logger.error(f'[{task_id}] {label} failed: {e}')
         return jsonify({'status': 'error', 'task_id': task_id, 'error': str(e)}), 500
@@ -198,7 +208,7 @@ def stop_evaluation():
 
     stopped = stop_process(task_id)
     if stopped:
-        return jsonify({'status': 'stopped', 'task_id': task_id}), 200
+        return json_response(TaskStatusResponse, {'status': 'stopped', 'task_id': task_id})
     else:
         return jsonify({'error': f'No running task found for task_id: {task_id}'}), 404
 
@@ -239,11 +249,11 @@ def get_evaluation_progress():
 
     progress_file = os.path.join(OUTPUT_DIR, task_id, 'progress.json')
     try:
-        with open(progress_file, 'r') as f:
+        with open(progress_file, 'r', encoding='utf-8') as f:
             progress = json.load(f)
-        return jsonify(progress), 200
+        return json_response(ProgressResponse, progress)
     except FileNotFoundError:
-        return jsonify({'percent': 0.0}), 200
+        return json_response(ProgressResponse, {'percent': 0.0})
     except Exception as e:
         logger.error(f'Failed to get progress for task {task_id}: {e}')
         return jsonify({'error': str(e)}), 500
@@ -293,7 +303,7 @@ def get_evaluation_log():
 
     try:
         result = get_log_content(task_id, os.path.join('logs', 'eval_log.log'), start_line, page)
-        return jsonify(result), 200
+        return json_response(LogResponse, result)
     except Exception as e:
         logger.error(f'Failed to get evaluation log: {str(e)}')
         return jsonify({'error': str(e)}), 500
@@ -331,9 +341,14 @@ def list_benchmarks():
             elif filter_type == 'multimodal':
                 result = {'multimodal': [e for e in all_entries if e.get('category') == 'vlm']}
             else:
+                # Bucket by category. Besides text (llm) and multimodal (vlm),
+                # the registry also has agent and aigc benchmarks which must not
+                # be dropped from the catalogue.
                 result = {
                     'text': [e for e in all_entries if e.get('category') == 'llm'],
                     'multimodal': [e for e in all_entries if e.get('category') == 'vlm'],
+                    'agent': [e for e in all_entries if e.get('category') == 'agent'],
+                    'aigc': [e for e in all_entries if e.get('category') == 'aigc'],
                 }
         else:
             # Use the curated default lists (backward-compatible)
@@ -350,7 +365,7 @@ def list_benchmarks():
         if filter_type and filter_type not in ('text', 'multimodal'):
             return jsonify({'error': f"Unknown type '{filter_type}'. Use 'text' or 'multimodal'."}), 400
 
-        return jsonify(result), 200
+        return json_response(BenchmarksResponse, result)
     except Exception as e:
         logger.error(f'Failed to list benchmarks: {e}')
         return jsonify({'error': str(e)}), 500

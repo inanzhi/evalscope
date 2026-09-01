@@ -1,8 +1,8 @@
 # Copyright (c) Alibaba, Inc. and its affiliates.
 
+import hashlib
 import os
 import random
-import re
 from typing import Any, Dict
 
 from evalscope.api.benchmark import BenchmarkMeta, MultiChoiceAdapter
@@ -57,7 +57,6 @@ GPQA (Graduate-Level Google-Proof Q&A) Diamond is a challenging benchmark of 198
     )
 )
 class GPQAAdapter(MultiChoiceAdapter):
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -79,7 +78,9 @@ class GPQAAdapter(MultiChoiceAdapter):
             metadata={
                 'correct_answer': record['Correct Answer'],
                 'incorrect_answers': [
-                    record['Incorrect Answer 1'], record['Incorrect Answer 2'], record['Incorrect Answer 3']
+                    record['Incorrect Answer 1'],
+                    record['Incorrect Answer 2'],
+                    record['Incorrect Answer 3'],
                 ],
             },
         )
@@ -87,7 +88,9 @@ class GPQAAdapter(MultiChoiceAdapter):
     def format_fewshot_template(self, fewshot, sample):
         from .prompt import FEW_SHOT_SAMPLES
 
-        return FEW_SHOT_TEMPLATE.format(fewshot=FEW_SHOT_SAMPLES, ) + self.format_prompt_template(sample)
+        return FEW_SHOT_TEMPLATE.format(
+            fewshot=FEW_SHOT_SAMPLES,
+        ) + self.format_prompt_template(sample)
 
     def _process_input(self, input_d: dict) -> dict:
         """Process input to shuffle choices and determine correct answer letter."""
@@ -95,11 +98,7 @@ class GPQAAdapter(MultiChoiceAdapter):
         def preprocess(text):
             if text is None:
                 return ' '
-            text = text.strip()
-            text = text.replace(' [title]', '. ')
-            text = re.sub('\\[.*?\\]', '', text)
-            text = text.replace('  ', ' ')
-            return text
+            return text.strip()
 
         choices = [
             preprocess(input_d['Incorrect Answer 1']),
@@ -107,7 +106,13 @@ class GPQAAdapter(MultiChoiceAdapter):
             preprocess(input_d['Incorrect Answer 3']),
             preprocess(input_d['Correct Answer']),
         ]
-        random.shuffle(choices)
+        # Derive the shuffle order from the question so this method stays a pure
+        # function. With the unseeded global RNG the option order changed on every
+        # dataset build, so `--rerun-review` paired cached predictions with a freshly
+        # shuffled answer key and accuracy collapsed to chance. Hashing per question
+        # keeps the position-bias protection while making the mapping reproducible.
+        seed = int.from_bytes(hashlib.sha256(preprocess(input_d['Question']).encode('utf-8')).digest()[:8], 'big')
+        random.Random(seed).shuffle(choices)
         correct_answer_index = choices.index(preprocess(input_d['Correct Answer']))
 
         return {

@@ -37,7 +37,7 @@ BFCL-v4 (Berkeley Function-Calling Leaderboard V4) is a comprehensive benchmark 
 | **Dataset ID** | [berkeley-function-call-leaderboard](https://github.com/ShishirPatil/gorilla/tree/main/berkeley-function-call-leaderboard) |
 | **Paper** | N/A |
 | **Tags** | `Agent`, `FunctionCalling` |
-| **Metrics** | `acc` |
+| **Metrics** | `accuracy` |
 | **Default Shots** | 0-shot |
 | **Evaluation Split** | `train` |
 
@@ -178,5 +178,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

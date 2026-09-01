@@ -48,6 +48,7 @@ CrossNER is a fully-labeled collection of named entity recognition (NER) data sp
         train_split='train',
         eval_split='test',
         metric_list=['precision', 'recall', 'f1_score', 'accuracy'],
+        primary_metric='f1',
         prompt_template=PROMPT_TEMPLATE,
         few_shot_prompt_template=FEWSHOT_TEMPLATE,
     )
@@ -93,9 +94,9 @@ class CrossNERAdapter(NERAdapter):
         self.entity_list = [f'<{ent.lower()}>' for ent in self.entity_type_map.values()]
 
         # Create description of entities for prompt
-        self.entities_description = ', '.join([
-            f'{self.entity_type_map[tag]} ({self.entity_descriptions[tag]})' for tag in self.entity_type_map
-        ])
+        self.entities_description = ', '.join(
+            [f'{self.entity_type_map[tag]} ({self.entity_descriptions[tag]})' for tag in self.entity_type_map]
+        )
 
     def record_to_sample(self, record: Dict[str, Any]) -> Sample:
         """
@@ -139,5 +140,5 @@ class CrossNERAdapter(NERAdapter):
             fewshot=fewshot,
             entities=self.entities_description,
             entity_list=', '.join(self.entity_list),
-            text=sample.input
+            text=sample.input,
         )

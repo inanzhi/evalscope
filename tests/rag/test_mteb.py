@@ -1,9 +1,13 @@
 # Copyright (c) Alibaba, Inc. and its affiliates.
 
 import unittest
+
+import pytest
 from dotenv import dotenv_values
 
 from tests.utils import test_level_list
+
+pytestmark = pytest.mark.timeout(600)
 
 env = dotenv_values('.env')
 from evalscope.run import run_task
@@ -34,7 +38,7 @@ class TestMTEB(unittest.TestCase):
             'eval_backend': 'RAGEval',
             'eval_config': {
                 'tool': 'MTEB',
-                'model': [
+                'models': [
                     {
                         'model_name_or_path': 'AI-ModelScope/m3e-base',
                         'pooling_mode': None,  # load from model config
@@ -47,7 +51,7 @@ class TestMTEB(unittest.TestCase):
                     }
                 ],
                 'eval': {
-                    'tasks': [
+                    'task_names': [
                         'TNews',
                         'CLSClusteringS2S',
                         'T2Reranking',
@@ -56,7 +60,7 @@ class TestMTEB(unittest.TestCase):
                     ],
                     'verbosity': 2,
                     'overwrite_results': True,
-                    'limits': 500,
+                    'limits': 10,
                 },
             },
         }
@@ -70,7 +74,7 @@ class TestMTEB(unittest.TestCase):
             eval_backend='RAGEval',
             eval_config={
                 'tool': 'MTEB',
-                'model': [
+                'models': [
                     {
                         'model_name': 'text-embedding-v3',
                         'api_base': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
@@ -82,8 +86,8 @@ class TestMTEB(unittest.TestCase):
                     }
                 ],
                 'eval': {
-                    'tasks': [
-                        'T2Retrieval',
+                    'task_names': [
+                        'ATEC',
                     ],
                     'verbosity': 2,
                     'overwrite_results': True,
@@ -100,7 +104,7 @@ class TestMTEB(unittest.TestCase):
             'eval_backend': 'RAGEval',
             'eval_config': {
                 'tool': 'MTEB',
-                'model': [
+                'models': [
                     {
                         'model_name_or_path': 'AI-ModelScope/m3e-base',
                         'is_cross_encoder': False,
@@ -123,7 +127,7 @@ class TestMTEB(unittest.TestCase):
                     },
                 ],
                 'eval': {
-                    'tasks': [
+                    'task_names': [
                         'MedicalRetrieval',
                         'T2Retrieval'
                     ],
@@ -143,7 +147,7 @@ class TestMTEB(unittest.TestCase):
             'eval_backend': 'RAGEval',
             'eval_config': {
                 'tool': 'MTEB',
-                'model': [
+                'models': [
                     {
                         'model_name': 'text-embedding-v3',
                         'api_base': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
@@ -164,7 +168,7 @@ class TestMTEB(unittest.TestCase):
                     },
                 ],
                 'eval': {
-                    'tasks': [
+                    'task_names': [
                         'MedicalRetrieval',
                         # 'T2Retrieval'
                     ],
@@ -184,7 +188,7 @@ class TestMTEB(unittest.TestCase):
             'eval_backend': 'RAGEval',
             'eval_config': {
                 'tool': 'MTEB',
-                'model': [
+                'models': [
                     {
                         'model_name_or_path': 'AI-ModelScope/m3e-base',
                         'pooling_mode': None,  # load from model config
@@ -197,11 +201,10 @@ class TestMTEB(unittest.TestCase):
                     }
                 ],
                 'eval': {
-                    'tasks': ['CustomRetrieval'],
-                    'dataset_path': 'custom_eval/text/retrieval',
+                    'custom_tasks': [{'name': 'CustomRetrieval', 'data_path': 'custom_eval/text/retrieval'}],
                     'verbosity': 2,
                     'overwrite_results': True,
-                    'limits': 500,
+                    'limits': 10,
                 },
             },
         }

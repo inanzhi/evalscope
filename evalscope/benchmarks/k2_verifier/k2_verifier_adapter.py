@@ -2,7 +2,7 @@
 import json
 from typing import Any, Dict, List
 
-from evalscope.api.benchmark import BenchmarkMeta, VendorVerifierAdapter
+from evalscope.api.benchmark import BenchmarkMeta, FunctionCallAdapter
 from evalscope.api.dataset import Sample
 from evalscope.api.evaluator import TaskState
 from evalscope.api.messages import dict_to_chat_message
@@ -54,16 +54,15 @@ K2-Vendor-Verifier checks whether a third-party deployment of Kimi-K2 faithfully
             'count_finish_reason_tool_calls',
             'count_successful_tool_call',
         ],
+        primary_metric='trigger_similarity',
         aggregation='f1',
         subset_list=['k2_thinking'],
         eval_split='test',
     )
 )
-class K2VerifierAdapter(VendorVerifierAdapter):
-
+class K2VerifierAdapter(FunctionCallAdapter):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.add_aggregation_name = False
 
     def record_to_sample(self, record: Dict[str, Any]) -> Sample:
         # Fields are stored as JSON-encoded strings in the hosted dataset.
@@ -166,8 +165,8 @@ class K2VerifierAdapter(VendorVerifierAdapter):
         # pred ∈ {0,1}, so finish_reason_tool_call_count == attempted tool calls,
         # and successful_tool_call_count == those that also passed schema.
         schema_accuracy = (
-            successful_tool_call_count / finish_reason_tool_call_count
-        ) if finish_reason_tool_call_count else 0.0
+            (successful_tool_call_count / finish_reason_tool_call_count) if finish_reason_tool_call_count else 0.0
+        )
         precision = tp / (tp + fp) if (tp + fp) else 0.0
         recall = tp / (tp + fn) if (tp + fn) else 0.0
         trigger_similarity = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0

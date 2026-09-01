@@ -35,7 +35,11 @@ task_config = TaskConfig(
         strategy='function_calling',
         tools=['python_exec'],
         environment='docker',
-        environment_extra={'image': 'python:3.11-slim'},
+        environment_extra={
+            'sandbox_config': {
+                'image': 'python:3.11-slim',
+            },
+        },
         max_steps=5,
         kwargs={'system_prompt': 'Use python_exec to verify your calculations.'},
     ),
@@ -53,9 +57,10 @@ EvalScope 自动给模型注入 `python_exec` 工具定义，在 Docker 容器�
 |------|------|--------|
 | `strategy` | 交互协议 | `function_calling`（默认）；模型不支持时用 `react` 或 `swe_bench_backticks` |
 | `tools` | 工具白名单 | 按需，如 `['python_exec']` / `['bash']` |
-| `environment` | 工具执行环境 | `local`（开发调试）/ `docker`（生产推荐） |
-| `environment_extra` | 沙箱参数 | `docker` 时常用 `{'image': '...', 'timeout': 60}`；详见 [沙箱环境](../sandbox.md) |
+| `environment` | 工具或外部 Agent 的执行环境 | `local`（开发）/ `docker`（生产） |
+| `environment_extra` | Agent 环境构造参数 | Docker 镜像、超时、挂载等环境专属设置 |
 | `max_steps` | 单样本最大轮数 | 数学/QA `5-10`，代码修复 `100+` |
+| `skills_dir` | 可选的本机 Agent Skills 目录 | EvalScope 会在 agent loop 开始前让 skills 可用 |
 | `kwargs` | 策略参数 | 最常用 `{'system_prompt': '...'}` 引导模型行为 |
 
 可选的 `strategy` 值：
@@ -80,6 +85,11 @@ EvalScope 自动给模型注入 `python_exec` 工具定义，在 Docker 容器�
 - `agent_config` 也接受字典形式，`TaskConfig` 会自动转成 `NativeAgentConfig`。
 ```
 
+## Agent Skills
+
+如果要让模型使用自定义 Agent Skills，可以把 `NativeAgentConfig.skills_dir` 设成本机目录。该目录的直接子目录应包含
+`SKILL.md`。EvalScope 会在 agent loop 开始前让这些 skills 可用，并在 `skill_prompt_nudge=True` 时加入简短提示。
+
 ## MCP 工具接入
 
 除了内置工具，`NativeAgentConfig` 通过 `mcp_servers` 接入任意 [MCP（Model Context Protocol）](https://modelcontextprotocol.io) 服务器——把 `fetch`、网页搜索、GitHub 等 MCP 生态能力一键接入评测，不必自己写工具。
@@ -91,6 +101,9 @@ pip install evalscope[mcp]
 ```
 
 `evalscope[mcp]` 自带 `mcp` Python SDK 和 `mcp-server-fetch`（通用 HTTP 抓取，无需 API key）。其他 MCP server 按需安装或通过 `uvx` / `npx` 即调即用。
+
+如果要看搜索类 benchmark 如何组合搜索 MCP 与 fetch/browser 类工具，请参考
+[DeepSearchQA](../../third_party/deepsearchqa.md) 和 [WideSearch](../../third_party/wide_search.md) 使用指南。
 
 ### 快速开始
 
@@ -151,21 +164,26 @@ EvalScope 支持三种 MCP 传输协议，按场景选用：
 
 ## 用例：SWE-bench Agentic
 
-`swe_bench_*_agentic` 系列（`swe_bench_verified_agentic`、`swe_bench_verified_mini_agentic`、`swe_bench_lite_agentic`）是自带 AgentLoop 的基准，所有循环参数通过 `dataset_args.extra_params` 传入，**不读取**全局 `agent_config`。
+`swe_bench_*_agentic` 系列（`swe_bench_verified_agentic`、`swe_bench_verified_mini_agentic`、`swe_bench_lite_agentic`）由基准自己管理每个样本的 Docker 环境和必需的 `bash` 工具。显式设置的 `NativeAgentConfig` 仍可覆盖策略、步数上限等循环配置。`dataset_args.extra_params` 只用于镜像准备等基准专属参数。
 
 ```python
+from evalscope.api.agent import NativeAgentConfig
+
 task_config = TaskConfig(
     model='qwen-plus',
     api_url='...',
     api_key='...',
     eval_type='openai_api',
     datasets=['swe_bench_verified_mini_agentic'],
+    agent_config=NativeAgentConfig(
+        strategy='swe_bench_toolcall',
+        max_steps=250,
+    ),
     dataset_args={
         'swe_bench_verified_mini_agentic': {
             'extra_params': {
-                'action_protocol': 'toolcall',  # 或 'backticks'
-                'max_steps': 250,
-                'command_timeout': 60.0,
+                'build_docker_images': True,
+                'pull_remote_images_if_available': True,
             },
         },
     },
@@ -175,7 +193,7 @@ task_config = TaskConfig(
 run_task(task_config)
 ```
 
-常用 `extra_params`：`action_protocol`、`max_steps`、`command_timeout`、`working_dir`。完整说明见 [SWE-bench 数据集文档](../../third_party/swe_bench.md)。
+不支持 function calling 的模型可用 `NativeAgentConfig(strategy='swe_bench_backticks')`。常用 `extra_params` 包括 `build_docker_images`、`pull_remote_images_if_available`、`force_arch`。完整说明见对应 benchmark 文档。
 
 ```{important}
 前置依赖：`pip install evalscope[swe_bench]`，本机已装好 Docker。

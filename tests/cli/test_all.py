@@ -156,7 +156,7 @@ class TestRun(unittest.TestCase):
             eval_type=EvalType.OPENAI_API,
             datasets=datasets,
             dataset_args=dataset_args,
-            eval_batch_size=1,
+            eval_batch_size=10,
             limit=1,
             stream=True,
             generation_config={
@@ -164,12 +164,11 @@ class TestRun(unittest.TestCase):
                 'n': 1,
                 'max_tokens': 4096,
             },
-            judge_strategy=JudgeStrategy.AUTO,
-            judge_model_args={
-                'model_id': 'qwen2.5-72b-instruct',
+            judge={'strategy': JudgeStrategy.AUTO, 'models': {
+                'model_id': 'qwen-plus',
                 'api_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
                 'api_key': env.get('DASHSCOPE_API_KEY'),
-            }
+            }}
         )
 
         run_task(task_cfg=task_cfg)
@@ -205,12 +204,11 @@ class TestRun(unittest.TestCase):
                 'image_width': 512,
                 'image_num': 2,
             },
-            judge_strategy=JudgeStrategy.AUTO,
-            judge_model_args={
-                'model_id': 'qwen2.5-72b-instruct',
+            judge={'strategy': JudgeStrategy.AUTO, 'models': {
+                'model_id': 'qwen-plus',
                 'api_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
                 'api_key': env.get('DASHSCOPE_API_KEY'),
-            }
+            }}
         )
 
         run_task(task_cfg=task_cfg)
@@ -251,12 +249,11 @@ class TestRun(unittest.TestCase):
                 'n': 1,
                 'max_tokens': 4096,
             },
-            judge_strategy=JudgeStrategy.AUTO,
-            judge_model_args={
-                'model_id': 'qwen2.5-72b-instruct',
+            judge={'strategy': JudgeStrategy.AUTO, 'models': {
+                'model_id': 'qwen-plus',
                 'api_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
                 'api_key': env.get('DASHSCOPE_API_KEY'),
-            }
+            }}
         )
 
         run_task(task_cfg=task_cfg)

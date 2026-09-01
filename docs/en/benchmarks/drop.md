@@ -37,7 +37,7 @@ DROP (Discrete Reasoning Over Paragraphs) is a challenging reading comprehension
 | **Dataset ID** | [AI-ModelScope/DROP](https://modelscope.cn/datasets/AI-ModelScope/DROP/summary) |
 | **Paper** | N/A |
 | **Tags** | `Reasoning` |
-| **Metrics** | `em`, `f1` |
+| **Metrics** | `exact_match`, `f1` |
 | **Default Shots** | 3-shot |
 | **Evaluation Split** | `validation` |
 
@@ -162,5 +162,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

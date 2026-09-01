@@ -3,37 +3,35 @@
 
 ## 概述
 
-SWE-bench Verified Mini Agentic 是对 SWE-bench Verified Mini 的代理模式（agentic-mode）评估。SWE-bench Verified Mini 是一个精简的 50 样本子集，其性能分布、测试通过率和难度与完整的 Verified 数据集保持一致，但存储需求从 130GB 大幅降低至仅 5GB。模型必须通过多轮代理循环（multi-turn agent loop）自主探索、编辑代码并提交补丁。
+SWE-bench Verified Mini Agentic 是对 SWE-bench Verified Mini 的代理模式（agentic-mode）评估。SWE-bench Verified Mini 是一个精简的 50 样本子集，在保持与完整 Verified 集合相同性能分布、测试通过率和难度的同时，仅需 5GB 存储空间（而非 130GB）。模型必须通过多轮代理循环自主探索、编辑并提交补丁。
 
 ## 任务描述
 
 - **任务类型**：自动化软件工程 / 缺陷修复（代理模式）
-- **输入**：GitHub issue 描述（不含 oracle 文件上下文）
-- **输出**：代码补丁（以 `git diff` 格式收集，来自自主编辑后的结果）
+- **输入**：GitHub issue 描述（无 oracle 文件上下文）
+- **输出**：代码补丁（diff 格式），通过 `git diff` 在自主编辑后收集
 - **规模**：50 个样本（完整 Verified 集合为 500 个）
 
 ## 主要特性
 
 - SWE-bench Verified 的代表性 50 样本子集
 - 与完整数据集具有相同的难度分布
-- 存储需求大幅减少（5GB vs 130GB）
+- 存储需求大幅降低（5GB vs 130GB）
 - 每个实例使用独立 Docker 沙箱的多轮代理循环
 - 非常适合快速代理评估和开发迭代
 
 ## 评估说明
 
-- 评估前需先执行 `pip install swebench==4.1.0`
+- 评估前需执行 `pip install swebench==4.1.0`
 - Docker 镜像会自动构建或拉取
 - 详细设置请参阅 [使用文档](https://evalscope.readthedocs.io/zh-cn/latest/third_party/swe_bench.html)
 - 适用于代理策略的快速原型设计和模型初步评估
 
 ## 代理模式
 
-该基准测试在每个实例专属的 SWE-bench Docker 容器内驱动一个多轮代理循环（与 mini-swe-agent 的 `swebench.yaml` 配置一致）。模型通过发出 `bash` 命令来探索 `/testbed` 目录、编辑源文件，并最终通过打印哨兵字符串 `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` 及其后的补丁内容来提交 `git diff` 补丁。
+该基准测试在每个实例的 SWE-bench Docker 容器内驱动一个多轮代理循环（与 mini-swe-agent 的 `swebench.yaml` 配置一致）。模型通过发出 `bash` 命令来探索 `/testbed`、编辑源文件，并最终通过打印哨兵字符串 `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` 后跟补丁内容来提交其 `git diff` 补丁。
 
-`extra_params.action_protocol` 可选择以下两种协议：
-- `toolcall`（默认）：OpenAI 函数调用协议，仅提供一个 `bash` 工具。推荐用于支持工具调用的模型。
-- `backticks`：基于文本的备用方案，每轮期望一个 ` ```mswea_bash_command ``` ` 代码块。适用于不支持函数调用的模型。
+默认的 `swe_bench_toolcall` 策略使用 OpenAI 函数调用，仅包含一个 `bash` 工具。不支持函数调用的模型可通过 `NativeAgentConfig.strategy` 选择 `swe_bench_backticks` 策略；该策略期望每轮输出一个 ` ```mswea_bash_command ``` ` 代码块。
 
 ## 属性
 
@@ -43,9 +41,9 @@ SWE-bench Verified Mini Agentic 是对 SWE-bench Verified Mini 的代理模式�
 | **数据集ID** | [evalscope/swe-bench-verified-mini](https://modelscope.cn/datasets/evalscope/swe-bench-verified-mini/summary) |
 | **论文** | N/A |
 | **标签** | `Coding` |
-| **指标** | `acc` |
+| **指标** | `accuracy` |
 | **默认示例数** | 0-shot |
-| **评估划分** | `test` |
+| **评估分割** | `test` |
 
 
 ## 数据统计
@@ -127,7 +125,7 @@ SWE-bench Verified Mini Agentic 是对 SWE-bench Verified Mini 的代理模式�
 
 ## 提示模板
 
-**提示模板：**
+**提示模板:**
 ```text
 {question}
 ```
@@ -136,12 +134,10 @@ SWE-bench Verified Mini Agentic 是对 SWE-bench Verified Mini 的代理模式�
 
 | 参数 | 类型 | 默认值 | 描述 |
 |-----------|------|---------|-------------|
-| `action_protocol` | `str` | `toolcall` | 代理动作协议："toolcall"（主流 OpenAI 函数调用方式，与 mini-swe-agent 的 swebench.yaml 一致）或 "backticks"（针对不支持函数调用的模型的基于文本的 mswea_bash_command 回退方案）。可选项：['toolcall', 'backticks'] |
-| `max_steps` | `int` | `250` | 每个样本的最大代理步数。 |
-| `command_timeout` | `float` | `60.0` | 每个 bash 命令的默认超时时间（秒）。 |
 | `build_docker_images` | `bool` | `True` | 为每个样本在本地构建 Docker 镜像。 |
 | `pull_remote_images_if_available` | `bool` | `True` | 在构建前尝试拉取已存在的远程 Docker 镜像。 |
-| `force_arch` | `str` | `` | 可选地强制指定镜像构建/拉取的目标架构。可选项：['', 'arm64', 'x86_64'] |
+| `force_arch` | `str` | `` | 可选地强制指定镜像构建/拉取的架构。选项：['', 'arm64', 'x86_64'] |
+| `dockerhub_username` | `str` | `swebench` | 远程 SWE-bench 镜像的 DockerHub 用户/组织命名空间。 |
 
 ## 使用方法
 
@@ -153,20 +149,25 @@ evalscope eval \
     --api-url OPENAI_API_COMPAT_URL \
     --api-key EMPTY_TOKEN \
     --datasets swe_bench_verified_mini_agentic \
+    --agent-config '{"mode":"native","strategy":"swe_bench_toolcall","max_steps":250}' \
     --limit 10  # 正式评估时请删除此行
 ```
 
 ### 使用 Python
 
 ```python
-from evalscope import run_task
-from evalscope.config import TaskConfig
+from evalscope import TaskConfig, run_task
+from evalscope.api.agent import NativeAgentConfig
 
 task_cfg = TaskConfig(
     model='YOUR_MODEL',
     api_url='OPENAI_API_COMPAT_URL',
     api_key='EMPTY_TOKEN',
     datasets=['swe_bench_verified_mini_agentic'],
+    agent_config=NativeAgentConfig(
+        strategy='swe_bench_toolcall',
+        max_steps=250,
+    ),
     dataset_args={
         'swe_bench_verified_mini_agentic': {
             # extra_params: {}  # 使用默认额外参数

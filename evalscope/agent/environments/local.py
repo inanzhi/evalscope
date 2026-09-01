@@ -1,4 +1,4 @@
-"""Local (subprocess) environment for development and testing.
+"""Local subprocess environment for development and testing.
 
 Runs commands on the host OS via ``asyncio.create_subprocess_exec``.
 No container isolation - suitable only for development and CI tests.
@@ -6,6 +6,9 @@ No container isolation - suitable only for development and CI tests.
 
 import asyncio
 import os
+import shutil
+import tempfile
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from evalscope.api.agent import AgentEnvironment
@@ -86,5 +89,38 @@ class LocalAgentEnvironment(AgentEnvironment):
     async def close(self) -> None:
         """No external resources to release."""
 
+    async def put_dir(self, source_dir: str | Path, target_dir: str) -> None:
+        """Copy a host directory into a local target directory."""
+        source = Path(source_dir).expanduser()
+        if not source.is_dir():
+            raise FileNotFoundError(f'put_dir source is not a directory: {source}')
+        target = Path(target_dir).expanduser()
+        target.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(source, target, dirs_exist_ok=True)
 
-__all__ = ['LocalAgentEnvironment']
+
+class TemporaryLocalAgentEnvironment(LocalAgentEnvironment):
+    """Local environment backed by a temporary working directory."""
+
+    def __init__(
+        self,
+        sample_id: Any = None,
+        *,
+        prefix: str = 'evalscope-local-',
+        env_vars: Optional[Dict[str, str]] = None,
+    ) -> None:
+        raw_sample_id = 'sample' if sample_id is None else str(sample_id)
+        safe_id = ''.join(char if char.isalnum() else '-' for char in raw_sample_id)[:64]
+        self._temporary_directory = tempfile.TemporaryDirectory(prefix=f'{prefix}{safe_id}-')
+        super().__init__(working_dir=self._temporary_directory.name, env_vars=env_vars)
+
+    @property
+    def working_dir(self) -> Path:
+        return Path(self._temporary_directory.name)
+
+    async def close(self) -> None:
+        await super().close()
+        self._temporary_directory.cleanup()
+
+
+__all__ = ['LocalAgentEnvironment', 'TemporaryLocalAgentEnvironment']

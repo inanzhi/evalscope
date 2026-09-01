@@ -4,7 +4,7 @@ import zipfile
 from typing import Any, Dict, List, Optional
 
 from evalscope.api.benchmark import BenchmarkMeta, VisionLanguageAdapter
-from evalscope.api.dataset import Sample
+from evalscope.api.dataset import Sample, resolve_snapshot_or_local_path
 from evalscope.api.evaluator import TaskState
 from evalscope.api.messages import ChatMessageUser, Content, ContentImage, ContentText
 from evalscope.api.metric.scorer import Score
@@ -39,11 +39,11 @@ diverse task categories requiring spatial, compositional, and multi-step visual 
 ## Evaluation Notes
 
 - Default evaluation uses the **test** split (1,215 samples)
-- Primary metric: **Accuracy** (acc)
+- Primary metric: **Accuracy** (`accuracy`)
 - Images are downloaded as `data.zip` from ModelScope and extracted automatically
 - Rule-based scoring: OCR (substring match), jigsaw (grid IoU), spot_difference (set IoU),
   word_search (numeric match), all other tasks (MCQ / numeric judge)
-- **Recommended**: set `judge_strategy=JudgeStrategy.LLM_RECALL` and provide `judge_model_args`
+- **Recommended**: set `judge.strategy='llm_recall'` and provide `judge.models`
   to activate LLM-as-judge as a recall mechanism — the judge is called only when rule-based
   scoring gives 0, providing more accurate evaluation without unnecessary API overhead
 - [Paper](https://arxiv.org/abs/2511.01833) | [GitHub](https://github.com/agents-x-project/TIR-Bench)
@@ -100,18 +100,7 @@ class TIRBenchAdapter(VisionLanguageAdapter):
 
     def load(self):
         """Download data.zip (if needed), extract images, then load the dataset."""
-        dataset_name_or_path = self.dataset_id
-
-        if os.path.exists(dataset_name_or_path):
-            dataset_path = dataset_name_or_path
-            logger.info(f'Loading TIR-Bench from local path: {dataset_path}')
-        else:
-            from modelscope import dataset_snapshot_download
-            logger.info(f'Downloading TIR-Bench dataset from ModelScope: {dataset_name_or_path}')
-            dataset_path = dataset_snapshot_download(
-                dataset_name_or_path,
-                allow_file_pattern=['data.zip'],
-            )
+        dataset_path = resolve_snapshot_or_local_path(self, allow_file_pattern=['data.zip'])
 
         # Save for use in record_to_sample
         self.image_root = dataset_path
@@ -127,8 +116,7 @@ class TIRBenchAdapter(VisionLanguageAdapter):
                 logger.info('Extraction complete.')
             else:
                 logger.warning(
-                    f'data.zip not found at {zip_path}. '
-                    'Image loading may fail if images are not already extracted.'
+                    f'data.zip not found at {zip_path}. Image loading may fail if images are not already extracted.'
                 )
 
         return self.load_from_remote()
@@ -201,6 +189,7 @@ class TIRBenchAdapter(VisionLanguageAdapter):
             return prediction
 
         from .utils import extract_answer_with_classify
+
         return extract_answer_with_classify(prediction, task_state.target)
 
     # ------------------------------------------------------------------

@@ -1,8 +1,10 @@
 # flake8: noqa: E501
 from copy import deepcopy
-from pydantic import BaseModel, Field, model_validator
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional
 
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from evalscope.utils.argument_utils import secretize_auth_headers
 from evalscope.utils.json_schema import JSONSchema
 
 
@@ -23,8 +25,21 @@ class ResponseSchema(BaseModel):
     OpenAI and Mistral only."""
 
 
+class AnthropicCacheControl(BaseModel):
+    """Anthropic prompt cache control."""
+
+    model_config = {'extra': 'forbid'}
+
+    type: Literal['ephemeral'] = Field(default='ephemeral')
+    """Anthropic cache type."""
+
+    ttl: Optional[Literal['5m', '1h']] = Field(default=None)
+    """Optional cache time-to-live."""
+
+
 class GenerateConfig(BaseModel):
     """Model generation options."""
+
     model_config = {'extra': 'allow'}
 
     timeout: Optional[float] = Field(default=None)
@@ -37,7 +52,13 @@ class GenerateConfig(BaseModel):
     """Retry interval between retries (in seconds). Only supported by OpenAI compatible models."""
 
     batch_size: Optional[int] = Field(default=None)
-    """Maximum number of concurrent connections to Model API (default is model specific) or batch size for generation."""
+    """Maximum number of concurrent connections to the Model API, or batch size for generation.
+
+    Internal field — synced from :class:`TaskConfig.eval_batch_size` during task
+    initialization. Setting it directly in ``generation_config`` has no effect
+    because :meth:`TaskConfig._post_init_generation_config` overwrites it with
+    ``eval_batch_size``. Use ``--eval-batch-size`` instead.
+    """
 
     stream: Optional[bool] = Field(default=None)
     """Whether to stream the response (default is model specific)."""
@@ -53,9 +74,6 @@ class GenerateConfig(BaseModel):
 
     stop_seqs: Optional[List[str]] = Field(default=None)
     """Sequences where the API will stop generating further tokens. The returned text will not contain the stop sequence."""
-
-    best_of: Optional[int] = Field(default=None)
-    """Generates best_of completions server-side and returns the 'best' (the one with the highest log probability per token). vLLM only."""
 
     frequency_penalty: Optional[float] = Field(default=None)
     """Number between -2.0 and 2.0. Positive values penalize new tokens based on their existing frequency in the text so far, decreasing the model's likelihood to repeat the same line verbatim. OpenAI, Google, Grok, Groq, vLLM, and SGLang only."""
@@ -90,26 +108,49 @@ class GenerateConfig(BaseModel):
     parallel_tool_calls: Optional[bool] = Field(default=None)
     """Whether to enable parallel function calling during tool use (defaults to True). OpenAI and Groq only."""
 
-    internal_tools: Optional[bool] = Field(default=None)
-    """Whether to automatically map tools to model internal implementations (e.g. 'computer' for anthropic)."""
+    reasoning_effort: Optional[str] = Field(default=None)
+    """Constrains effort on reasoning for reasoning models, passed through to the provider as-is.
 
-    max_tool_output: Optional[int] = Field(default=None)
-    """Maximum tool output (in bytes). Defaults to 16 * 1024."""
-
-    cache_prompt: Union[Literal['auto'], bool, None] = Field(default=None)
-    """Whether to cache the prompt prefix. Defaults to "auto", which will enable caching for requests with tools. Anthropic only."""
-
-    reasoning_effort: Optional[Literal['low', 'medium', 'high']] = Field(default=None)
-    """Constrains effort on reasoning for reasoning models (defaults to `medium`). Open AI o1 models only."""
+    Not validated client-side: the accepted values are provider- and model-specific and keep
+    expanding (OpenAI alone documents `none`, `minimal`, `low`, `medium`, `high`, `xhigh` and
+    `max`, each supported by a different subset of models), and OpenAI-compatible servers such
+    as vLLM and SGLang define their own. An unsupported value is rejected by the server rather
+    than by this schema.
+    """
 
     reasoning_tokens: Optional[int] = Field(default=None)
     """Maximum number of tokens to use for reasoning. Anthropic Claude models only."""
 
+    anthropic_cache_control: Optional[AnthropicCacheControl] = Field(default=None)
+    """Anthropic prompt cache control. Set to ``{"type": "ephemeral"}`` to enable prompt caching."""
+
+    anthropic_cache_strategy: Literal['evaluation', 'recent_messages'] = Field(default='evaluation')
+    """Anthropic prompt cache breakpoint placement strategy.
+
+    ``evaluation`` caches stable evaluation prefixes such as tools, system prompts, and few-shot examples.
+    ``recent_messages`` caches stable agent prefixes and the growing multi-turn conversation history.
+    """
+
     reasoning_summary: Optional[Literal['concise', 'detailed', 'auto']] = Field(default=None)
     """Provide summary of reasoning steps (defaults to no summary). Use 'auto' to access the most detailed summarizer available for the current model. OpenAI reasoning models only."""
 
-    reasoning_history: Optional[Literal['none', 'all', 'last', 'auto']] = Field(default=None)
-    """Include reasoning in chat message history sent to generate."""
+    reasoning_history: Optional[Literal['none', 'think_tag', 'reasoning_field']] = Field(default=None)
+    """How to encode prior-turn ``reasoning_content`` in multi-turn requests sent to OpenAI-compatible servers.
+
+    When ``None`` (default), treated as ``'reasoning_field'`` at consumption time.
+
+    - ``'none'``: strip reasoning entirely from multi-turn history. Required for
+      DeepSeek R1 (legacy ``deepseek-reasoner``), which forbids ``reasoning_content``
+      in request messages. Safest cross-provider choice when reasoning continuity
+      is not needed.
+    - ``'think_tag'``: embed reasoning as ``<think>...</think>`` in the content
+      string. Pre-fix behavior; use for providers that consume ``<think>`` tags
+      inline (e.g., legacy Together/Groq deployments).
+    - ``'reasoning_field'``: pass ``reasoning_content`` as a top-level field on
+      each assistant message, with content kept clean (no ``<think>`` tag).
+      Required for DeepSeek V4 thinking mode; recommended for Qwen3 thinking and
+      any provider following the modern OpenAI-compatible reasoning protocol.
+    """
 
     response_schema: Optional[ResponseSchema] = Field(default=None)
     """Request a response format as JSONSchema (output should still be validated). OpenAI, Google, and Mistral only."""
@@ -120,7 +161,7 @@ class GenerateConfig(BaseModel):
     extra_query: Optional[Dict[str, Any]] = Field(default=None)
     """Extra query parameters to be sent with requests to OpenAI compatible servers. OpenAI, vLLM, and SGLang only."""
 
-    extra_headers: Optional[Dict[str, str]] = Field(default=None)
+    extra_headers: Optional[Dict[str, Any]] = Field(default=None)
     """Extra headers to be sent with requests to OpenAI compatible servers. OpenAI, vLLM, and SGLang only."""
 
     height: Optional[int] = Field(default=None)
@@ -135,18 +176,20 @@ class GenerateConfig(BaseModel):
     guidance_scale: Optional[float] = Field(default=None)
     """Guidance scale for image generation model only"""
 
-    # migrate reasoning_history as a bool
     @model_validator(mode='before')
     @classmethod
-    def migrate_reasoning(cls, data: Any) -> Any:
-        if isinstance(data, dict):
-            reasoning_history = data.get('reasoning_history', None)
-            if reasoning_history is True:
-                data['reasoning_history'] = 'all'
-            elif reasoning_history is False:
-                data['reasoning_history'] = 'none'
-
+    def reject_legacy_anthropic_cache_config(cls, data: Any) -> Any:
+        if isinstance(data, dict) and 'anthropic_content_cache_control' in data:
+            raise ValueError(
+                '`anthropic_content_cache_control` has been replaced by `anthropic_cache_control`. '
+                'Use `anthropic_cache_strategy` to choose breakpoint placement.'
+            )
         return data
+
+    @field_validator('extra_headers', mode='after')
+    @classmethod
+    def _validate_extra_headers(cls, value: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        return secretize_auth_headers(value)
 
     def merge(self, other: 'GenerateConfig') -> 'GenerateConfig':
         """Merge another model configuration into this one.
@@ -164,4 +207,6 @@ class GenerateConfig(BaseModel):
             value = getattr(other, key, None)
             if value is not None:
                 setattr(config, key, value)
+        if other.model_extra:
+            config.model_extra.update(other.model_extra)
         return config

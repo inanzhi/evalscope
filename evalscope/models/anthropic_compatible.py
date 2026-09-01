@@ -1,10 +1,18 @@
-import asyncio
 import os
-import threading
 import time
-from anthropic import Anthropic, APIStatusError, AsyncAnthropic, BadRequestError, PermissionDeniedError
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
+
+from anthropic import (
+    Anthropic,
+    APIStatusError,
+    AsyncAnthropic,
+    AuthenticationError,
+    BadRequestError,
+    NotFoundError,
+    PermissionDeniedError,
+    UnprocessableEntityError,
+)
 from anthropic.types import Message
-from typing import Any, Dict, List, Optional, Tuple, Union
 
 from evalscope.api.messages import ChatMessage
 from evalscope.api.messages.perf_metrics import PerformanceMetrics
@@ -12,7 +20,8 @@ from evalscope.api.model import ChatCompletionChoice, GenerateConfig, ModelAPI, 
 from evalscope.api.tool import ToolChoice, ToolInfo
 from evalscope.utils import get_logger
 from evalscope.utils.argument_utils import get_supported_params
-from evalscope.utils.function_utils import AsyncioLoopRunner, async_retry_call, retry_call
+from evalscope.utils.function_utils import async_retry_call, retry_call
+
 from .utils.anthropic import (
     anthropic_chat_messages,
     anthropic_chat_tool_choice,
@@ -24,8 +33,21 @@ from .utils.anthropic import (
     collect_stream_response,
     model_output_from_anthropic,
 )
+from .utils.async_client import LoopBoundAsyncClientPool
 
 logger = get_logger()
+
+# Client errors (prompt too long, invalid parameters, bad credentials, ...) are not
+# recoverable by retrying. generate()/generate_async() degrade them gracefully via
+# handle_bad_request(), so retry_call must let them through immediately instead of burning
+# retries * retry_interval on every failing sample.
+NON_RETRYABLE_ANTHROPIC_ERRORS: Tuple[Type[Exception], ...] = (
+    BadRequestError,
+    AuthenticationError,
+    PermissionDeniedError,
+    NotFoundError,
+    UnprocessableEntityError,
+)
 
 
 class AnthropicCompatibleAPI(ModelAPI):
@@ -55,8 +77,9 @@ class AnthropicCompatibleAPI(ModelAPI):
         assert self.api_key, f'API key for {model_name} not found. Set ANTHROPIC_API_KEY or EVALSCOPE_API_KEY.'
 
         # Use service prefix to lookup base_url (optional for Anthropic)
-        self.base_url = base_url or os.environ.get('ANTHROPIC_BASE_URL',
-                                                   None) or os.environ.get('EVALSCOPE_BASE_URL', None)
+        self.base_url = (
+            base_url or os.environ.get('ANTHROPIC_BASE_URL', None) or os.environ.get('EVALSCOPE_BASE_URL', None)
+        )
 
         # Remove trailing slash from base_url if present
         if self.base_url:
@@ -76,41 +99,19 @@ class AnthropicCompatibleAPI(ModelAPI):
 
         self.client = Anthropic(**client_kwargs)
 
-        # AsyncAnthropic, like AsyncOpenAI, wraps an httpx.AsyncClient
-        # whose internal anyio primitives bind to the event loop they
-        # first run on. Build one per loop (AsyncioLoopRunner is per-thread).
+        # AsyncAnthropic wraps loop-bound httpx/anyio resources. Keep one
+        # client per loop so worker-owned and caller-managed loops stay isolated.
         self._async_client_kwargs: Dict[str, Any] = client_kwargs
-        self._async_clients: Dict[int, AsyncAnthropic] = {}
-        self._async_clients_lock = threading.Lock()
+        self._async_client_pool = LoopBoundAsyncClientPool(lambda: AsyncAnthropic(**self._async_client_kwargs))
 
     @property
     def async_client(self) -> AsyncAnthropic:
         """Return an AsyncAnthropic bound to the currently running event loop."""
-        loop = asyncio.get_running_loop()
-        loop_id = id(loop)
-        client = self._async_clients.get(loop_id)
-        if client is not None:
-            return client
-        with self._async_clients_lock:
-            client = self._async_clients.get(loop_id)
-            if client is None:
-                client = AsyncAnthropic(**self._async_client_kwargs)
-                self._async_clients[loop_id] = client
-                self._register_loop_close_cleanup(loop_id, client)
-            return client
+        return self._async_client_pool.get()
 
-    def _register_loop_close_cleanup(self, loop_id: int, client: AsyncAnthropic) -> None:
-        """Close the per-loop AsyncAnthropic when its loop shuts down."""
-
-        async def _cleanup() -> None:
-            try:
-                await client.close()
-            finally:
-                with self._async_clients_lock:
-                    if self._async_clients.get(loop_id) is client:
-                        self._async_clients.pop(loop_id, None)
-
-        AsyncioLoopRunner.register_close_callback(_cleanup)
+    async def aclose(self) -> None:
+        """Close all loop-bound async clients while keeping this model reusable."""
+        await self._async_client_pool.aclose()
 
     def generate(
         self,
@@ -138,9 +139,14 @@ class AnthropicCompatibleAPI(ModelAPI):
 
         # Build completion parameters
         completion_params = self.completion_params(config)
+        explicit_cache_control = self.explicit_cache_control_params(config)
 
         # Convert messages to Anthropic format
-        system_message, messages = anthropic_chat_messages(input)
+        system_message, messages = anthropic_chat_messages(
+            input,
+            cache_control=explicit_cache_control,
+            cache_strategy=config.anthropic_cache_strategy,
+        )
 
         # Build request
         request = dict(
@@ -154,7 +160,11 @@ class AnthropicCompatibleAPI(ModelAPI):
 
         # Add tools if present
         if len(tools) > 0:
-            request['tools'] = anthropic_chat_tools(tools)
+            request['tools'] = anthropic_chat_tools(
+                tools,
+                cache_control=explicit_cache_control,
+                cache_strategy=config.anthropic_cache_strategy,
+            )
             request['tool_choice'] = anthropic_chat_tool_choice(tool_choice)
 
         # Handle streaming
@@ -167,17 +177,22 @@ class AnthropicCompatibleAPI(ModelAPI):
             t_start = time.monotonic()
             ttft: Optional[float] = None
 
-            # Generate completion
-            message = retry_call(
-                self.client.messages.create,
+            # A streaming request is not complete when create() returns: the
+            # stream may still fail while its events are being consumed. Retry
+            # the whole request so a partial response is discarded and replaced
+            # by one complete response (mirrors OpenAICompatibleAPI).
+            def _create_and_collect() -> Tuple[Message, Optional[float]]:
+                message = self.client.messages.create(**request)
+                if isinstance(message, Message):
+                    return message, None
+                return collect_stream_response(message, request_start=t_start)
+
+            message, ttft = retry_call(
+                _create_and_collect,
                 retries=config.retries,
                 sleep_interval=config.retry_interval,
-                **request,
+                no_retry_exceptions=NON_RETRYABLE_ANTHROPIC_ERRORS,
             )
-
-            # Handle streaming response
-            if not isinstance(message, Message):
-                message, ttft = collect_stream_response(message, request_start=t_start)
 
             total_time = time.monotonic() - t_start
 
@@ -197,7 +212,7 @@ class AnthropicCompatibleAPI(ModelAPI):
             )
             return output
 
-        except (BadRequestError, PermissionDeniedError) as ex:
+        except NON_RETRYABLE_ANTHROPIC_ERRORS as ex:
             return self.handle_bad_request(ex)
 
     async def generate_async(
@@ -218,8 +233,13 @@ class AnthropicCompatibleAPI(ModelAPI):
         tools, tool_choice, config = self.resolve_tools(tools, tool_choice, config)
 
         completion_params = self.completion_params(config)
+        explicit_cache_control = self.explicit_cache_control_params(config)
 
-        system_message, messages = anthropic_chat_messages(input)
+        system_message, messages = anthropic_chat_messages(
+            input,
+            cache_control=explicit_cache_control,
+            cache_strategy=config.anthropic_cache_strategy,
+        )
 
         request = dict(
             messages=messages,
@@ -230,7 +250,11 @@ class AnthropicCompatibleAPI(ModelAPI):
             request['system'] = system_message
 
         if len(tools) > 0:
-            request['tools'] = anthropic_chat_tools(tools)
+            request['tools'] = anthropic_chat_tools(
+                tools,
+                cache_control=explicit_cache_control,
+                cache_strategy=config.anthropic_cache_strategy,
+            )
             request['tool_choice'] = anthropic_chat_tool_choice(tool_choice)
 
         if config.stream:
@@ -242,17 +266,21 @@ class AnthropicCompatibleAPI(ModelAPI):
             t_start = time.monotonic()
             ttft: Optional[float] = None
 
-            # Async generation with retry
-            message = await async_retry_call(
-                self.async_client.messages.create,
+            # Keep stream consumption inside the retry boundary. If an async
+            # stream is interrupted, start a fresh request rather than
+            # returning or persisting its partial response.
+            async def _create_and_collect() -> Tuple[Message, Optional[float]]:
+                message = await self.async_client.messages.create(**request)
+                if isinstance(message, Message):
+                    return message, None
+                return await async_collect_stream_response(message, request_start=t_start)
+
+            message, ttft = await async_retry_call(
+                _create_and_collect,
                 retries=config.retries,
                 sleep_interval=config.retry_interval,
-                **request,
+                no_retry_exceptions=NON_RETRYABLE_ANTHROPIC_ERRORS,
             )
-
-            # Handle streaming response
-            if not isinstance(message, Message):
-                message, ttft = await async_collect_stream_response(message, request_start=t_start)
 
             total_time = time.monotonic() - t_start
 
@@ -271,11 +299,12 @@ class AnthropicCompatibleAPI(ModelAPI):
             )
             return output
 
-        except (BadRequestError, PermissionDeniedError) as ex:
+        except NON_RETRYABLE_ANTHROPIC_ERRORS as ex:
             return self.handle_bad_request(ex)
 
-    def resolve_tools(self, tools: List[ToolInfo], tool_choice: ToolChoice,
-                      config: GenerateConfig) -> Tuple[List[ToolInfo], ToolChoice, GenerateConfig]:
+    def resolve_tools(
+        self, tools: List[ToolInfo], tool_choice: ToolChoice, config: GenerateConfig
+    ) -> Tuple[List[ToolInfo], ToolChoice, GenerateConfig]:
         """Provides an opportunity for concrete classes to customize tool resolution."""
         return tools, tool_choice, config
 
@@ -285,6 +314,18 @@ class AnthropicCompatibleAPI(ModelAPI):
             model=self.model_name,
             config=config,
         )
+
+    def cache_control_params(self, config: GenerateConfig) -> Optional[Dict[str, Any]]:
+        """Build Anthropic cache_control parameters from config."""
+        if config.anthropic_cache_control is None:
+            return None
+        return config.anthropic_cache_control.model_dump(exclude_none=True)
+
+    def explicit_cache_control_params(self, config: GenerateConfig) -> Optional[Dict[str, Any]]:
+        """Return cache_control only for strategies that require explicit breakpoints."""
+        if config.anthropic_cache_strategy != 'evaluation':
+            return None
+        return self.cache_control_params(config)
 
     def validate_request_params(self, params: Dict[str, Any]):
         """Hook for subclasses to do custom request parameter validation."""

@@ -12,6 +12,7 @@ The following environment variables can be set before launch to control global d
 | `EVALSCOPE_LANGUAGE` | Global default language, affects output language for reports, etc. (`en` or `zh`) | `en` |
 | `EVALSCOPE_HEARTBEAT_INTERVAL` | Heartbeat reporting interval (seconds) | `60` |
 | `MODELSCOPE_CACHE` | Root cache directory for ModelScope models and datasets | `~/.cache/modelscope/hub` |
+| `DATASET_TF_BATCH_SIZE` | Batch size for dataset transformation | `100` |
 
 ## Model Parameters
 
@@ -40,23 +41,29 @@ The `--generation-config` parameter supports the following options (comma-separa
 
 | Parameter | Type | Description | Supported Backends |
 |-----------|------|-------------|--------------------|
-| `timeout` | `int` | Request timeout (seconds) | All |
+| `timeout` | `int`/`float` | Request timeout (seconds) | All |
 | `retries` | `int` | Number of retries, default is 5. | OpenAI-compatible |
 | `retry_interval` | `int` | Retry interval (seconds), default is 10. | OpenAI-compatible |
 | `stream` | `bool` | Whether to return responses in streaming mode | All |
 | `max_tokens` | `int` | Maximum number of tokens generated | All |
 | `top_p` | `float` | Nucleus sampling; only considers tokens accounting for top_p probability mass | All |
 | `temperature` | `float` | Sampling temperature, range 0~2; higher means more randomness | All |
+| `stop_seqs` | `list[str]` | Sequences that trigger stop generation; the returned text does not include the stop sequence | All |
 | `frequency_penalty` | `float` | Range -2.0~2.0; positive values penalize repeated tokens | OpenAI-compatible |
 | `presence_penalty` | `float` | Range -2.0~2.0; positive values penalize already appeared tokens | OpenAI-compatible |
-| `logit_bias` | `dict` | Mapping of token IDs to bias values (-100~100)<br>Example: `"42=10,43=-10"` | OpenAI, Grok, vLLM |
-| `seed` | `int` | Random seed | OpenAI, Google, Mistral, Groq, HuggingFace, vLLM |
+| `repetition_penalty` | `float` | Exponential penalty applied to existing tokens. 1.0 means no penalty | OpenAI-compatible, HuggingFace, vLLM |
+| `logit_bias` | `dict` | Mapping of token IDs to bias values (-100~100)<br>Example: `"42=10,43=-10"` | OpenAI-compatible |
+| `seed` | `int` | Random seed | OpenAI-compatible |
 | `do_sample` | `bool` | Whether to use sampling strategy (otherwise greedy decoding) | Transformers |
 | `top_k` | `int` | Sample next token from the top_k most likely candidates | Anthropic, Google, HuggingFace, vLLM, SGLang |
-| `logprobs` | `bool` | Whether to return log probabilities for output tokens | OpenAI, Grok, TogetherAI, HuggingFace, llama-cpp-python, vLLM, SGLang |
-| `top_logprobs` | `int` | Return the top N tokens and their probabilities (range 0~20) | OpenAI, Grok, HuggingFace, vLLM, SGLang |
+| `logprobs` | `bool` | Whether to return log probabilities for output tokens | OpenAI-compatible, HuggingFace, llama-cpp-python |
+| `top_logprobs` | `int` | Return the top N tokens and their probabilities (range 0~20) | OpenAI-compatible, HuggingFace |
 | `parallel_tool_calls` | `bool` | Whether to support parallel tool calls | OpenAI, Groq |
-| `max_tool_output` | `int` | Maximum bytes for tool output | All (default 16*1024) |
+| `response_schema` | `dict` | Request structured output (JSON Schema); the output still needs to be validated | OpenAI, Google, Mistral |
+| `reasoning_effort` | `str` | Reasoning effort level, passed through to the server as-is (e.g. `none` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max`); the accepted values are decided by the model and the server | OpenAI-compatible |
+| `reasoning_tokens` | `int` | Maximum tokens budget for reasoning (thinking budget) | Anthropic Claude |
+| `reasoning_summary` | `str` | Reasoning summary verbosity. One of `concise` / `detailed` / `auto` | OpenAI reasoning series |
+| `reasoning_history` | `str` | How to encode prior-turn assistant `reasoning_content` in multi-turn requests. One of `reasoning_field` (default; pass as independent top-level field, works for DeepSeek V4 thinking, Qwen3 thinking), `think_tag` (embed as `<think>...</think>` in content string, legacy Together/Groq compatible), `none` (strip entirely; **required for DeepSeek R1 legacy** which forbids `reasoning_content` in requests) | OpenAI-compatible |
 | `extra_body` | `dict` | Extra request body for OpenAI-compatible services | OpenAI-compatible services |
 | `extra_query` | `dict` | Extra query parameters for OpenAI-compatible services | OpenAI-compatible services |
 | `extra_headers` | `dict` | Extra headers for OpenAI-compatible services | OpenAI-compatible services |
@@ -101,7 +108,7 @@ The `--generation-config` parameter supports the following options (comma-separa
 | `few_shot_random` | `bool` | Whether to randomly sample few-shot data |
 | `shuffle` | `bool` | Whether to shuffle the data |
 | `shuffle_choices` | `bool` | Whether to shuffle choice order (multiple-choice only) |
-| `metric_list` | `list[str\|dict]` | Metric list, default supports `acc` |
+| `metric_list` | `list[str\|dict]` | Metric list. Use canonical names such as `accuracy`; legacy aliases such as `acc` are normalized for compatibility. |
 | `aggregation` | `str` | Aggregation method for evaluation results, default is `mean`. Options: `mean_and_pass_at_k`, `mean_and_vote_at_k`, `mean_and_pass_hat_k` (all require setting `repeats=k`).<br>• `pass_at_k`: Probability that the same sample passes at least once in k generations (e.g., set `repeats=5` for `humaneval`)<br>• `vote_at_k`: Scoring by voting on k results for the same sample<br>• `pass_hat_k`: Probability that the same sample passes all k times (e.g., set `repeats=3` for `tau2_bench`) |
 | `filters` | `dict` | Output filters<br>• `remove_until`: Remove content before specified string<br>• `extract`: Extract regex-matched content |
 | `force_redownload` | `bool` | Whether to force re-download the dataset |
@@ -144,8 +151,8 @@ The `--generation-config` parameter supports the following options (comma-separa
 
 | Parameter | Type | Description | Default |
 |-----------|------|-------------|---------|
-| `--eval-type` | `str` | Evaluation type<br>• `llm_ckpt`: Local model inference (transformers)<br>• `openai_api`: OpenAI-compatible Chat Completions API service<br>• `openai_responses_api`: OpenAI official Responses API service<br>• `anthropic_api`: Anthropic Claude API service<br>• `litellm`: LiteLLM multi-provider routing (supports 100+ LLM providers)<br>• `text2image`: Text-to-image model (diffusers)<br>• `image_editing`: Image editing model<br>• `mock_llm`: Simulated inference (for verification)<br>• `custom`: Custom evaluation type | `None` (auto-detect) |
-| `--eval-batch-size` | `int` | Evaluation batch size, applies to the following stages:<br>• Inference: concurrent requests (service mode) or batch size (checkpoint mode)<br>• LLM-judge review: number of concurrent threads<br>• `batch_calculate_metrics`: number of samples per batch window | `1` (service mode: `8`) |
+| `--eval-type` | `str` | Evaluation type<br>• `llm_ckpt`: Local model inference (transformers)<br>• `openai_api`: OpenAI-compatible Chat Completions API service<br>• `openai_responses_api`: OpenAI official Responses API service<br>• `anthropic_api`: Anthropic Claude API service<br>• `litellm`: LiteLLM multi-provider routing (supports 100+ LLM providers)<br>• `text2image`: Text-to-image model (diffusers)<br>• `text2speech`: Text-to-speech model service<br>• `image_editing`: Image editing model<br>• `mock_llm`: Simulated inference (for verification)<br>• `custom`: Custom evaluation type | `None` (auto-detect) |
+| `--eval-batch-size` | `int` | Evaluation batch size, applies to the following stages:<br>• Inference: concurrent requests (remote API modes) or batch size (`llm_ckpt` mode)<br>• LLM-judge review: number of concurrent threads<br>• `batch_calculate_metrics`: number of samples per batch window | `1` (`8` for remote API modes: `openai_api`, `openai_responses_api`, `anthropic_api`, `litellm`) |
 | `--eval-backend` | `str` | Evaluation backend<br>• `Native`: Default backend<br>• `OpenCompass`: LLM evaluation<br>• `VLMEvalKit`: Multimodal model evaluation<br>• `RAGEval`: RAG/Embedding/Reranker/CLIP evaluation<br>• `ThirdParty`: Special task evaluation | `Native` |
 | `--eval-config` | `str` | Configuration file path for non-Native backends | - |
 
@@ -155,73 +162,61 @@ Refer to the [other backend usage guide](../user_guides/backend/index.md)
 
 ## Judge Parameters
 
-LLM-as-a-Judge evaluation parameters using a judge model to determine correctness:
+Native LLM judging is configured through one typed `judge` object. In Python/YAML use `judge={...}`; on the CLI use
+`--judge '<JSON object>'`.
 
-| Parameter | Type | Description | Default |
-|-----------|------|-------------|---------|
-| `--judge-strategy` | `str` | Judge model strategy<br>• `auto`: Automatically decide based on dataset requirements<br>• `llm`: Always use judge model<br>• `rule`: Use rule-based judgment only<br>• `llm_recall`: Use judge model after rule-based judgment fails | `auto` |
-| `--judge-worker-num` | `int` | **[Deprecated]** Use `--eval-batch-size` instead. Will be removed in v2.0.0. | `1` |
-| `--judge-model-args` | `str` | Judge model configuration (JSON string), see table below | - |
-| `--analysis-report` | `bool` | Whether to generate analysis report (language auto-detected) | `false` |
-
-### judge-model-args Configuration Options
-
-| Parameter | Type | Description | Default |
-|-----------|------|-------------|---------|
-| `api_key` | `str` | API key | Read from `MODELSCOPE_SDK_TOKEN`, default `EMPTY` |
-| `api_url` | `str` | API endpoint | Read from `MODELSCOPE_API_BASE`,<br>default `https://api-inference.modelscope.cn/v1/` |
-| `model_id` | `str` | Model ID | Read from `MODELSCOPE_JUDGE_LLM`,<br>default `Qwen/Qwen3-235B-A22B` |
-| `system_prompt` | `str` | System prompt | - |
-| `prompt_template` | `str` | Prompt template | Auto-selected based on `score_type` |
-| `generation_config` | `dict` | Generation parameters (same as `--generation-config`) | - |
-| `model_args` | `dict` | Judge model loading parameters (same as `--model-args`), e.g. `{"default_headers": {"X-API-KEY": "your-api-key"}}` | `{}` |
-| `score_type` | `str` | Scoring method<br>• `pattern`: Judge if answer matches reference<br>• `numeric`: Score without reference (0-1) | `pattern` |
-| `score_pattern` | `str` | Regex to parse output | `pattern` mode: `(A\|B)`<br>`numeric` mode: `\[\[(\d+(?:\.\d+)?)\]\]` |
-| `score_mapping` | `dict` | Score mapping for `pattern` mode | `{'A': 1.0, 'B': 0.0}` |
-
-```{seealso}
-For more information on ModelScope model inference services, refer to [ModelScope API Inference Services](https://modelscope.cn/docs/model-service/API-Inference/intro)
+```python
+TaskConfig(
+    model='MODEL',
+    datasets=['simple_qa'],
+    judge={
+        'strategy': 'llm',
+        'models': {
+            'model_id': 'JUDGE_MODEL',
+            'api_url': 'OPENAI_COMPATIBLE_URL',
+            'api_key': 'JUDGE_API_KEY',
+            'generation_config': {'temperature': 0.0, 'retries': 3},
+        },
+        'repeats': 1,
+        'position_swap': 'auto',
+        'aggregation': 'mean',
+        'min_valid_judges': 1,
+    },
+)
 ```
 
-<details><summary>pattern Mode Default Prompt Template</summary>
+`models` accepts one object or a list of objects. A list enables independent judges; every entry needs a unique
+`judge_id` when the same `model_id` occurs more than once. `judge_id` defaults to a unique `model_id`.
 
-```text
-Your job is to look at a question, a gold target, and a predicted answer, and return a letter "A" or "B" to indicate whether the predicted answer is correct or incorrect.
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| `strategy` | `auto\|rule\|llm\|llm_recall` | `auto` follows benchmark policy; `llm_recall` judges only rule-based misses and takes `max(rule, judge)`. | `auto` |
+| `models` | `object\|list[object]` | One or more Judge model configurations. `model_id` is required for reproducible review caching. | `[]` |
+| `repeats` | `int >= 1` | Independent verdict observations per Judge, distinct from transport retries. | `1` |
+| `position_swap` | `auto\|on\|off` | `auto` preserves the benchmark's official position-swap policy. | `auto` |
+| `aggregation` | `mean\|median\|majority_vote` | Cross-observation aggregation for ordinary metrics. | `mean` |
+| `min_valid_judges` | `int >= 1` | Minimum valid Judge verdicts required for a metric. | `1` |
 
-[Question]
-{question}
+Each entry in `models` supports `judge_id`, `model_id`, `api_key`, `api_url`, `eval_type`, `model_args`, and
+`generation_config`. Provider-specific model initialization options belong in `model_args`; transport retry belongs
+in `generation_config.retries`.
 
-[Reference Answer]
-{gold}
+`judge.contract` configures the generic single-verdict judge only: `system_prompt`, `prompt_template`,
+`score_mapping`, and `score_type`. `pattern` asks the Judge for a JSON verdict label selected from `score_mapping`;
+`numeric` asks for a JSON score in `[0, 1]`. The framework appends the JSON-format instruction, parses the normal
+model response once, and never uses constrained decoding, regex score extraction, or corrective follow-up prompts.
+An invalid reply is unavailable and excluded from the metric rather than reported as zero.
 
-[Predicted Answer]
-{pred}
+Reports include `JudgeSummary` with coverage, failure counts, and disagreement for samples reviewed by an LLM.
+When an adapter resolves a sample through a deterministic judge short-circuit, its score metadata records
+`judge_skipped=true` and `judge_skip_reason`; the web review panel labels it as rule-based scoring instead of an
+LLM verdict. Native evaluations require an exact cached evaluation identity match before reusing predictions and
+reviews. With `rerun_review=True`, predictions are reused and the review cache is atomically replaced after
+success; it is the explicit override for an identity mismatch, and the generated config records the prediction
+source under the current evaluation version.
 
-Evaluate the model's answer based on correctness compared to the reference answer.
-Grade the predicted answer of this new question as one of:
-A: CORRECT
-B: INCORRECT
-
-Just return the letters "A" or "B", with no text around it.
-```
-</details>
-
-<details><summary>numeric Mode Default Prompt Template</summary>
-
-```text
-Please act as an impartial judge and evaluate the quality of the response provided by an AI assistant to the user question displayed below. Your evaluation should consider factors such as the helpfulness, relevance, accuracy, depth, creativity, and level of detail of the response.
-
-Begin your evaluation by providing a short explanation. Be as objective as possible.
-
-After providing your explanation, you must rate the response on a scale of 0 (worst) to 1 (best) by strictly following this format: "[[rating]]", for example: "Rating: [[0.5]]"
-
-[Question]
-{question}
-
-[Response]
-{pred}
-```
-</details>
+`judge_strategy` and a single mapping `judge_model_args` remain accepted only as a deprecated input migration. The
+removed `judge_worker_num` and `score_pattern` are rejected.
 
 ## Sandbox Parameters
 
@@ -241,7 +236,7 @@ For full usage including local and remote manager examples, see [Sandbox Environ
 
 ## Agent Parameters
 
-`--agent-config` / `agent_config` enables [Agent Evaluation](../user_guides/agent/index.md): once set, all benchmarks based on `DefaultDataAdapter` switch to [native AgentLoop](../user_guides/agent/native.md) inference, or delegate to a third-party CLI such as Claude Code / Codex via the [external Agent Bridge](../user_guides/agent/bridge.md). `AgentLoopAdapter` subclasses (such as `swe_bench_*_agentic`) ignore this global config and rely on `dataset_args.extra_params` instead.
+`--agent-config` / `agent_config` enables [Agent Evaluation](../user_guides/agent/index.md): once set, all benchmarks based on `DefaultDataAdapter` switch to [native AgentLoop](../user_guides/agent/native.md) inference, or delegate to a third-party CLI such as Claude Code / Codex via the [external Agent Bridge](../user_guides/agent/bridge.md). `AgentLoopAdapter` subclasses (such as `swe_bench_*_agentic`) keep their benchmark defaults but accept supported explicit overrides such as strategy, step limit, and tools.
 
 | Parameter | Type | Description | Default |
 |-----------|------|-------------|---------|
@@ -253,10 +248,10 @@ For full usage including local and remote manager examples, see [Sandbox Environ
 |-------|------|-------------|---------|
 | `strategy` | `str` | Strategy name: `function_calling` / `react` / `swe_bench_toolcall` / `swe_bench_backticks` | `function_calling` |
 | `tools` | `list[str]` | Tool whitelist: `bash` / `python_exec` (`submit` is auto-injected by the strategy) | `[]` |
-| `environment` | `str \| None` | Tool execution environment: `local` (subprocess) / `docker` (isolated sandbox) | `None` |
+| `environment` | `str \| None` | Agent command environment, such as `local` or `docker` | `None` |
+| `environment_extra` | `dict` | Agent environment constructor options; Docker images belong in `sandbox_config.image` | `{}` |
 | `max_steps` | `int` | Hard upper bound of loop iterations | `10` |
-| `extra` | `dict` | Strategy constructor kwargs, e.g. `{'system_prompt': '...'}` | `{}` |
-| `environment_extra` | `dict` | Environment constructor kwargs. `local` supports `working_dir`/`env_vars`; `docker` supports `image`/`timeout`/`environment` | `{}` |
+| `kwargs` | `dict` | Strategy constructor kwargs, e.g. `{'system_prompt': '...'}` | `{}` |
 
 ```{seealso}
 For full usage, examples and Trace visualization, see [Agent Evaluation](../user_guides/agent/index.md).
@@ -269,7 +264,7 @@ For full usage, examples and Trace visualization, see [Agent Evaluation](../user
 | `--work-dir` | `str` | Evaluation output path (see directory structure below) | `./outputs` |
 | `--no-timestamp` | `bool` | Do not add timestamp to work_dir | `false` |
 | `--use-cache` | `str` | Reuse local cache path (e.g., `outputs/20241210_194434`)<br>Reuses inference and evaluation results | `None` |
-| `--rerun-review` | `bool` | Used with `--use-cache`: deletes the existing reviews cache and re-runs the review/scoring stage while still reusing prediction cache | `false` |
+| `--rerun-review` | `bool` | Used with `--use-cache`: re-runs review/scoring from cached predictions and atomically replaces the review cache after success | `false` |
 | `--enable-progress-tracker` | `bool` | Whether to enable progress tracking, writing hierarchical evaluation progress to `progress.json` in real time, queryable via the service API | `false` |
 | `--collect-perf` | `bool` | Collect per-request performance metrics (latency, TTFT, token usage) and write them into the evaluation report. TTFT requires `--generation-config stream=true`. Use `--no-collect-perf` to disable | `true` |
 | `--seed` | `int` | Random seed | `42` |

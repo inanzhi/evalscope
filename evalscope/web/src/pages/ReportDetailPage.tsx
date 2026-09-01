@@ -1,11 +1,17 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { useLocale } from '@/contexts/LocaleContext'
+import { useAsyncResource } from '@/hooks/useAsyncResource'
+import { useScopedState } from '@/hooks/useScopedState'
 import { loadReport as apiLoadReport, getHtmlReportUrl } from '@/api/reports'
-import type { LoadReportResponse, ReportData } from '@/api/types'
+import type { ReportData } from '@/api/types'
+import { formatReportRef } from '@/domain/report/reportRef'
+import { datasetLabel, primaryMetricOf } from '@/domain/report/primaryMetrics'
+import { formatMetricIdentityLabel, metricIdentityKey } from '@/domain/metric'
 import Breadcrumb from '@/components/ui/Breadcrumb'
 import Tabs from '@/components/ui/Tabs'
 import Skeleton from '@/components/ui/Skeleton'
+import ErrorAlert from '@/components/ui/ErrorAlert'
 import ReportHeader from '@/components/reports/ReportHeader'
 import DatasetNav from '@/components/reports/DatasetNav'
 import OverviewTab from '@/components/reports/OverviewTab'
@@ -15,68 +21,78 @@ import PredictionsTab from '@/components/reports/PredictionsTab'
 type TabKey = 'overview' | 'details' | 'predictions'
 
 export default function ReportDetailPage() {
-  const { reportId } = useParams<{ reportId: string }>()
+  const { runId, modelId } = useParams<{ runId: string; modelId: string }>()
   const [searchParams] = useSearchParams()
   const { t } = useLocale()
 
   const rootPath = searchParams.get('root_path') || './outputs'
-  const reportName = decodeURIComponent(reportId ?? '')
+  const reportName = useMemo(
+    () => formatReportRef({ runId: runId ?? '', modelId: modelId ?? '' }),
+    [runId, modelId],
+  )
 
-  // Parse model name from reportName format: {timestamp}@@{model_name}::{datasets}
-  const breadcrumbLabel = useMemo(() => {
-    const atIdx = reportName.indexOf('@@')
-    if (atIdx === -1) return reportName
-    const afterAt = reportName.slice(atIdx + 2)
-    const colonIdx = afterAt.indexOf('::')
-    return colonIdx !== -1 ? afterAt.slice(0, colonIdx) : afterAt
-  }, [reportName])
-
-  const [data, setData] = useState<LoadReportResponse | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
   const [activeTab, setActiveTab] = useState<TabKey>('overview')
-  const [activeDataset, setActiveDataset] = useState('')
   const [initialSubset, setInitialSubset] = useState<string | undefined>(undefined)
 
-  // Load report on mount
-  useEffect(() => {
-    if (!reportName) return
-    let cancelled = false
-    setLoading(true)
-    setError('')
+  // A change of inputs aborts the previous request and drops its late response,
+  // so only the newest one updates the view.
+  const report = useAsyncResource(
+    (signal) => apiLoadReport(rootPath, reportName, signal),
+    [rootPath, reportName],
+    { enabled: Boolean(reportName), fallbackMessage: t('common.loadError') },
+  )
+  const data = report.data ?? null
+  const loading = report.loading
+  const error = report.error
 
-    apiLoadReport(rootPath, reportName)
-      .then((res) => {
-        if (cancelled) return
-        setData(res)
-        if (res.datasets.length > 0) {
-          setActiveDataset(res.datasets[0])
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) setError(String(err))
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-
-    return () => { cancelled = true }
-  }, [rootPath, reportName])
+  // Open on the report's first dataset, while still letting the user switch; the
+  // pick is scoped to the report it was made on, and only holds while it still
+  // names one of the datasets the report carries.
+  const datasetScope = `${rootPath}\0${reportName}`
+  const [pickedDataset, setActiveDataset] = useScopedState<string | null>(datasetScope, null)
+  const activeDataset = pickedDataset !== null && Boolean(data?.datasets.includes(pickedDataset))
+    ? pickedDataset
+    : (data?.datasets[0] ?? '')
 
   const reportList = useMemo<ReportData[]>(() => data?.report_list ?? [], [data])
 
   // Derive overall info from report list
-  const modelName = reportList[0]?.model_name ?? reportName
-  const primaryDataset = reportList[0]?.dataset_name ?? ''
-  const overallScore = reportList.length > 0
-    ? reportList.reduce((s, r) => s + r.score, 0) / reportList.length
-    : 0
+  const modelName = reportList[0]?.model_name ?? modelId ?? ''
+  // Prefer the loaded model name; fall back to the URL model id while the report loads.
+  const breadcrumbLabel = reportList[0]?.model_name ?? modelId ?? ''
+  const primaryDataset = reportList[0] ? datasetLabel(reportList[0]) : ''
+  const overallMetric = useMemo(() => {
+    if (reportList.length !== 1) return { score: null, semantics: null, metricName: '' }
+    const primary = primaryMetricOf(reportList[0])
+    return {
+      score: primary?.score ?? null,
+      semantics: primary?.semantics ?? null,
+      metricName: primary ? formatMetricIdentityLabel(primary.identity, primary.semantics, primary.legacy_name) : '',
+    }
+  }, [reportList])
   const totalSamples = reportList.reduce((sum, r) => {
-    return sum + (r.metrics[0]?.categories?.reduce((s, c) => s + c.num, 0) ?? 0)
+    const primary = primaryMetricOf(r)
+    return sum + (primary?.categories?.reduce((s, c) => s + c.num, 0) ?? 0)
   }, 0)
 
   const datasets = data?.datasets ?? []
+  const datasetLabels = useMemo(
+    () => Object.fromEntries(reportList.map((report) => [report.dataset_name, datasetLabel(report)])),
+    [reportList],
+  )
   const htmlReportUrl = getHtmlReportUrl(rootPath, reportName)
+
+  // Semantics of the dataset currently shown in the details panel: its primary metric drives the
+  // headline number, and the per-metric map lets each row format itself.
+  const activeReport = useMemo(() => {
+    const report = reportList.find((r) => r.dataset_name === activeDataset)
+    if (!report) return undefined
+    const primaryMetric = primaryMetricOf(report)
+    const semanticsByMetric = Object.fromEntries(
+      report.metrics.map((metric) => [metricIdentityKey(metric.identity), metric.semantics]),
+    )
+    return { primaryMetric, semanticsByMetric }
+  }, [reportList, activeDataset])
 
   // Handler: switch dataset and auto-navigate to details tab
   const handleDatasetChange = (ds: string) => {
@@ -94,12 +110,41 @@ export default function ReportDetailPage() {
   }
 
   const tabs = [
-    { key: 'overview', label: t('reportDetail.overview') },
-    { key: 'details', label: t('reportDetail.details') },
-    { key: 'predictions', label: t('reportDetail.predictions') },
+    { key: 'overview', label: t('reportDetail.overview'), panelId: 'report-overview-panel' },
+    { key: 'details', label: t('reportDetail.details'), panelId: 'report-details-panel' },
+    { key: 'predictions', label: t('reportDetail.predictions'), panelId: 'report-predictions-panel' },
   ]
 
-  if (loading) {
+  const renderDatasetPanel = (content: ReactNode) => (
+    <div className="flex flex-col md:flex-row gap-0 rounded-b-[var(--radius)] border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
+      {datasets.length > 0 && (
+        <>
+          <div className="md:hidden flex items-center gap-1 px-4 py-2 border-b border-[var(--border)] overflow-x-auto">
+            {datasets.map((ds) => (
+              <button
+                key={ds}
+                type="button"
+                onClick={() => handleDatasetChange(ds)}
+                className={`min-h-11 whitespace-nowrap px-3 py-1.5 text-xs rounded-full transition-all duration-150 ${
+                  ds === activeDataset
+                    ? 'bg-[var(--accent-dim)] text-[var(--accent)] font-medium'
+                    : 'text-[var(--text-muted)] hover:bg-[var(--bg-card2)]'
+                }`}
+              >
+                <span title={ds}>{datasetLabels[ds] || ds}</span>
+              </button>
+            ))}
+          </div>
+          <div className="hidden md:block">
+            <DatasetNav datasets={datasets} labels={datasetLabels} active={activeDataset} onChange={handleDatasetChange} />
+          </div>
+        </>
+      )}
+      <div className="flex-1 min-w-0 p-5">{content}</div>
+    </div>
+  )
+
+  if (loading && !data) {
     return (
       <div className="page-enter p-6 flex flex-col gap-4">
         <Skeleton width={300} height={20} />
@@ -109,7 +154,7 @@ export default function ReportDetailPage() {
     )
   }
 
-  if (error) {
+  if (error && !data) {
     return (
       <div className="page-enter p-6">
         <Breadcrumb
@@ -118,9 +163,9 @@ export default function ReportDetailPage() {
             { label: breadcrumbLabel || 'Detail' },
           ]}
         />
-        <div className="mt-6 p-6 rounded-[var(--radius)] border border-[var(--danger)] bg-[var(--danger-bg)] text-[var(--danger)]">
+        <ErrorAlert className="mt-6 p-6 border-[var(--danger)]">
           <p className="text-sm">Failed to load report: {error}</p>
-        </div>
+        </ErrorAlert>
       </div>
     )
   }
@@ -135,90 +180,72 @@ export default function ReportDetailPage() {
         ]}
       />
 
+      {error && (
+        <ErrorAlert>{error}</ErrorAlert>
+      )}
+
       {/* Report Header */}
       <ReportHeader
         modelName={modelName}
         datasetName={primaryDataset}
         datasets={datasets}
-        score={overallScore}
+        datasetLabels={datasetLabels}
+        score={overallMetric.score}
+        metricName={overallMetric.metricName}
+        semantics={overallMetric.semantics}
         totalSamples={totalSamples}
         htmlReportUrl={htmlReportUrl}
         onDatasetClick={handleDatasetChange}
       />
 
-      {/* Tabs bar */}
-      <div className="rounded-t-[var(--radius)] border border-b-0 border-[var(--border)] bg-[var(--bg-card)] px-5 pt-4 pb-2">
-        <Tabs tabs={tabs} activeKey={activeTab} onChange={(k) => setActiveTab(k as TabKey)} />
-      </div>
-
-      {/* Tab content */}
-      {activeTab === 'overview' ? (
-        <div className="rounded-b-[var(--radius)] border border-[var(--border)] bg-[var(--bg-card)] p-5">
-          <OverviewTab
-            reports={reportList}
-            reportName={reportName}
-            rootPath={rootPath}
-            taskConfig={data?.task_config}
-            onDatasetClick={handleDatasetChange}
-          />
-        </div>
-      ) : (
-        <div className="flex flex-col md:flex-row gap-0 rounded-b-[var(--radius)] border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
-          {/* Dataset nav - horizontal scroll on mobile, vertical sidebar on desktop */}
-          {datasets.length > 0 && (
-            <>
-              {/* Mobile horizontal dataset nav */}
-              <div className="md:hidden flex items-center gap-1 px-4 py-2 border-b border-[var(--border)] overflow-x-auto">
-                {datasets.map((ds) => (
-                  <button
-                    key={ds}
-                    onClick={() => handleDatasetChange(ds)}
-                    className={`whitespace-nowrap px-3 py-1.5 text-xs rounded-full transition-all duration-150 ${
-                      ds === activeDataset
-                        ? 'bg-[var(--accent-dim)] text-[var(--accent)] font-medium'
-                        : 'text-[var(--text-muted)] hover:bg-[var(--bg-card2)]'
-                    }`}
-                  >
-                    {ds}
-                  </button>
-                ))}
-              </div>
-              {/* Desktop vertical dataset nav */}
-              <div className="hidden md:block">
-                <DatasetNav
-                  datasets={datasets}
-                  active={activeDataset}
-                  onChange={handleDatasetChange}
-                />
-              </div>
-            </>
-          )}
-
-          {/* Right content area */}
-          <div className="flex-1 min-w-0 p-5">
-            {activeTab === 'details' && (
-              <DetailsTab
-                key={activeDataset}
+      <Tabs
+        tabs={tabs}
+        activeKey={activeTab}
+        onChange={(k) => setActiveTab(k as TabKey)}
+        className="w-full justify-start rounded-b-none border-b-0 bg-[var(--bg-card)] px-5 pt-4 pb-2"
+        panels={{
+          'report-overview-panel': (
+            <div className="rounded-b-[var(--radius)] border border-[var(--border)] bg-[var(--bg-card)] p-5">
+              <OverviewTab
+                reports={reportList}
                 reportName={reportName}
-                datasetName={activeDataset}
                 rootPath={rootPath}
-                perfMetrics={reportList.find((r) => r.dataset_name === activeDataset)?.perf_metrics}
-                overallScore={reportList.find((r) => r.dataset_name === activeDataset)?.score}
-                onSubsetClick={handleSubsetClick}
+                taskConfig={data?.task_config}
+                onDatasetClick={handleDatasetChange}
               />
-            )}
-            {activeTab === 'predictions' && (
-              <PredictionsTab
-                key={`${activeDataset}-${initialSubset ?? ''}`}
-                reportName={reportName}
-                datasetName={activeDataset}
-                rootPath={rootPath}
-                initialSubset={initialSubset}
-              />
-            )}
-          </div>
-        </div>
-      )}
+            </div>
+          ),
+          'report-details-panel': renderDatasetPanel(
+            <DetailsTab
+              key={activeDataset}
+              reportName={reportName}
+              datasetName={activeDataset}
+              rootPath={rootPath}
+              perfMetrics={reportList.find((r) => r.dataset_name === activeDataset)?.perf_metrics}
+              overallScore={activeReport?.primaryMetric?.score}
+              metricName={activeReport?.primaryMetric
+                ? formatMetricIdentityLabel(
+                    activeReport.primaryMetric.identity,
+                    activeReport.primaryMetric.semantics,
+                    activeReport.primaryMetric.legacy_name,
+                  )
+                : undefined}
+              semantics={activeReport?.primaryMetric?.semantics}
+              semanticsByMetric={activeReport?.semanticsByMetric}
+              onSubsetClick={handleSubsetClick}
+            />,
+          ),
+          'report-predictions-panel': renderDatasetPanel(
+            <PredictionsTab
+              key={`${activeDataset}-${initialSubset ?? ''}`}
+              reportName={reportName}
+              datasetName={activeDataset}
+              rootPath={rootPath}
+              initialSubset={initialSubset}
+            />,
+          ),
+        }}
+      />
     </div>
   )
 }

@@ -2,12 +2,19 @@
 """
 Run evaluation for LLMs.
 """
+
 import os
 from argparse import Namespace
-from typing import List, Optional, Union
+from typing import Dict, List, Union
 
-from evalscope.config import TaskConfig, parse_task_config
-from evalscope.constants import DEFAULT_WORK_DIR, DataCollection, EvalBackend
+from evalscope.config import TaskConfig, load_task_config_snapshot, parse_task_config
+from evalscope.constants import DEFAULT_WORK_DIR, EvalBackend
+from evalscope.evaluation_versioning import (
+    ResolvedBenchmarkSpec,
+    build_evaluation_identity,
+    build_generated_evaluation_metadata,
+    validate_cached_evaluation_identity,
+)
 from evalscope.utils.io_utils import OutputsStructure, current_time
 from evalscope.utils.logger import configure_logging, get_logger
 from evalscope.utils.model_utils import seed_everything
@@ -37,12 +44,28 @@ def run_single_task(task_cfg: TaskConfig) -> dict:
         result = run_non_native_backend(task_cfg, outputs)
     else:
         logger.info('Running with native backend')
-        result = evaluate_model(task_cfg, outputs)
+        try:
+            result = evaluate_model(task_cfg, outputs)
 
-        logger.info(f'Finished evaluation for {task_cfg.model_id} on {task_cfg.datasets}')
-        logger.info(f'Output directory: {outputs.outputs_dir}')
+            logger.info(f'Finished evaluation for {task_cfg.model_id} on {task_cfg.datasets}')
+            logger.info(f'Output directory: {outputs.outputs_dir}')
+        finally:
+            shutdown_sandbox_service_if_enabled(task_cfg)
 
     return result
+
+
+def shutdown_sandbox_service_if_enabled(task_cfg: TaskConfig) -> None:
+    """Tear down sandbox managers before Python starts interpreter shutdown."""
+    if not task_cfg.sandbox or not task_cfg.sandbox.enabled:
+        return
+
+    try:
+        from evalscope.api.sandbox import shutdown_sandbox_service
+
+        shutdown_sandbox_service()
+    except Exception as exc:
+        logger.warning(f'Failed to shut down sandbox service: {exc}')
 
 
 def setup_work_directory(task_cfg: TaskConfig):
@@ -65,10 +88,13 @@ def setup_work_directory(task_cfg: TaskConfig):
         task_cfg.eval_config['work_dir'] = task_cfg.work_dir
     elif task_cfg.eval_backend == EvalBackend.RAG_EVAL:
         from evalscope.backend.rag_eval import Tools
-        if task_cfg.eval_config['tool'].lower() == Tools.MTEB:
-            task_cfg.eval_config['eval']['output_folder'] = task_cfg.work_dir
-        elif task_cfg.eval_config['tool'].lower() == Tools.CLIP_BENCHMARK:
-            task_cfg.eval_config['eval']['output_dir'] = task_cfg.work_dir
+
+        eval_cfg = task_cfg.eval_config
+        tool = getattr(eval_cfg, 'tool', '').lower()
+        if tool == Tools.MTEB:
+            eval_cfg.eval.output_folder = task_cfg.work_dir
+        elif tool == Tools.CLIP_BENCHMARK:
+            eval_cfg.eval.output_dir = task_cfg.work_dir
     return outputs
 
 
@@ -96,14 +122,17 @@ def get_backend_manager_class(eval_backend: EvalBackend):
     if eval_backend == EvalBackend.OPEN_COMPASS:
         logger.info('Using OpenCompassBackendManager')
         from evalscope.backend.opencompass import OpenCompassBackendManager
+
         return OpenCompassBackendManager
     elif eval_backend == EvalBackend.VLM_EVAL_KIT:
         logger.info('Using VLMEvalKitBackendManager')
         from evalscope.backend.vlm_eval_kit import VLMEvalKitBackendManager
+
         return VLMEvalKitBackendManager
     elif eval_backend == EvalBackend.RAG_EVAL:
         logger.info('Using RAGEvalBackendManager')
         from evalscope.backend.rag_eval import RAGEvalBackendManager
+
         return RAGEvalBackendManager
     elif eval_backend == EvalBackend.THIRD_PARTY:
         raise NotImplementedError(f'Not implemented for evaluation backend {eval_backend}')
@@ -124,9 +153,14 @@ def evaluate_model(task_config: TaskConfig, outputs: OutputsStructure) -> dict:
     model = LazyModel(task_config=task_config)
     # Initialize evaluators for each dataset
     evaluators: List[Evaluator] = []
+    resolved_benchmarks: Dict[str, ResolvedBenchmarkSpec] = {}
+    evaluation_versions: Dict[str, str] = {}
     for dataset_name in task_config.datasets:
         # Create evaluator for each dataset
         benchmark = get_benchmark(dataset_name, task_config)
+        # Validate only on the execution path. ``get_benchmark`` is also a metadata helper and
+        # must not reject a configuration before an evaluation has been requested.
+        benchmark.validate_judge_strategy()
         evaluator = create_evaluator(
             benchmark=benchmark,
             model=model,
@@ -135,12 +169,29 @@ def evaluate_model(task_config: TaskConfig, outputs: OutputsStructure) -> dict:
         )
         evaluators.append(evaluator)
 
-        # Update task_config.dataset_args with benchmark metadata, except for DataCollection
-        if dataset_name != DataCollection.NAME:
-            task_config.dataset_args[dataset_name] = benchmark.to_dict()
+        meta = benchmark.benchmark_meta
+        resolved_benchmarks[dataset_name] = ResolvedBenchmarkSpec.from_meta(meta, task_config)
+        evaluation_versions[dataset_name] = meta.evaluation_version
+
+    evaluation_identity = build_evaluation_identity(resolved_benchmarks, evaluation_versions, task_config)
+    if task_config.use_cache:
+        snapshot_path = os.path.join(outputs.outputs_dir, OutputsStructure.CONFIGS_DIR, 'task_config.yaml')
+        cache_sources = validate_cached_evaluation_identity(
+            load_task_config_snapshot(snapshot_path),
+            evaluation_identity,
+            task_config.rerun_review,
+        )
+        for benchmark_name, source in cache_sources.items():
+            evaluation_identity.benchmarks[benchmark_name].cache_source = source
+            logger.warning(
+                f'Forcing prediction reuse for {benchmark_name} with rerun_review=True; '
+                f'previous identity is {source.fingerprint}.'
+            )
 
     # dump task_cfg to outputs.configs_dir after creating evaluators
-    task_config.dump_yaml(outputs.configs_dir)
+    task_config.dump_yaml(
+        outputs.configs_dir, build_generated_evaluation_metadata(resolved_benchmarks, evaluation_identity)
+    )
     logger.info(task_config)
 
     tracker_ctx = make_tracker(
@@ -169,8 +220,8 @@ def evaluate_model(task_config: TaskConfig, outputs: OutputsStructure) -> dict:
     try:
         report_table: str = gen_table(reports_path_list=[outputs.reports_dir], add_overall_metric=True)
         logger.info(f'Overall report table: \n{report_table} \n')
-    except Exception:
-        logger.error('Failed to generate report table.')
+    except Exception as e:
+        logger.error(f'Failed to generate report table: {e}')
 
     # Make overall perf table
     try:
@@ -195,8 +246,10 @@ def evaluate_model(task_config: TaskConfig, outputs: OutputsStructure) -> dict:
         gc.collect()
 
         from evalscope.utils.import_utils import check_import
+
         if check_import('torch', raise_warning=False):
             import torch
+
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
@@ -205,6 +258,7 @@ def evaluate_model(task_config: TaskConfig, outputs: OutputsStructure) -> dict:
 
 def main():
     from evalscope.arguments import parse_args
+
     args = parse_args()
     run_task(args)
 

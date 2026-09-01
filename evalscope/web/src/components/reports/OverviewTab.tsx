@@ -1,13 +1,20 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
+import { Radar, Table2 } from 'lucide-react'
 import { useLocale } from '@/contexts/LocaleContext'
 import type { ReportData } from '@/api/types'
-import { getChartUrl } from '@/api/reports'
+import { getCompareChartUrl } from '@/api/reports'
 import Card from '@/components/ui/Card'
 import Table from '@/components/ui/Table'
-import { scoreColor } from '@/utils/colorScale'
+import {
+  formatMetricIdentityLabel,
+  metricIdentityKey,
+} from '@/domain/metric'
+import type { MetricSemantics } from '@/domain/metric'
+import { datasetLabel, primaryMetricOf } from '@/domain/report/primaryMetrics'
 import PlotlyChart from '@/components/charts/PlotlyChart'
+import ScoreBar from '@/components/ui/ScoreBar'
 import ReportSummaryStats from './ReportSummaryStats'
-import JsonViewer from '@/components/common/JsonViewer'
+import JsonViewer from '@/components/ui/JsonViewer'
 
 interface Props {
   reports: ReportData[]
@@ -17,15 +24,59 @@ interface Props {
   onDatasetClick?: (dataset: string) => void
 }
 
+/**
+ * Headline figures of one dataset report: the primary metric's name, score, sample count and
+ * semantics. `null` when the report declares no primary metric.
+ */
+function primarySummaryOf(report: ReportData): {
+  name: string
+  label: string
+  score: number
+  num: number
+  semantics?: MetricSemantics | null
+} | null {
+  const metric = primaryMetricOf(report)
+  if (!metric) {
+    return null
+  }
+  return {
+    name: metricIdentityKey(metric.identity),
+    label: formatMetricIdentityLabel(metric.identity, metric.semantics, metric.legacy_name),
+    score: metric.score,
+    num: metric.categories?.reduce((sum, category) => sum + category.num, 0) ?? 0,
+    semantics: metric.semantics,
+  }
+}
+
 export default function OverviewTab({ reports, reportName, rootPath, taskConfig, onDatasetClick }: Props) {
   const { t } = useLocale()
+  const [scoreView, setScoreView] = useState<'table' | 'radar'>('table')
+  const primaries = reports.map(primaryMetricOf)
+  const semanticIds = primaries.map((primary) => primary?.semantics?.semantic_id ?? null)
+  const sameSemantics = semanticIds.length > 0 && semanticIds.every((id) => id !== null && id === semanticIds[0])
+  // A radar chart puts every dataset on one axis scale, so it is only honest when the datasets
+  // share a semantic identifier and the metric is a bounded quality metric.
+  const canShowRadar = reports.length >= 3
+    && sameSemantics
+    && primaries[0]?.semantics?.value_range != null
+    && primaries[0]?.semantics?.direction !== 'none'
 
   const tableData = useMemo(() => {
-    return reports.map((r) => ({
-      Dataset: r.dataset_name,
-      Score: r.score,
-      Samples: r.metrics[0]?.categories?.reduce((s, c) => s + c.num, 0) ?? 0,
-    }))
+    // `primaries` is recomputed here rather than closed over: it is a fresh array on every render, so
+    // listing it as a dependency would defeat the memo, and omitting it is what the exhaustive-deps
+    // rule warns about. Deriving it inside keeps `reports` the only real input.
+    return reports.map((r) => {
+      const primary = primarySummaryOf(r)
+      return {
+        Dataset: datasetLabel(r),
+        DatasetId: r.dataset_name,
+        Score: primary?.score ?? null,
+        Metric: primary?.name ?? '',
+        MetricLabel: primary?.label ?? '',
+        Semantics: primary?.semantics ?? null,
+        Samples: primary?.num ?? 0,
+      }
+    })
   }, [reports])
 
   const columns = [
@@ -35,17 +86,43 @@ export default function OverviewTab({ reports, reportName, rootPath, taskConfig,
       sortable: true,
       render: (row: Record<string, unknown>) => {
         const name = String(row.Dataset)
+        const datasetId = String(row.DatasetId)
+        const content = (
+          <>
+            <span className="block max-w-[72px] break-words sm:max-w-none">{name}</span>
+            <span className="mt-0.5 block text-[10px] text-[var(--text-muted)] sm:hidden">
+              {Number(row.Samples).toLocaleString()} {t('single.samples')}
+            </span>
+          </>
+        )
         if (onDatasetClick) {
           return (
             <button
-              onClick={() => onDatasetClick(name)}
+              onClick={() => onDatasetClick(datasetId)}
+              title={datasetId}
               className="text-[var(--accent)] hover:underline cursor-pointer bg-transparent border-none p-0 font-inherit text-left"
             >
-              {name}
+              {content}
             </button>
           )
         }
-        return name
+        return content
+      },
+    },
+    {
+      key: 'Metric',
+      label: t('reportDetail.metric'),
+      sortable: true,
+      render: (row: Record<string, unknown>) => {
+        const metricName = String(row.Metric ?? '')
+        return (
+          <span
+            className="truncate text-xs text-[var(--text-muted)] sm:text-sm"
+            title={metricName}
+          >
+            {String(row.MetricLabel || metricName)}
+          </span>
+        )
       },
     },
     {
@@ -53,23 +130,15 @@ export default function OverviewTab({ reports, reportName, rootPath, taskConfig,
       label: 'Score',
       sortable: true,
       render: (row: Record<string, unknown>) => {
-        const score = Number(row.Score)
-        const norm = score > 1 ? score / 100 : score
+        const score = row.Score == null ? null : Number(row.Score)
+        const metricName = String(row.Metric ?? '')
+        const semantics = row.Semantics as MetricSemantics | null
         return (
-          <div className="flex items-center gap-2">
-            <div className="h-1.5 w-[60px] min-w-[60px] rounded-full bg-[var(--border)] overflow-hidden">
-              <div
-                className="h-full rounded-full transition-all duration-300"
-                style={{
-                  width: `${Math.min(100, norm * 100)}%`,
-                  background: scoreColor(norm),
-                }}
-              />
-            </div>
-            <span className="font-mono font-medium tabular-nums" style={{ color: scoreColor(norm) }}>
-              {score.toFixed(4)}
-            </span>
-          </div>
+          <ScoreBar
+            score={score}
+            semantics={semantics}
+            ariaLabel={`${String(row.Dataset)} ${metricName}`}
+          />
         )
       },
     },
@@ -77,6 +146,8 @@ export default function OverviewTab({ reports, reportName, rootPath, taskConfig,
       key: 'Samples',
       label: 'Samples',
       sortable: true,
+      headerClassName: 'hidden sm:table-cell',
+      cellClassName: 'hidden sm:table-cell',
       render: (row: Record<string, unknown>) => (
         <span className="text-[var(--text-muted)]">{Number(row.Samples).toLocaleString()}</span>
       ),
@@ -88,21 +159,52 @@ export default function OverviewTab({ reports, reportName, rootPath, taskConfig,
       {/* Summary Stats */}
       <ReportSummaryStats reports={reports} />
 
-      {/* Scores Table */}
-      <Card title={t('single.datasetScoresTable')}>
-        <Table
-          columns={columns}
-          data={tableData}
-          defaultSort={{ key: 'Score', dir: 'desc' }}
-        />
-      </Card>
+      <Card title={t('single.datasetScores')}>
+        {canShowRadar && (
+          <div className="mb-4 flex justify-end">
+            <div className="inline-flex rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-deep)] p-1">
+              {([
+                ['table', t('single.tableView'), Table2],
+                ['radar', t('single.radarView'), Radar],
+              ] as const).map(([view, label, Icon]) => (
+                <button
+                  key={view}
+                  type="button"
+                  aria-pressed={scoreView === view}
+                  onClick={() => setScoreView(view)}
+                  className={`inline-flex min-h-9 items-center gap-1.5 rounded-[var(--radius-xs)] px-3 type-button-sm transition-colors ${
+                    scoreView === view
+                      ? 'bg-[var(--bg-card)] text-[var(--text)] shadow-[var(--shadow-sm)]'
+                      : 'text-[var(--text-muted)] hover:text-[var(--text)]'
+                  }`}
+                >
+                  <Icon size={14} aria-hidden="true" />
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
-      {/* Radar Chart */}
-      <PlotlyChart
-        src={getChartUrl(rootPath, 'radar', { reportName })}
-        height={400}
-        title={t('single.radarChart')}
-      />
+        {scoreView === 'radar' && canShowRadar ? (
+          <PlotlyChart
+            src={getCompareChartUrl(rootPath, [reportName], 'radar')}
+            height={400}
+            fallbackTable={{
+              columns: ['Dataset', 'Score', 'Samples'],
+              rows: tableData,
+              scoreColumns: ['Score'],
+            }}
+          />
+        ) : (
+          <Table
+            columns={columns}
+            data={tableData}
+            defaultSort={{ key: 'Score', dir: 'desc' }}
+            className="[&_th]:px-2 [&_td]:px-2 sm:[&_th]:px-4 sm:[&_td]:px-4"
+          />
+        )}
+      </Card>
 
       {/* Task Config */}
       {taskConfig && Object.keys(taskConfig).length > 0 && (

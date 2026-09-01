@@ -152,15 +152,91 @@ def format_example(
     return f'{question}\n{choices_text}\nANSWER: {answer.text}'
 
 
-def _fallback_parse_answer(completion: str) -> Optional[set[str]]:
+# The answer marker itself.  Locating markers separately from the label keeps a greedy label
+# pattern from swallowing the next marker, which would hide it from the scan below.
+_ANSWER_MARKER_RE = re.compile(r'(?i)ANSWER\s*:\s*\**\s*')
+_ANSWER_MARKER_ZH_RE = re.compile(r'答案\s*[:：]\s*\**\s*')
+
+# A label the model may wrap the way the options are printed, optionally listing several labels:
+# '(A)', '[A]', '(A, C)', '(A/C)'.  Only label-shaped content is accepted, so bracketed prose
+# such as '(see the diagram above)' and an echoed '[LETTER]' placeholder stay unparseable.
+_BRACKETED_LABEL_RE = re.compile(r'[\(\[（【]\s*([A-Za-z\d](?:\s*[,，/、]\s*[A-Za-z\d])*)\s*[\)\]）】]')
+
+_PLAIN_LABEL_RE = re.compile(r'([A-Za-z\d][A-Za-z\d ,/、]*)')
+_PLAIN_LABEL_ZH_RE = re.compile(r'([A-Za-z0-9][A-Za-z0-9,，]*)')
+
+_LABEL_TOKEN_RE = re.compile(r'[A-Za-z\d]+')
+
+# Words a model may place between two labels when listing several of them ('A and B').
+_LABEL_CONNECTORS = {'and', 'or'}
+_LABEL_CONNECTOR_RE = re.compile(r'\s+(?:and|or)\s+', re.IGNORECASE)
+
+
+def _fallback_parse_answer(completion: str, allowed_options: set[str]) -> Optional[set[str]]:
     # Fallback to find the last upper case letter
     for letter in reversed(completion):
         if letter.isupper():
-            return {letter}
+            # A letter that is not one of the sample's labels cannot be the model's choice, and
+            # returning it would record an answer the model never gave.  Reporting no answer
+            # scores the same (an invalid label never equals the target) and stays diagnosable.
+            return {letter} if letter in allowed_options else None
     return None
 
 
-def parse_answers(state: TaskState, multiple_correct: bool = False) -> set[str]:
+def _is_label_word(word: str, allowed_options: set[str]) -> bool:
+    return word in allowed_options or set(word).issubset(allowed_options)
+
+
+def _label_prefix(capture: str, allowed_options: set[str]) -> str:
+    """Leading part of a capture that holds nothing but labels of the current sample.
+
+    Models routinely justify the choice in the same breath ('ANSWER: B, not C'), and a
+    capture rejected as a whole loses the label with the prose: the reply then reaches
+    `_fallback_parse_answer`, which answers with the last capital - typically a distractor
+    named in that justification.  A connector between two labels ('A and B', 'A or B')
+    separates list items and is stepped over; a connector anywhere else ends the answer.
+    """
+    tokens = list(_LABEL_TOKEN_RE.finditer(capture))
+    end = 0
+    for i, token in enumerate(tokens):
+        word = token.group(0)
+        if _is_label_word(word, allowed_options):
+            end = token.end()
+            continue
+        # Skip a connector only when another label follows it, so prose such as
+        # 'B, not C' or 'B and that is why' cannot swallow later labels.
+        follows_label = end > 0
+        precedes_label = i + 1 < len(tokens) and _is_label_word(tokens[i + 1].group(0), allowed_options)
+        if follows_label and precedes_label and word.lower() in _LABEL_CONNECTORS:
+            continue
+        break
+    return capture[:end]
+
+
+def _last_labelled_answer(
+    text: str,
+    marker_re: re.Pattern,
+    plain_label_re: re.Pattern,
+    allowed_options: set[str],
+) -> Optional[str]:
+    """Label of the last answer marker that is actually followed by one.
+
+    Reasoning models restate the required format and revise themselves mid-thought, so an
+    earlier marker may carry an echoed placeholder or a choice the model went on to reject.
+    """
+    for marker in reversed(list(marker_re.finditer(text))):
+        tail = text[marker.end() :]
+        for label_re in (_BRACKETED_LABEL_RE, plain_label_re):
+            label = label_re.match(tail)
+            if label is None:
+                continue
+            prefix = _label_prefix(label.group(1), allowed_options)
+            if prefix:
+                return prefix
+    return None
+
+
+def parse_answers(state: TaskState, multiple_correct: bool = False, completion: Optional[str] = None) -> set[str]:
     """
     Convenience function for extracting answers from the state output.
 
@@ -170,54 +246,46 @@ def parse_answers(state: TaskState, multiple_correct: bool = False) -> set[str]:
 
     However, if the answer isn't in the expected format the model has
     failed in the task so we'll ultimately just mark it as incorrect
+
+    Args:
+        state: The task state holding the model output and the available choices.
+        multiple_correct: Whether more than one choice may be correct.
+        completion: Text to parse answers from. Defaults to the raw model completion;
+            callers inside `extract_answer` should pass the filtered prediction so that
+            configured filters (e.g. `remove_until`) actually take effect.
     """
-    # First check whether the string strictly ends with the expected answer
-    # In this case, we're looking for a single line which contains the expected
-    # ANSWER: <answer> string with only whitespace or a period/full stop at the end.
-    match = re.search(
-        r'(?i)^ANSWER\s*:\s*([A-Za-z\d ,]+)\s*(?:$|\n|\.)',
-        state.output.completion,
-        flags=re.MULTILINE,
-    )
+    text = state.output.completion if completion is None else completion
 
-    # If we couldn't match the strict version, we can try the less strict
-    # version for backward compatibility
-    if match is None:
-        match = re.search(
-            r'(?i)ANSWER\s*:\s*([A-Za-z\d ,]+)(?:[^\w]|\n|$|\.)',
-            state.output.completion,
-        )
+    allowed_options = set(answer_character(i) for i in range(len(state.choices)))
 
-    if match is None:
-        fallback_answer = _fallback_parse_answer(state.output.completion)
-        if fallback_answer:
-            return fallback_answer
+    matched = _last_labelled_answer(text, _ANSWER_MARKER_RE, _PLAIN_LABEL_RE, allowed_options)
 
-    if match is None:
-        return set()
-
-    matched = match.group(1)
+    if matched is None:
+        return _fallback_parse_answer(text, allowed_options) or set()
 
     # Strip trailing period / full stop
     matched = matched.strip()
     matched = matched.rstrip('.')
 
-    allowed_options = set(answer_character(i) for i in range(len(state.choices)))
-
     if multiple_correct:
         # Match must contain only the allowed choices
-        # (may be separated by commas, spaces, the word 'and', or nothing at all)
+        # (may be separated by commas, slashes, spaces, the words 'and'/'or', or nothing at all)
 
-        matched = matched.replace(' and ', '')
+        matched = _LABEL_CONNECTOR_RE.sub(',', matched)
 
         matched = matched.replace(' ', '')
+
+        # The label patterns also accept full-width separators, which the split below would
+        # otherwise keep inside the label and turn a valid multi-select answer into no answer.
+        matched = matched.replace('，', ',').replace('、', ',').replace('/', ',')
 
         split_comma = set(matched.split(','))
         if split_comma.issubset(allowed_options):
             answers = split_comma
             return answers
 
-        split_nothing = set(matched)
+        # 'AB,CD' also lists the labels one by one; split it into single characters.
+        split_nothing = set(matched.replace(',', ''))
         if split_nothing.issubset(allowed_options):
             answers = split_nothing
             return answers
@@ -231,28 +299,31 @@ def parse_answers(state: TaskState, multiple_correct: bool = False) -> set[str]:
     return set()
 
 
-def parse_answers_zh(state: TaskState, multiple_correct: bool = False) -> set[str]:
+def parse_answers_zh(state: TaskState, multiple_correct: bool = False, completion: Optional[str] = None) -> set[str]:
     """
     Convenience function for extracting answers from the state output in Chinese format.
 
     The generated response must be in the format '答案：选项',
     otherwise we can't extract what the model thinks is "true". We can be a
     bit flexible whether these are "AB" vs "A,B" vs "A B".
+
+    Args:
+        state: The task state holding the model output and the available choices.
+        multiple_correct: Whether more than one choice may be correct.
+        completion: Text to parse answers from. Defaults to the raw model completion;
+            callers inside `extract_answer` should pass the filtered prediction so that
+            configured filters (e.g. `remove_until`) actually take effect.
     """
-    # Simple pattern to capture answers with optional bold markdown
-    pattern = r'答案\s*[:：]\s*([A-Za-z0-9,，]+)'
-    match = re.search(pattern, state.output.completion, flags=re.MULTILINE)
+    text = state.output.completion if completion is None else completion
 
-    if match is None:
-        fallback_answer = _fallback_parse_answer(state.output.completion)
-        if fallback_answer:
-            return fallback_answer
-
-    if match is None:
-        return set()
-
-    matched = match.group(1).strip().rstrip('。.')
     allowed_options = set(answer_character(i) for i in range(len(state.choices)))
+
+    matched = _last_labelled_answer(text, _ANSWER_MARKER_ZH_RE, _PLAIN_LABEL_ZH_RE, allowed_options)
+
+    if matched is None:
+        return _fallback_parse_answer(text, allowed_options) or set()
+
+    matched = matched.strip().rstrip('。.')
 
     if multiple_correct:
         # Handle comma-separated or continuous letters

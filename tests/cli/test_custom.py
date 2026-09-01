@@ -33,7 +33,7 @@ class TestRunCustom(TestBenchmark):
                 'max_tokens': 4096,
             },
             'ignore_errors': False,
-            'judge_model_args': {
+            'judge': {'strategy': JudgeStrategy.LLM, 'models': {
                 'model_id': 'qwen-plus',
                 'api_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
                 'api_key': env.get('DASHSCOPE_API_KEY'),
@@ -41,8 +41,7 @@ class TestRunCustom(TestBenchmark):
                     'temperature': 0.0,
                     'max_tokens': 4096
                 },
-            },
-            'judge_strategy': JudgeStrategy.LLM,
+            }},
         }
 
 
@@ -118,18 +117,16 @@ class TestRunCustom(TestBenchmark):
             },
             model='qwen2.5-7b-instruct',
             limit=10,
-            judge_model_args={
-                'model_id': 'qwen2.5-72b-instruct',
+            judge={'strategy': JudgeStrategy.LLM, 'models': {
+                'model_id': 'qwen-plus',
                 'api_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
                 'api_key': env.get('DASHSCOPE_API_KEY'),
                 'generation_config': {
                     'temperature': 0.0,
                     'max_tokens': 4096
                 },
-                'score_type': 'numeric',
-            },
+            }, 'contract': {'score_type': 'numeric'}},
             eval_batch_size=5,
-            judge_strategy=JudgeStrategy.LLM,
         )
 
     def test_run_general_with_answer(self):
@@ -142,18 +139,16 @@ class TestRunCustom(TestBenchmark):
             },
             model='qwen-plus',
             limit=10,
-            judge_model_args={
-                'model_id': 'qwen2.5-72b-instruct',
+            judge={'strategy': JudgeStrategy.LLM, 'models': {
+                'model_id': 'qwen-plus',
                 'api_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
                 'api_key': env.get('DASHSCOPE_API_KEY'),
                 'generation_config': {
                     'temperature': 0.0,
                     'max_tokens': 4096
                 },
-                'score_type': 'pattern',
-            },
+            }, 'contract': {'score_type': 'pattern'}},
             eval_batch_size=1,
-            judge_strategy=JudgeStrategy.LLM,
         )
 
 
@@ -169,16 +164,16 @@ class TestRunCustom(TestBenchmark):
                             'report_path': 'outputs/20250819_165034/reports/qwen2.5-7b-instruct'
                         },
                         {
-                            'name': 'qwen2.5-72b',
-                            'report_path': 'outputs/20250819_164926/reports/qwen2.5-72b-instruct'
+                            'name': 'qwen-plus',
+                            'report_path': 'outputs/20250819_164926/reports/qwen-plus'
                         }
                     ],
-                    'baseline': 'qwen2.5-72b'
+                    'baseline': 'qwen-plus'
                 }
             },
             model_id='Arena',
             limit=10,
-            judge_model_args={
+            judge={'models': {
                 'model_id': 'qwen-plus',
                 'api_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
                 'api_key': env.get('DASHSCOPE_API_KEY'),
@@ -186,7 +181,7 @@ class TestRunCustom(TestBenchmark):
                     'temperature': 0.0,
                     'max_tokens': 8000
                 },
-            },
+            }},
             eval_batch_size=5,
         )
 

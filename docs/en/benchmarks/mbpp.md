@@ -37,7 +37,7 @@ MBPP (Mostly Basic Python Problems) is a benchmark consisting of approximately 1
 | **Dataset ID** | [google-research-datasets/mbpp](https://modelscope.cn/datasets/google-research-datasets/mbpp/summary) |
 | **Paper** | N/A |
 | **Tags** | `Coding` |
-| **Metrics** | `acc` |
+| **Metrics** | `accuracy` |
 | **Default Shots** | 3-shot |
 | **Evaluation Split** | `test` |
 | **Train Split** | `prompt` |
@@ -183,5 +183,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

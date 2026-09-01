@@ -42,6 +42,7 @@ Copious corpus is a gold standard corpus for biodiversity entity recognition, co
         train_split='train',
         eval_split='test',
         metric_list=['precision', 'recall', 'f1_score', 'accuracy'],
+        primary_metric='f1',
         prompt_template=PROMPT_TEMPLATE,
         few_shot_prompt_template=FEWSHOT_TEMPLATE,
     )
@@ -64,7 +65,7 @@ class CopiousAdapter(NERAdapter):
             'GEOGRAPHICAL_LOCATION': 'geographical_location',
             'HABITAT': 'habitat',
             'PERSON': 'person',
-            'TEMPORAL_EXPRESSION': 'temporal_expression'
+            'TEMPORAL_EXPRESSION': 'temporal_expression',
         }
 
         # Add descriptions for each entity type
@@ -98,8 +99,8 @@ class CopiousAdapter(NERAdapter):
                 'Spans of text referring to points in time. This includes specific dates '
                 '(e.g., "10 June 2013"), years, decades, seasons, and geochronological ages '
                 '(e.g., "late Pleistocene"). It excludes time-of-day information and dates '
-                'within a taxon name\'s authority.'
-            )
+                "within a taxon name's authority."
+            ),
         }
 
         # Setup entity mappings based on the defined entity types

@@ -1,19 +1,54 @@
 import base64
 import os
+import re
+from collections import defaultdict
+from typing import Any, Dict, List, Tuple
 
 from evalscope.api.dataset import Sample
 from evalscope.api.evaluator import TaskState
 from evalscope.api.messages.chat_message import ChatMessageUser
 from evalscope.api.messages.content import ContentImage
-from evalscope.api.metric import Score
+from evalscope.api.metric import AggScore, MetricIdentity, MetricKind, MetricSelector, SampleScore, Score
 from evalscope.api.model import ChatCompletionChoice, Model, ModelOutput
 from evalscope.api.registry import get_metric
 from evalscope.constants import EvalType, FileConstants
+from evalscope.metrics.semantics import get_semantics_resolver
+from evalscope.metrics.semantics.identity import canonicalize_producer_identity
 from evalscope.utils import get_logger
 from evalscope.utils.function_utils import thread_safe
+
 from .default_data_adapter import DefaultDataAdapter
 
 logger = get_logger()
+
+_METRIC_IDENTITIES_KEY = 'metric_identities'
+_DIMENSION_VALUE = re.compile(r'[^a-z0-9]+')
+
+T2I_REPORT_METRIC_NAMES = {
+    'BLIPv2Score': 'blipv2_score',
+    'CLIPScore': 'clipscore',
+    'FGA_BLIP2Score': 'fga_blip2_score',
+    'HPSv2.1Score': 'hps_v2_1_score',
+    'HPSv2Score': 'hpsv2_score',
+    'ImageRewardScore': 'image_reward_score',
+    'MPS': 'mps',
+    'PickScore': 'pick_score',
+    'VQAScore': 'vqa_model_score',
+}
+"""T2I scorer registry name -> canonical report metric name."""
+
+IMAGE_PAIR_REFERENCE_KEYS = (
+    'reference_image_path',
+    'target_image_path',
+    'ref_image_path',
+    'gt_image_path',
+    'ground_truth_image_path',
+    'reference_image',
+    'target_image',
+    'ref_image',
+    'gt_image',
+    'ground_truth_image',
+)
 
 
 class Text2ImageAdapter(DefaultDataAdapter):
@@ -21,24 +56,52 @@ class Text2ImageAdapter(DefaultDataAdapter):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        if self.primary_metric is None:
+            self._benchmark_meta.primary_metric = self._default_primary_metric()
 
-        self.add_aggregation_name = False  # Do not add aggregation name in the report by default
+    @staticmethod
+    def canonical_metric_name(metric_name: str) -> str:
+        """Return the report metric name produced by a T2I scorer."""
+        explicit = T2I_REPORT_METRIC_NAMES.get(metric_name)
+        if explicit is not None:
+            return explicit
+        return canonicalize_producer_identity(metric_name, 'identity').name
+
+    @staticmethod
+    def _dimension_value(value: Any) -> str:
+        """Normalize a dynamic category/component into a stable dimension value."""
+        return _DIMENSION_VALUE.sub('_', str(value).strip().lower()).strip('_')
+
+    def _default_primary_metric(self) -> MetricSelector | None:
+        """Select the first configured T2I metric with declared semantics."""
+        resolver = get_semantics_resolver()
+        for entry in self.metric_list:
+            scorer_name = entry if isinstance(entry, str) else next(iter(entry), '')
+            metric_name = self.canonical_metric_name(scorer_name)
+            identity = MetricIdentity(name=metric_name, aggregation='mean', dimensions={'scope': 'overall'})
+            if resolver.resolve(self.name, identity).semantics.kind is not MetricKind.DIAGNOSTIC:
+                return MetricSelector(name=metric_name, aggregation='mean', dimensions={'scope': 'overall'})
+        return None
 
     def load_from_disk(self, **kwargs):
         return super().load_from_disk(use_local_loader=True)
 
-    def record_to_sample(self, record) -> Sample:
+    def record_to_sample(self, record: Dict[str, Any]) -> Sample:
         """Convert a record dictionary to a Sample object."""
-        return Sample(
-            input=[ChatMessageUser(content=record['prompt'])],
-            metadata={
+        metadata = dict(record)
+        metadata.update(
+            {
                 'prompt': record['prompt'],
                 'category': record.get('category', ''),
                 'tags': record.get('tags', []),
-                FileConstants.ID: record[FileConstants.ID],
-                FileConstants.IMAGE_PATH: record.get(FileConstants.IMAGE_PATH,
-                                                     ''),  # Optional field for existing image path
+                FileConstants.ID: record.get(FileConstants.ID, ''),
+                FileConstants.IMAGE_PATH: record.get(FileConstants.IMAGE_PATH, ''),
             }
+        )
+        return Sample(
+            input=[ChatMessageUser(content=record['prompt'])],
+            target=self._record_reference_image(record),
+            metadata=metadata,
         )
 
     def _on_inference(self, model: Model, sample: Sample) -> ModelOutput:
@@ -89,7 +152,7 @@ class Text2ImageAdapter(DefaultDataAdapter):
                 completed=True,
             )
         else:
-            image_id = f'{sample.metadata.get(FileConstants.ID, sample.id)}_{sample.group_id}'
+            image_id = f'{sample.metadata.get(FileConstants.ID) or sample.id}_{sample.group_id}'
             output_path = os.path.join(output_dir, 'images', f'{image_id}.png')
             if not os.path.exists(os.path.dirname(output_path)):
                 os.makedirs(os.path.dirname(output_path))
@@ -117,9 +180,12 @@ class Text2ImageAdapter(DefaultDataAdapter):
         self, original_prediction: str, filtered_prediction: str, reference: str, task_state: TaskState
     ) -> Score:
         # Get prediction and prompt from task state
-        image_path = task_state.metadata.get(FileConstants.IMAGE_PATH, original_prediction)
-        prompt = task_state.input[0].content
-        meta = task_state.metadata
+        meta = task_state.metadata or {}
+        image_path = meta.get(FileConstants.IMAGE_PATH, original_prediction)
+        if isinstance(task_state.input, list) and task_state.input:
+            prompt = task_state.input[0].content
+        else:
+            prompt = task_state.input
 
         # Initialize the score object with prediction details
         score = Score(
@@ -129,6 +195,7 @@ class Text2ImageAdapter(DefaultDataAdapter):
 
         # Calculate scores for each configured metric
         for metric in self.metric_list:
+            metric_name = ''
             try:
                 if isinstance(metric, str):
                     metric_name = metric
@@ -139,20 +206,112 @@ class Text2ImageAdapter(DefaultDataAdapter):
                 metric_args = self.get_metric_args(metric_name)
                 metric_cls = get_metric(metric_name)
                 metric_func = metric_cls(**metric_args)
-                metric_score = metric_func(image_path, prompt)[0]
-
-                # fine-granular metrics
-                category = meta.get('category')
-                if category:
-                    metric_name = f'{metric_name}_{category}'
-                if isinstance(metric_score, dict):
-                    for k, v in metric_score.items():
-                        score.value[f'{metric_name}_{k}'] = v.cpu().item()
+                if self._is_image_pair_metric(metric_func):
+                    reference_image = self._resolve_reference_image(reference, meta, metric_name)
+                    metric_score = metric_func(image_path, reference_image)
                 else:
-                    score.value[metric_name] = metric_score.cpu().item()
+                    metric_score = metric_func(image_path, prompt)[0]
+
+                self._record_metric_result(score, metric_name, metric_score)
             except Exception as e:
                 logger.error(f'Error calculating metric {metric}: {e}')
-                score.value[metric_name] = 0
+                metric_name = self.canonical_metric_name(metric_name)
+                self._record_metric_result(score, metric_name, 0)
                 score.metadata[metric_name] = f'error: {str(e)}'
 
         return score
+
+    def _record_metric_result(self, score: Score, scorer_name: str, metric_score: Any) -> None:
+        """Store scorer output together with its canonical report identity."""
+        metric_name = self.canonical_metric_name(scorer_name)
+        identities = score.metadata.setdefault(_METRIC_IDENTITIES_KEY, {})
+
+        if not isinstance(metric_score, dict):
+            score.value[metric_name] = self._score_to_float(metric_score)
+            identities[metric_name] = {'name': metric_name, 'dimensions': {}}
+            return
+
+        for raw_component, value in metric_score.items():
+            component = self._dimension_value(raw_component)
+            dimensions = {} if component in {'overall', 'overall_score'} else {'component': component}
+            storage_key = metric_name if not dimensions else f'{metric_name}:{component}'
+            score.value[storage_key] = self._score_to_float(value)
+            identities[storage_key] = {'name': metric_name, 'dimensions': dimensions}
+
+    def aggregate_scores(self, sample_scores: List[SampleScore]) -> List[AggScore]:
+        """Aggregate T2I scores into canonical overall and category identities."""
+        grouped: Dict[Tuple[str, Tuple[Tuple[str, str], ...]], List[Tuple[float, Any]]] = defaultdict(list)
+
+        for sample_score in sample_scores:
+            metadata = sample_score.score.metadata or {}
+            identities = metadata.get(_METRIC_IDENTITIES_KEY, {})
+            category = self._dimension_value((sample_score.sample_metadata or {}).get('category', ''))
+
+            for storage_key, value in sample_score.score.value.items():
+                descriptor = identities.get(storage_key)
+                if descriptor is None:
+                    identity = canonicalize_producer_identity(storage_key, 'mean')
+                    metric_name = identity.name
+                    dimensions = dict(identity.dimensions)
+                else:
+                    metric_name = descriptor['name']
+                    dimensions = dict(descriptor.get('dimensions') or {})
+
+                overall_dimensions = dimensions if 'component' in dimensions else {**dimensions, 'scope': 'overall'}
+                grouped[(metric_name, tuple(sorted(overall_dimensions.items())))].append(
+                    (float(value), sample_score.sample_id)
+                )
+                if category:
+                    category_dimensions = {**dimensions, 'category': category}
+                    grouped[(metric_name, tuple(sorted(category_dimensions.items())))].append(
+                        (float(value), sample_score.sample_id)
+                    )
+
+        return [
+            AggScore(
+                metric_name=metric_name,
+                aggregation='mean',
+                dimensions=dict(dimensions),
+                score=sum(value for value, _ in values) / len(values),
+                num=len(values),
+                ids=[sample_id for _, sample_id in values],
+            )
+            for (metric_name, dimensions), values in grouped.items()
+        ]
+
+    @staticmethod
+    def _record_reference_image(record: Dict[str, Any]) -> str:
+        for key in IMAGE_PAIR_REFERENCE_KEYS:
+            value = record.get(key)
+            if isinstance(value, str) and value:
+                return value
+        target = record.get('target', '')
+        return target if isinstance(target, str) else ''
+
+    @staticmethod
+    def _is_image_pair_metric(metric_func: Any) -> bool:
+        return bool(getattr(metric_func, 'image_pair_metric', False))
+
+    @staticmethod
+    def _resolve_reference_image(reference: Any, metadata: Dict[str, Any], metric_name: str) -> Any:
+        for key in IMAGE_PAIR_REFERENCE_KEYS:
+            value = metadata.get(key)
+            if not Text2ImageAdapter._is_empty_image_value(value):
+                return value
+        if not Text2ImageAdapter._is_empty_image_value(reference):
+            return reference
+        raise ValueError(
+            f'Metric {metric_name} requires a reference image. Provide one of: {", ".join(IMAGE_PAIR_REFERENCE_KEYS)}.'
+        )
+
+    @staticmethod
+    def _is_empty_image_value(value: Any) -> bool:
+        return value is None or (isinstance(value, str) and value.strip() == '')
+
+    @staticmethod
+    def _score_to_float(value: Any) -> float:
+        if hasattr(value, 'cpu') and hasattr(value, 'item'):
+            return float(value.cpu().item())
+        if hasattr(value, 'item'):
+            return float(value.item())
+        return float(value)

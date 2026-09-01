@@ -13,6 +13,7 @@
 <a href="https://badge.fury.io/py/evalscope"><img src="https://badge.fury.io/py/evalscope.svg" alt="PyPI version" height="18"></a>
 <a href="https://pypi.org/project/evalscope"><img alt="PyPI - Downloads" src="https://static.pepy.tech/badge/evalscope"></a>
 <a href="https://github.com/modelscope/evalscope/pulls"><img src="https://img.shields.io/badge/PR-welcome-55EB99.svg"></a>
+<a href="https://github.com/modelscope/evalscope"><img alt="GitHub stars" src="https://img.shields.io/github/stars/modelscope/evalscope?style=flat&logo=github"></a>
 <a href='https://evalscope.readthedocs.io/en/latest/?badge=latest'><img src='https://readthedocs.org/projects/evalscope/badge/?version=latest' alt='Documentation Status' /></a>
 <p>
 
@@ -39,7 +40,7 @@ evalscope eval --model your-model-name --api-url $OPENAI_API_BASE_URL --api-key 
 - **🚀 Multi-backend Integration**: Seamlessly integrates multiple evaluation backends including OpenCompass, VLMEvalKit, RAGEval to meet different evaluation needs.
 - **🤖 Agent Evaluation Mode**: Drives benchmarks (e.g. GSM8K, AIME, SWE-bench Agentic) inside a controlled multi-turn AgentLoop with pluggable strategies, tools and Docker sandbox; full per-sample Agent Trace is recorded and visualizable.
 - **⚡ Inference Performance Testing**: Provides powerful model service stress testing tools, supporting multiple performance metrics such as TTFT, TPOT.
-- **📊 Interactive Reports**: Provides WebUI visualization interface, supporting multi-dimensional model comparison, report overview and detailed inspection.
+- **📊 Interactive Reports**: Provides a Web Dashboard for multi-dimensional model comparison, report overview and detailed inspection.
 - **⚔️ Arena Mode**: Supports multi-model battles (Pairwise Battle), intuitively ranking and evaluating models.
 - **🔧 Highly Extensible**: Developers can easily add custom datasets, models and evaluation metrics.
 
@@ -74,22 +75,31 @@ For details, please refer to [📖 Visualizing Evaluation Results](https://evals
 
 ## 🎉 What's New
 
+- 🔥 **[2026.08.24] v1.11.0** Introduced published evaluation versions for reproducible benchmark results; improved report semantics and incomplete-run handling; strengthened multimodal media loading and task-config validation.
+- 🔥 **[2026.08.13]** Improved evaluation reports with unified metric semantics and more reliable Agent Trace step grouping and tool-call/result linking.
+- 🔥 **[2026.08.10]** Added **AutomationBench**, **JobBench**, **MiniWoB**, **OmniDocBench-v1.6**, **PerceptionBench**, **ScreenSpot-Pro**, **PLawBench**, **PMC-VQA**, **HiPhO**, **LogicVista**, and **CC-OCR-V2** benchmarks.
+- 🔥 **[2026.07.21]** Added **Claw-Eval**, **ResearchRubrics**, **Toolathlon** (agent), **TVBench** (video), **WideSearch**, and **PerspectiveGap** benchmarks.
+- 🔥 **[2026.07.03]** Added **CharXiv** & **BabyVision** (chart understanding, visual cognition) and **ERQA** & **WorldVQA** (entity-recognition QA with LLM-judge + CoT) multimodal benchmarks.
+- 🔥 **[2026.06.23]** Major agent & code evaluation expansion: added **BigCodeBench**, **SWE-bench Multilingual**, **BrowseComp**, **MCP-Atlas**, **GDPval** benchmarks; added **OpenCode** / **OpenHands** runners; refactored adapter architecture with `AudioLanguageAdapter`, unified `FunctionCallAdapter`, and public `run_agent_loop` API.
+- 🔥 **[2026.06.16]** Added full-reference **image quality metrics** (SSIM, PSNR, etc.), long-context benchmarks (**LoCoMo QA**, **LongMemEval**), **Caption** & **Maritime-OCR-Bench** benchmarks; perf module now supports unified `--data-source` and parallelized request generation.
+- 🔥 **[2026.06.02]** Refactored **RAG evaluation** module: upgraded to MTEB 2.x and RAGAS 0.4.x, with unified Pydantic-based configs. See the [RAGEval guide](https://evalscope.readthedocs.io/en/latest/user_guides/backend/rageval_backend/index.html).
 - 🔥 **[2026.05.27]** Added **Trie agentic trace replay** for perf benchmarking: three new dataset plugins (`trie_agentic_coding` / `trie_code_qa` / `trie_office_work`) replay real multi-turn agent traces with per-turn token caps and tool-call latency simulation. Also introduced a `--duration` wall-clock budget for all benchmark modes and a `Turn` dataclass for per-turn overrides.
-- 🔥 **[2026.05.27]** Added **Vendor Verifier benchmarks** (`k2_verifier`, `kimi_verifier`, `minimax_verifier`) for validating whether third-party API deployments faithfully reproduce official model behavior, with a shared `VendorVerifierAdapter` base class.
+- 🔥 **[2026.05.27]** Added **Vendor Verifier benchmarks** (`k2_verifier`, `kimi_verifier`, `minimax_verifier`) for validating whether third-party API deployments faithfully reproduce official model behavior, with a shared `FunctionCallAdapter` base class.
 - 🔥 **[2026.05.26]** Added the [GAIA](https://evalscope.readthedocs.io/en/latest/third_party/gaia.html) agent benchmark (multi-turn ReAct + `bash` in a Docker sandbox, official rule-based scorer) and generic [MCP server](https://evalscope.readthedocs.io/en/latest/user_guides/agent/native.html#mcp-server-tools) support — any `NativeAgentConfig`-driven benchmark can now plug in stdio / HTTP / SSE MCP servers (`fetch`, web search, GitHub, ...) without per-benchmark wiring.
 - 🔥 **[2026.05.22]** Introduced the **External Agent Bridge** mode: evaluate off-the-shelf agent CLIs such as Anthropic's [Claude Code](https://github.com/anthropics/claude-code) and OpenAI's [Codex](https://github.com/openai/codex) directly through EvalScope. The bridge transparently forwards each CLI's LLM traffic (Anthropic Messages / OpenAI Chat / OpenAI Responses, including SSE streaming) to your evaluation model, while recording the full trajectory as an `agent_trace`. Bring-your-own-runner via `@register_runner`. See the [External Agent Bridge guide](https://evalscope.readthedocs.io/en/latest/user_guides/agent/bridge.html).
 - 🔥 **[2026.05.19]** Added support for [SWE-bench_Pro](https://evalscope.readthedocs.io/en/latest/third_party/swe_bench_pro.html) and [τ³-bench](https://evalscope.readthedocs.io/en/latest/third_party/tau3_bench.html): SWE-bench_Pro is a more challenging multilingual long-horizon software-engineering benchmark from Scale AI (recommended over the original SWE-bench for less data contamination and broader language coverage; per-instance Docker images are pulled directly from DockerHub, no local image build required); τ³-bench is the v1.0.0 release of the tau-bench family, extending τ²-bench with a new `banking_knowledge` retrieval domain (RAG), 75+ task fixes across existing domains, and pluggable retrieval pipelines (BM25 / embeddings / rerankers / sandbox shell).
+
+<details><summary>More historical updates</summary>
+
 - 🔥 **[2026.05.15]** Introduced **Agent Evaluation Mode**: any benchmark based on `DefaultDataAdapter` (GSM8K, AIME, IFEval, etc.) can now be driven through a multi-turn AgentLoop with pluggable strategies (`function_calling` / `react` / `swe_bench_*`), tools (`bash` / `python_exec` / `submit`) and `local` / `docker` environments. Per-sample `agent_trace` is recorded and rendered step-by-step in the dashboard's Predictions tab. See the [Agent Evaluation guide](https://evalscope.readthedocs.io/en/latest/user_guides/agent/native.html) for details.
 - 🔥 **[2026.05.08]** Partnered with [LightSeek](https://lightseek.org/) to launch [TokenSpeed](https://lightseek.org/blog/lightseek-tokenspeed.html), a speed-of-light LLM inference engine for agentic workloads. EvalScope provides the SWE-smith benchmarking pipeline — using real coding-agent traces to measure per-GPU throughput (TPM) and per-user latency (TPS) — serving as the official benchmark tool for TokenSpeed performance evaluation. Refer to the [SWE-smith usage guide](https://evalscope.readthedocs.io/en/latest/user_guides/stress_test/multi_turn.html#swe-smith) to get started.
+
 - 🔥 **[2026.05.07]** Replaced the Gradio-based WebUI with a new React + Vite web interface for better performance and user experience.
 - 🔥 **[2026.04.23]** Added support for recording performance (perf) metrics during evaluation tasks, enabling simultaneous tracking of model accuracy and inference efficiency metrics such as TTFT, TPOT, and throughput in a single evaluation run.
 - 🔥 **[2026.04.17]** Added support for multi-turn conversation performance stress testing, enabling load testing of dialogue-based model services with multi-turn context. Refer to the [usage documentation](https://evalscope.readthedocs.io/en/latest/user_guides/stress_test/examples.html).
 - 🔥 **[2026.04.10]** Added support for [TIR-Bench](https://arxiv.org/abs/2511.01833) (Thinking-with-Images Reasoning Benchmark), a multimodal benchmark evaluating agentic visual reasoning capabilities of vision-language models.
 - 🔥 **[2026.03.24]** Added support for Agent Skill. Any agent model that supports Skill/Tool calling can use natural language to drive EvalScope for model evaluation, performance benchmarking, and result visualization.
 - 🔥 **[2026.03.09]** Added support for evaluation progress tracking and HTML format visualization report generation.
-
-<details><summary>More historical updates</summary>
-
 - 🔥 **[2026.03.02]** Added support for Anthropic Claude API evaluation. Use `--eval-type anthropic_api` to evaluate models via Anthropic API service.
 - 🔥 **[2026.02.03]** Comprehensive update to dataset documentation, adding data statistics, data samples, usage instructions and more.
 - 🔥 **[2026.01.13]** Added support for Embedding and Rerank model service stress testing.
@@ -243,15 +253,15 @@ run_task(task_cfg="config.yaml")
 ### Output Results
 After evaluation completion, you will see a report in the terminal in the following format:
 ```text
-+-----------------------+----------------+-----------------+-----------------+---------------+-------+---------+
-| Model Name            | Dataset Name   | Metric Name     | Category Name   | Subset Name   |   Num |   Score |
-+=======================+================+=================+=================+===============+=======+=========+
-| Qwen2.5-0.5B-Instruct | gsm8k          | AverageAccuracy | default         | main          |     5 |     0.4 |
-+-----------------------+----------------+-----------------+-----------------+---------------+-------+---------+
-| Qwen2.5-0.5B-Instruct | ai2_arc        | AverageAccuracy | default         | ARC-Easy      |     5 |     0.8 |
-+-----------------------+----------------+-----------------+-----------------+---------------+-------+---------+
-| Qwen2.5-0.5B-Instruct | ai2_arc        | AverageAccuracy | default         | ARC-Challenge |     5 |     0.4 |
-+-----------------------+----------------+-----------------+-----------------+---------------+-------+---------+
+┌───────────────────────┬───────────┬────────────┬───────────────┬───────┬─────────┐
+│ Model                 │ Dataset   │ Metric     │ Subset        │   Num │ Score   │
+├───────────────────────┼───────────┼────────────┼───────────────┼───────┼─────────┤
+│ Qwen2.5-0.5B-Instruct │ gsm8k     │ Accuracy ↑ │ main          │     5 │ 40%     │
+├───────────────────────┼───────────┼────────────┼───────────────┼───────┼─────────┤
+│ Qwen2.5-0.5B-Instruct │ arc       │ Accuracy ↑ │ ARC-Easy      │     5 │ 80%     │
+├───────────────────────┼───────────┼────────────┼───────────────┼───────┼─────────┤
+│ Qwen2.5-0.5B-Instruct │ arc       │ Accuracy ↑ │ ARC-Challenge │     5 │ 40%     │
+└───────────────────────┴───────────┴────────────┴───────────────┴───────┴─────────┘
 ```
 
 **Launch the visualization dashboard**:
@@ -337,7 +347,7 @@ EvalScope supports launching evaluation tasks through third-party evaluation fra
 
 2.  **Core Functions**
     - **Multi-backend Evaluation**: Native backend, OpenCompass, MTEB, VLMEvalKit, RAGAS
-    - **Performance Monitoring**: Supports multiple model service APIs and data formats, tracking TTFT/TPOP and other metrics
+    - **Performance Monitoring**: Supports multiple model service APIs and data formats, tracking TTFT/TPOT and other metrics
     - **Tool Extensions**: Integrates Tool-Bench, Needle-in-a-Haystack, etc.
 
 3.  **Output Layer**
@@ -353,7 +363,7 @@ Welcome to join our community to communicate with other developers and get help.
 
 [Discord Group](https://discord.gg/xc66bMxc4h)              |  WeChat Group | DingTalk Group
 :-------------------------:|:-------------------------:|:-------------------------:
-<img src="docs/asset/discord_qr.png" width="160" height="160">  |  <img src="docs/asset/wechat.png" width="160" height="160"> | <img src="docs/asset/dingding.png" width="160" height="160">
+<img src="docs/asset/discord_qr.png" width="160" height="160">  |  <img src="https://raw.githubusercontent.com/modelscope/ms-swift/main/asset/wechat.png" width="160" height="160"> | <img src="docs/asset/dingding.png" width="160" height="160">
 
 ## 👷‍♂️ Contributing
 
@@ -382,7 +392,3 @@ If you use EvalScope in your research, please cite our work:
     url={https://github.com/modelscope/evalscope}
 }
 ```
-
-## ⭐ Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=modelscope/evalscope&type=Date)](https://star-history.com/#modelscope/evalscope&Date)

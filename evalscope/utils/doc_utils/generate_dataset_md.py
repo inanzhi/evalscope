@@ -10,10 +10,12 @@ This module provides functions for:
 Note: This is a library module. CLI operations are handled by evalscope benchmark-info command.
 """
 
+import copy
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union
 
 from evalscope.utils.io_utils import current_time
+
 from . import (
     BENCHMARK_META_DIR,
     BENCHMARK_README_DIR_EN,
@@ -26,6 +28,9 @@ from . import (
 )
 from .readme_generator import _format_sample_count, _format_tags, generate_readme_from_dict
 
+if TYPE_CHECKING:
+    from evalscope.api.benchmark import BenchmarkMeta, DataAdapter
+
 # =============================================================================
 # Localization Dictionaries
 # =============================================================================
@@ -34,26 +39,14 @@ from .readme_generator import _format_sample_count, _format_tags, generate_readm
 def get_index_locale(category: str, lang: str) -> Dict[str, str]:
     """Get localized strings for index page."""
     locale = {
-        'title': {
-            'zh': f'{category}评测集',
-            'en': f'{category} Benchmarks'
-        },
+        'title': {'zh': f'{category}评测集', 'en': f'{category} Benchmarks'},
         'intro': {
             'zh': f'以下是支持的{category}评测集列表，点击数据集名称可查看详细信息。',
-            'en': f'Below is the list of supported {category} benchmarks. Click on a benchmark name for details.'
+            'en': f'Below is the list of supported {category} benchmarks. Click on a benchmark name for details.',
         },
-        'name': {
-            'zh': '数据集名称',
-            'en': 'Benchmark Name'
-        },
-        'pretty_name': {
-            'zh': '标准名称',
-            'en': 'Pretty Name'
-        },
-        'tags': {
-            'zh': '任务类别',
-            'en': 'Task Categories'
-        },
+        'name': {'zh': '数据集名称', 'en': 'Benchmark Name'},
+        'pretty_name': {'zh': '标准名称', 'en': 'Pretty Name'},
+        'tags': {'zh': '任务类别', 'en': 'Task Categories'},
     }
     return {k: v[lang] for k, v in locale.items()}
 
@@ -111,13 +104,15 @@ def generate_index_table(
         lines.append(f'| `{name}` | [{pretty_name}]({readme_link}) | {tags} |')
 
     # Add hidden toctree to include all benchmark documents in the directory tree
-    lines.extend([
-        '',
-        ':::{toctree}',
-        ':hidden:',
-        ':maxdepth: 1',
-        '',
-    ])
+    lines.extend(
+        [
+            '',
+            ':::{toctree}',
+            ':hidden:',
+            ':maxdepth: 1',
+            '',
+        ]
+    )
 
     # Add all benchmark files to toctree
     for benchmark in benchmarks:
@@ -143,14 +138,20 @@ def get_category_from_adapter_class(adapter_cls) -> str:
     Returns:
         Category string: 'aigc', 'vlm', 'agent', 'llm', or 'unknown'
     """
-    from evalscope.api.benchmark import AgentAdapter, ImageEditAdapter, Text2ImageAdapter, VisionLanguageAdapter
+    from evalscope.api.benchmark import (
+        AgentAdapter,
+        AudioLanguageAdapter,
+        ImageEditAdapter,
+        Text2ImageAdapter,
+        VisionLanguageAdapter,
+    )
 
     if adapter_cls is None:
         return 'unknown'
     try:
         if issubclass(adapter_cls, (Text2ImageAdapter, ImageEditAdapter)):
             return 'aigc'
-        elif issubclass(adapter_cls, VisionLanguageAdapter):
+        elif issubclass(adapter_cls, (VisionLanguageAdapter, AudioLanguageAdapter)):
             return 'vlm'
         elif issubclass(adapter_cls, AgentAdapter):
             return 'agent'
@@ -193,9 +194,22 @@ def get_adapters():
 
 def extract_adapter_meta(adapter) -> Dict[str, Any]:
     """Extract metadata from a DataAdapter instance."""
-    meta = adapter._benchmark_meta
-    return {
-        'pretty_name': getattr(meta, 'pretty_name', None) or adapter.name,
+    return extract_benchmark_meta(adapter._benchmark_meta, adapter.__class__)
+
+
+def extract_benchmark_meta(meta: 'BenchmarkMeta', adapter_cls: Optional[Type['DataAdapter']]) -> Dict[str, Any]:
+    """Extract documentation metadata without instantiating the adapter."""
+    from evalscope.api.benchmark.adapters import AgentLoopAdapter
+
+    serialized_primary_metric = meta.to_dict().get('primary_metric')
+    agent_config = None
+    if adapter_cls is not None and issubclass(adapter_cls, AgentLoopAdapter):
+        agent_config = {
+            'strategy': adapter_cls.strategy_name,
+            'max_steps': adapter_cls.max_steps_default,
+        }
+    adapter_meta = {
+        'pretty_name': getattr(meta, 'pretty_name', None) or meta.name,
         'dataset_id': getattr(meta, 'dataset_id', ''),
         'paper_url': getattr(meta, 'paper_url', None),
         'tags': list(getattr(meta, 'tags', [])) if getattr(meta, 'tags', None) else [],
@@ -211,11 +225,16 @@ def extract_adapter_meta(adapter) -> Dict[str, Any]:
         'aggregation': getattr(meta, 'aggregation', 'mean') or 'mean',
         'extra_params': dict(getattr(meta, 'extra_params', {})) if getattr(meta, 'extra_params', None) else {},
         'sandbox_config': dict(getattr(meta, 'sandbox_config', {})) if getattr(meta, 'sandbox_config', None) else {},
-        'category': get_adapter_category(adapter),
+        'category': get_category_from_adapter_class(adapter_cls),
     }
+    if serialized_primary_metric is not None:
+        adapter_meta['primary_metric'] = serialized_primary_metric
+    if agent_config is not None:
+        adapter_meta['agent_config'] = agent_config
+    return adapter_meta
 
 
-def compute_adapter_statistics(adapter) -> Dict[str, Any]:
+def compute_adapter_statistics(adapter) -> Optional[Dict[str, Any]]:
     """Compute statistics for a DataAdapter (all samples are included)."""
     from evalscope.utils.doc_utils.benchmark_stats import compute_benchmark_statistics
 
@@ -224,12 +243,15 @@ def compute_adapter_statistics(adapter) -> Dict[str, Any]:
         return stats.to_dict()
     except Exception as e:
         print(f'Warning: Failed to compute statistics for {adapter.name}: {e}')
-        return {}
+        return None
 
 
-def get_adapter_sample_example(adapter, max_length: int = 500) -> Dict[str, Any]:
+def get_adapter_sample_example(adapter, max_length: int = 500) -> Optional[Dict[str, Any]]:
     """Get sample example from a DataAdapter."""
     from evalscope.utils.doc_utils.benchmark_stats import get_sample_example
+
+    if getattr(adapter, '_suppress_doc_sample_example', False):
+        return {}
 
     try:
         example = get_sample_example(adapter, max_length=max_length)
@@ -241,6 +263,7 @@ def get_adapter_sample_example(adapter, max_length: int = 500) -> Dict[str, Any]
             }
     except Exception as e:
         print(f'Warning: Failed to get sample example for {adapter.name}: {e}')
+        return None
     return {}
 
 
@@ -268,6 +291,7 @@ def update_benchmark_data(
         Updated benchmark data dict
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
+
     from tqdm import tqdm
 
     from evalscope.api.registry import BENCHMARK_REGISTRY
@@ -302,6 +326,7 @@ def update_benchmark_data(
             return (name, result, None)
         except Exception as e:
             import traceback
+
             error_msg = f'{e}\n{traceback.format_exc()}'
             return (name, None, error_msg)
 
@@ -338,10 +363,11 @@ def _update_single_benchmark(
     Returns:
         Updated benchmark entry or None if failed
     """
-    from evalscope.api.registry import get_benchmark
+    from evalscope.api.registry import BENCHMARK_REGISTRY, get_benchmark
 
     try:
-        adapter = get_benchmark(name)
+        metadata = copy.deepcopy(BENCHMARK_REGISTRY.lookup(name))
+        adapter = get_benchmark(name) if compute_stats else None
         # Load single benchmark data
         single_data = load_benchmark_data(name)
         entry = single_data[name]
@@ -350,7 +376,7 @@ def _update_single_benchmark(
         has_changes = False
 
         # Check if metadata has changed
-        new_meta = extract_adapter_meta(adapter)
+        new_meta = extract_benchmark_meta(metadata, metadata.data_adapter)
         old_meta = entry.get('meta', {})
         if new_meta != old_meta:
             entry['meta'] = new_meta
@@ -362,10 +388,15 @@ def _update_single_benchmark(
         # Compute statistics if requested and not exists (or forced)
         if compute_stats and (force or not entry.get('statistics')):
             print(f'  [{name}] Computing statistics...')
-            entry['statistics'] = compute_adapter_statistics(adapter)
-            entry['sample_example'] = get_adapter_sample_example(adapter)
-            has_changes = True
-            print(f'  [{name}] Statistics computed')
+            statistics = compute_adapter_statistics(adapter)
+            sample_example = get_adapter_sample_example(adapter)
+            if statistics is None or sample_example is None:
+                print(f'  [{name}] Statistics failed; keeping the existing cache')
+            else:
+                entry['statistics'] = statistics
+                entry['sample_example'] = sample_example
+                has_changes = True
+                print(f'  [{name}] Statistics computed')
         elif not compute_stats:
             print(f'  [{name}] Skipping statistics computation')
         else:
@@ -412,6 +443,7 @@ def _update_single_benchmark(
     except Exception as e:
         print(f'Error updating {name}: {e}')
         import traceback
+
         traceback.print_exc()
         raise
 
@@ -421,7 +453,7 @@ def _update_single_benchmark(
 # =============================================================================
 
 
-def generate_docs(data: Optional[Dict[str, Any]] = None):
+def generate_docs(data: Optional[Dict[str, Any]] = None) -> None:
     """
     Generate all documentation from persisted benchmark data.
 
@@ -434,6 +466,12 @@ def generate_docs(data: Optional[Dict[str, Any]] = None):
     if not data:
         print('No benchmark data found. Run `evalscope benchmark-info --all --update` first.')
         return
+
+    def write_markdown(path: Any, content: str) -> None:
+        """Write generated markdown with exactly one trailing newline."""
+        content = '\n'.join(line.rstrip() for line in content.splitlines())
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(content.rstrip() + '\n')
 
     # Create output directories
     BENCHMARK_README_DIR_ZH.mkdir(parents=True, exist_ok=True)
@@ -470,26 +508,22 @@ def generate_docs(data: Optional[Dict[str, Any]] = None):
             en_content = readme.get('en', '')
             if en_content:
                 readme_path = BENCHMARK_README_DIR_EN / f'{name}.md'
-                with open(readme_path, 'w', encoding='utf-8') as f:
-                    f.write(en_content)
+                write_markdown(readme_path, en_content)
 
             # Chinese README (use translated version if available, else English)
             zh_content = readme.get('zh', '') or en_content
             if zh_content:
                 readme_path = BENCHMARK_README_DIR_ZH / f'{name}.md'
-                with open(readme_path, 'w', encoding='utf-8') as f:
-                    f.write(zh_content)
+                write_markdown(readme_path, zh_content)
 
         # Generate index pages
         index_zh = generate_index_table(benchmarks, category_upper, 'zh')
         index_en = generate_index_table(benchmarks, category_upper, 'en')
 
         # Write index pages
-        with open(INDEX_DIR_ZH / f'{category}.md', 'w', encoding='utf-8') as f:
-            f.write(index_zh)
+        write_markdown(INDEX_DIR_ZH / f'{category}.md', index_zh)
 
-        with open(INDEX_DIR_EN / f'{category}.md', 'w', encoding='utf-8') as f:
-            f.write(index_en)
+        write_markdown(INDEX_DIR_EN / f'{category}.md', index_en)
 
         print(f'  {category_upper}: {len(benchmarks)} benchmarks')
 

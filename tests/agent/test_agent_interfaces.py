@@ -28,12 +28,14 @@ from evalscope.api.agent import (
     ToolExecutor,
     ToolHandler,
     ToolSchemaMode,
+    TurnOutcome,
 )
 from evalscope.api.registry import (
     AGENT_TOOL_REGISTRY,
     ENVIRONMENT_REGISTRY,
     STRATEGY_REGISTRY,
     get_agent_tool,
+    get_environment,
     get_strategy,
     list_agent_tools,
     list_environments,
@@ -56,6 +58,16 @@ class TestAgentApiSurface(unittest.TestCase):
         self.assertIsInstance(EventType.MODEL_GENERATE, EventType)
         # ToolSchemaMode 是 Literal, 仅保证可引用.
         self.assertEqual(ToolSchemaMode.__args__, ('function_calling', 'textual_block', 'none'))
+
+    def test_agent_environment_requires_exec_implementation(self):
+
+        class _IncompleteEnvironment(AgentEnvironment):
+
+            async def close(self):
+                pass
+
+        with self.assertRaises(TypeError):
+            _IncompleteEnvironment()
 
 
 class TestRegistryUnification(unittest.TestCase):
@@ -108,6 +120,23 @@ class TestRegistryUnification(unittest.TestCase):
         finally:
             ENVIRONMENT_REGISTRY.pop('_unit_env', None)
 
+        @register_environment('_legacy_env')
+        class _LegacyEnv(AgentEnvironment):
+            name = '_legacy_env'
+
+            async def exec(self, cmd, *, cwd=None, input=None, timeout=None, env=None):
+                raise NotImplementedError
+
+            async def close(self):
+                pass
+
+        try:
+            self.assertIs(get_environment('_legacy_env'), _LegacyEnv)
+            self.assertIn('_legacy_env', list_environments())
+            self.assertIs(ENVIRONMENT_REGISTRY, ENVIRONMENT_REGISTRY)
+        finally:
+            ENVIRONMENT_REGISTRY.pop('_legacy_env', None)
+
         @register_agent_tool('_unit_tool')
         async def _tool_handler(call, env):
             return 'ok'
@@ -134,12 +163,23 @@ class TestAgentTypesBehavior(unittest.TestCase):
         self.assertEqual(cfg.strategy, 'function_calling')
         self.assertEqual(cfg.tools, [])
         self.assertEqual(cfg.max_steps, 10)
+        self.assertIsNone(cfg.command_timeout)
         self.assertIsNone(cfg.environment)
+        self.assertEqual(cfg.environment_extra, {})
         self.assertEqual(cfg.kwargs, {})
 
     def test_agent_config_dict_validate(self):
-        cfg = NativeAgentConfig.model_validate({'strategy': 'function_calling', 'max_steps': 5})
+        cfg = NativeAgentConfig.model_validate({'strategy': 'function_calling', 'max_steps': 5, 'command_timeout': 180})
         self.assertEqual(cfg.max_steps, 5)
+        self.assertEqual(cfg.command_timeout, 180)
+
+    def test_agent_config_rejects_invalid_command_timeout(self):
+        with self.assertRaises(ValueError):
+            NativeAgentConfig(command_timeout=0)
+
+    def test_agent_config_rejects_invalid_max_steps(self):
+        with self.assertRaises(ValueError):
+            NativeAgentConfig(max_steps=0)
 
     def test_parsed_action_dataclass_defaults(self):
         pa = ParsedAction()
@@ -147,6 +187,27 @@ class TestAgentTypesBehavior(unittest.TestCase):
         self.assertIsNone(pa.final_answer)
         self.assertIsNone(pa.error)
         self.assertIsNone(pa.raw_text)
+
+    def test_parsed_action_outcome_act(self):
+        from evalscope.api.tool import ToolCall, ToolFunction
+        call = ToolCall(id='c1', function=ToolFunction(name='bash', arguments={}))
+        self.assertIs(ParsedAction(tool_calls=[call]).outcome, TurnOutcome.ACT)
+
+    def test_parsed_action_outcome_malformed(self):
+        self.assertIs(ParsedAction(error='one block only', raw_text='prose').outcome, TurnOutcome.MALFORMED)
+
+    def test_parsed_action_outcome_idle(self):
+        # No tool calls and no error: the text may itself be the answer.
+        self.assertIs(ParsedAction(raw_text='the answer is 42').outcome, TurnOutcome.IDLE)
+        self.assertIs(ParsedAction().outcome, TurnOutcome.IDLE)
+
+    def test_parsed_action_outcome_prefers_act_over_malformed(self):
+        # A strategy reporting usable calls *and* a complaint should still make
+        # progress; the complaint reaches the trace as a parse error event.
+        from evalscope.api.tool import ToolCall, ToolFunction
+        call = ToolCall(id='c1', function=ToolFunction(name='bash', arguments={}))
+        parsed = ParsedAction(tool_calls=[call], error='dropped the calls past the cap')
+        self.assertIs(parsed.outcome, TurnOutcome.ACT)
 
     def test_exec_result_defaults(self):
         r = ExecResult()
@@ -171,6 +232,15 @@ class TestAgentTypesBehavior(unittest.TestCase):
         trace.add_event(step=0, type=EventType.MODEL_GENERATE)
         loaded = AgentTrace.model_validate_json(trace.model_dump_json())
         self.assertEqual(loaded.events[0].type, EventType.MODEL_GENERATE)
+
+    def test_agent_trace_ignores_unknown_extension_fields(self):
+        trace = AgentTrace.model_validate({
+            'strategy': 'function_calling',
+            'extension_field': {
+                'source': 'third-party'
+            },
+        })
+        self.assertEqual(trace.strategy, 'function_calling')
 
 
 if __name__ == '__main__':

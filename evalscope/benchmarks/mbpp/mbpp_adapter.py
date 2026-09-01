@@ -6,6 +6,8 @@ from evalscope.api.benchmark import BenchmarkMeta, DefaultDataAdapter
 from evalscope.api.dataset import Sample
 from evalscope.api.evaluator import TaskState
 from evalscope.api.metric import Score
+from evalscope.api.metric.semantics import MetricSelector
+from evalscope.api.mixin import CodeExecutionSandboxMixin
 from evalscope.api.registry import register_benchmark
 from evalscope.constants import Tags
 from evalscope.utils.logger import get_logger
@@ -86,22 +88,17 @@ MBPP (Mostly Basic Python Problems) is a benchmark consisting of approximately 1
         subset_list=['full'],
         metric_list=['acc'],
         aggregation='mean_and_pass_at_k',
+        primary_metric=MetricSelector(name='accuracy', aggregation='pass_at_k', dimensions={'k': 1}),
         train_split='prompt',
         eval_split='test',
         few_shot_num=3,
         prompt_template=PROMPT,
         few_shot_prompt_template=FEWSHOT_PROMPT,
         review_timeout=20,
-        sandbox_config={
-            'image': 'python:3.11-slim',
-            'tools_config': {
-                'shell_executor': {},
-                'python_executor': {}
-            }
-        },
+        sandbox_config={'image': 'python:3.11-slim', 'tools_config': {'shell_executor': {}, 'python_executor': {}}},
     )
 )
-class MBPPAdapter(DefaultDataAdapter):
+class MBPPAdapter(CodeExecutionSandboxMixin, DefaultDataAdapter):
     """
     MBPP adapter using the new data processing framework.
     """
@@ -119,7 +116,7 @@ class MBPPAdapter(DefaultDataAdapter):
                 'test_list': record['test_list'],
                 'task_id': record['task_id'],
                 'test_setup_code': record['test_setup_code'],
-            }
+            },
         )
 
     def sample_to_fewshot(self, sample: Sample) -> str:
@@ -139,7 +136,7 @@ class MBPPAdapter(DefaultDataAdapter):
         code = self.postprocess_completion(prediction)
         code = '\n'.join([task_state.metadata['test_setup_code'], code])
         if 'if __name__ ==' in code:
-            code = code[:code.index('if __name__ ==')]
+            code = code[: code.index('if __name__ ==')]
         return code
 
     @classmethod
@@ -147,7 +144,7 @@ class MBPPAdapter(DefaultDataAdapter):
         from evalscope.utils.code_utils import extract_code_from_freeform_completion
 
         if '[DONE]' in completion:
-            completion = completion[:completion.index('[DONE]')]
+            completion = completion[: completion.index('[DONE]')]
 
         code, _ = extract_code_from_freeform_completion(completion, 'python', first_block_only=True)
 

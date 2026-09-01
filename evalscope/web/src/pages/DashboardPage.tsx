@@ -1,446 +1,314 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useReports } from '@/contexts/ReportsContext'
+import { ArrowRight, Clock, Cpu, FileText, Gauge } from 'lucide-react'
+import { useScan } from '@/contexts/ReportsContext'
+import { useAsyncResource } from '@/hooks/useAsyncResource'
 import { useLocale } from '@/contexts/LocaleContext'
 import { listReports } from '@/api/reports'
-import type { ReportSummary } from '@/api/types'
-import Card from '@/components/ui/Card'
-import Badge from '@/components/ui/Badge'
+import { listPerfRuns } from '@/api/perf'
+import type { PerfRunSummary, ReportSummary } from '@/api/types'
+import { formatDifference, formatMetric, type MetricSemantics } from '@/domain/metric'
 import Skeleton from '@/components/ui/Skeleton'
-import KpiCard from '@/components/ui/KpiCard'
-import ScoreChip from '@/components/ui/ScoreChip'
-import ScoreBadge from '@/components/ui/ScoreBadge'
-import PathBar from '@/components/ui/PathBar'
-import EvalRunCard from '@/components/ui/EvalRunCard'
-import ModelGroupHeader from '@/components/ui/ModelGroupHeader'
+import KpiStrip, { KPI_HERO_CONTAINER, KPI_HERO_CELL, type KpiItem } from '@/components/ui/KpiStrip'
+import Tabs from '@/components/ui/Tabs'
+import SearchInput from '@/components/ui/SearchInput'
 import EmptyState from '@/components/common/EmptyState'
-import {
-  FileText,
-  Cpu,
-  Database,
-  Clock,
-  Inbox,
-  FolderOpen,
-} from 'lucide-react'
-import { cn } from '@/lib/utils'
+import EmptyStateSystem from '@/components/common/EmptyStateSystem'
+import ErrorAlert from '@/components/ui/ErrorAlert'
+import AggregatedResults from '@/components/dashboard/AggregatedResults'
+import type { SortState } from '@/components/dashboard/AggregatedResults'
+import { aggregateRuns } from '@/domain/report/runAggregation'
+import { parseReportRef } from '@/domain/report/reportRef'
+import type { AggregatedRow, CellKind, CellPoint } from '@/domain/report/runAggregation'
+import { formatTimestamp } from '@/utils/formatUtils'
 
-// ------------------------------------------------------------------ //
-// Helpers                                                              //
-// ------------------------------------------------------------------ //
+/**
+ * Which kinds of run the table shows.
+ *
+ * `all` is not a kind, it is the absence of the filter, so it is kept out of `CellKind` rather than
+ * added to it -- nothing produces a cell of kind "all".
+ */
+type KindFilter = CellKind | 'all'
 
-/** Format timestamp to YYYY-MM-DD HH:MM:SS */
-function formatTimestamp(ts: string): string {
-  return ts.replace('T', ' ').slice(0, 19)
-}
+/** Stable placeholders so an unresolved read keeps a single identity per collection. */
+const EMPTY_REPORTS: ReportSummary[] = []
+const EMPTY_PERF_RUNS: PerfRunSummary[] = []
+const EMPTY_SEMANTICS: Record<string, MetricSemantics> = {}
 
-/** Format timestamp to short form MM-DD HH:MM */
-function formatTimestampShort(ts: string): string {
-  return ts.replace('T', ' ').slice(5, 16)
-}
+/** Tab order, and the panel each one drives. */
+const KIND_TABS: { key: KindFilter; labelKey: string; panelId: string }[] = [
+  { key: 'all', labelKey: 'dashboard.tabAll', panelId: 'dashboard-results-all' },
+  { key: 'eval', labelKey: 'dashboard.tabEval', panelId: 'dashboard-results-eval' },
+  { key: 'perf', labelKey: 'dashboard.tabPerf', panelId: 'dashboard-results-perf' },
+]
 
-// ------------------------------------------------------------------ //
-// CompactRunRow (Grouped view)                                         //
-// ------------------------------------------------------------------ //
-interface CompactRunRowProps {
-  report: ReportSummary
-  onClick: () => void
-}
-
-function CompactRunRow({ report, onClick }: CompactRunRowProps) {
-  const dsScores = report.dataset_scores
-
-  return (
-    <button
-      onClick={onClick}
-      className="flex items-center gap-3 py-2.5 px-3 rounded-[var(--radius-sm)] hover:bg-[var(--bg-card2)] transition-colors w-full text-left"
-    >
-      {report.timestamp && (
-        <span className="type-caption-mono text-[var(--text-muted)] shrink-0 w-[110px]">
-          {formatTimestampShort(report.timestamp)}
-        </span>
-      )}
-      <div className="flex flex-wrap gap-1 flex-1 min-w-0">
-        {dsScores && Object.keys(dsScores).length > 0 ? (
-          Object.entries(dsScores).map(([ds, s]) => <ScoreChip key={ds} label={ds} score={s} />)
-        ) : (
-          <span className="type-caption-mono text-[var(--text-muted)]">{report.dataset_name}</span>
-        )}
-      </div>
-      <ScoreBadge score={report.score} className="shrink-0 !text-xs !px-2" />
-    </button>
-  )
-}
-
-// ------------------------------------------------------------------ //
-// View toggle (segmented control)                                      //
-// ------------------------------------------------------------------ //
-type DashboardView = 'timeline' | 'grouped' | 'byDataset'
-
-interface ViewToggleProps {
-  value: DashboardView
-  onChange: (v: DashboardView) => void
-  labels: Record<DashboardView, string>
-}
-
-function ViewToggle({ value, onChange, labels }: ViewToggleProps) {
-  const items: DashboardView[] = ['timeline', 'grouped', 'byDataset']
-  return (
-    <div className="inline-flex rounded-[var(--radius-sm)] border border-[var(--border-md)] overflow-hidden">
-      {items.map((key) => (
-        <button
-          key={key}
-          onClick={() => onChange(key)}
-          className={cn(
-            'px-3.5 py-1.5 type-button-sm transition-colors cursor-pointer',
-            value === key
-              ? 'bg-[var(--accent)] text-[var(--text-on-filled)]'
-              : 'bg-[var(--bg-card2)] text-[var(--text-muted)] hover:text-[var(--text)]',
-          )}
-        >
-          {labels[key]}
-        </button>
-      ))}
-    </div>
-  )
-}
-
-// ------------------------------------------------------------------ //
-// KPI Skeleton                                                        //
-// ------------------------------------------------------------------ //
-function KpiSkeleton() {
-  return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-      {Array.from({ length: 4 }).map((_, i) => (
-        <div
-          key={i}
-          className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-card)] p-5"
-        >
-          <Skeleton width={40} height={40} className="mb-3" />
-          <Skeleton width={60} height={28} className="mb-1" />
-          <Skeleton width={100} height={14} />
-        </div>
-      ))}
-    </div>
-  )
-}
-
-// ------------------------------------------------------------------ //
-// Dashboard Page                                                      //
-// ------------------------------------------------------------------ //
+/**
+ * Landing page: how much has been recorded here, then how the benchmarks are holding up.
+ *
+ * Four counters open the page, and below them the part no other page can do: results aggregated by
+ * what they measure rather than by when they ran, because re-running a benchmark is the normal
+ * workflow here and a flat feed renders those repeats as many identical-looking rows. Anything the
+ * list pages do better is not duplicated -- no filter, no search, no pagination.
+ */
 export default function DashboardPage() {
   const { t } = useLocale()
-  const { rootPath, setRootPath } = useReports()
+  const { rootPath, scanToken } = useScan()
   const navigate = useNavigate()
 
-  const [pathInput, setPathInput] = useState(rootPath || './outputs')
-  const [scanning, setScanning] = useState(false)
-  const [reports, setReports] = useState<ReportSummary[]>([])
-  const [scanned, setScanned] = useState(false)
+  const [kindFilter, setKindFilter] = useState<KindFilter>('all')
+  const [query, setQuery] = useState('')
+  const [sort, setSort] = useState<SortState>({ key: 'lastRun', descending: true })
 
-  // Evaluation list state
-  const [view, setView] = useState<DashboardView>('timeline')
-  const evalListRef = useRef<HTMLDivElement>(null)
-  const [search, setSearch] = useState('')
-  const [sortBy, setSortBy] = useState('time')
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
+  // Fetch eval + perf whenever the global scan token or root changes. Settled,
+  // not all-or-nothing: one side failing must not hide the other's runs.
+  const overview = useAsyncResource(
+    async (signal) => {
+      const [evalRes, perfRes] = await Promise.allSettled([
+        (async () => {
+          const collected: ReportSummary[] = []
+          let page = 1
+          while (true) {
+            const response = await listReports({
+              rootPath,
+              page,
+              pageSize: 100,
+              sortBy: 'time',
+              sortOrder: 'desc',
+              signal,
+            })
+            collected.push(...response.reports)
+            if (collected.length >= response.total || response.reports.length === 0) return collected
+            page += 1
+          }
+        })(),
+        listPerfRuns(rootPath, signal),
+      ])
 
-  // Scan for reports using listReports API
-  const handleScan = useCallback(async () => {
-    const trimmed = pathInput.trim()
-    if (!trimmed) return
-    setRootPath(trimmed)
-    setScanning(true)
-    try {
-      const res = await listReports({ rootPath: trimmed, pageSize: 1000, sortBy: 'time', sortOrder: 'desc' })
-      setReports(res.reports)
-      setScanned(true)
-    } catch {
-      setReports([])
-      setScanned(true)
-    } finally {
-      setScanning(false)
-    }
-  }, [pathInput, setRootPath])
+      const failure = evalRes.status === 'rejected'
+        ? evalRes.reason
+        : perfRes.status === 'rejected' ? perfRes.reason : null
 
-  // Auto-scan if rootPath is already set on mount
-  useEffect(() => {
-    if (rootPath && !scanned) {
-      setPathInput(rootPath)
-      handleScan()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+      return {
+        reports: evalRes.status === 'fulfilled' ? evalRes.value : EMPTY_REPORTS,
+        perfRuns: perfRes.status === 'fulfilled' ? perfRes.value.runs : EMPTY_PERF_RUNS,
+        perfSemantics: perfRes.status === 'fulfilled' ? (perfRes.value.metric_semantics ?? {}) : {},
+        failure: failure instanceof Error ? failure.message : failure ? t('common.loadError') : '',
+      }
+    },
+    [rootPath, scanToken],
+    { enabled: Boolean(rootPath), fallbackMessage: t('common.loadError') },
+  )
 
-  // KPI stats
-  const kpiStats = useMemo(() => {
-    const totalEvals = reports.length
-    const models = new Set(reports.map((r) => r.model_name))
-    const datasets = new Set(reports.map((r) => r.dataset_name))
-    const latest = reports.length > 0
-      ? formatTimestamp(reports[0].timestamp || reports[0].name)
-      : t('dashboard.neverText')
-    return { totalEvals, models: models.size, datasets: datasets.size, latest }
-  }, [reports, t])
+  const reports = overview.data?.reports ?? EMPTY_REPORTS
+  const perfRuns = overview.data?.perfRuns ?? EMPTY_PERF_RUNS
+  const perfSemantics = overview.data?.perfSemantics ?? EMPTY_SEMANTICS
+  const loading = overview.loading
+  // A partial failure is reported by the resolved value; a total one by the hook.
+  const loadError = overview.error || (overview.data?.failure ?? '')
+  const scanned = overview.data !== undefined
 
-  // Filtered & sorted reports
-  const sortedReports = useMemo(() => {
-    let filtered = reports
-    if (search) {
-      const q = search.toLowerCase()
-      filtered = reports.filter(r =>
-        r.model_name.toLowerCase().includes(q) ||
-        r.dataset_name.toLowerCase().includes(q)
-      )
-    }
-    return [...filtered].sort((a, b) => {
-      if (sortBy === 'time') return (b.timestamp || '').localeCompare(a.timestamp || '')
-      if (sortBy === 'score') return (b.score ?? 0) - (a.score ?? 0)
-      if (sortBy === 'model') return a.model_name.localeCompare(b.model_name)
-      return 0
+  // The table is driven by this: every score ever recorded, grouped by what it measures.
+  const rows = useMemo(
+    () => aggregateRuns(reports, perfRuns, perfSemantics),
+    [reports, perfRuns, perfSemantics],
+  )
+
+  // What the active tab admits. Filtering here rather than inside the table keeps the table a
+  // renderer of whatever rows it is handed.
+  const visibleRows = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase()
+    return rows.filter((row) => {
+      if (kindFilter !== 'all' && row.cell.kind !== kindFilter) return false
+      if (!normalizedQuery) return true
+      return [row.cell.model, row.cell.benchmark, row.cell.benchmarkLabel, row.cell.metricName]
+        .filter((value): value is string => Boolean(value))
+        .some((value) => value.toLocaleLowerCase().includes(normalizedQuery))
     })
-  }, [reports, search, sortBy])
+  }, [rows, kindFilter, query])
 
-  // Grouped by model
-  const grouped = useMemo(() => {
-    const map = new Map<string, ReportSummary[]>()
-    for (const r of sortedReports) {
-      const list = map.get(r.model_name) || []
-      list.push(r)
-      map.set(r.model_name, list)
+  const kpi = useMemo(() => {
+    const models = new Set<string>()
+    reports.forEach((report) => report.model_name && models.add(report.model_name))
+    perfRuns.forEach((run) => run.model && models.add(run.model))
+    const timestamps = [
+      ...reports.map((report) => report.timestamp || ''),
+      ...perfRuns.map((run) => run.timestamp || ''),
+    ].filter((timestamp): timestamp is string => Boolean(timestamp))
+    const latest: string = timestamps.length > 0 ? timestamps.reduce((a, b) => (a > b ? a : b)) : ''
+    return {
+      evals: reports.length,
+      perfs: perfRuns.length,
+      models: models.size,
+      latest,
     }
-    return Array.from(map.entries())
-  }, [sortedReports])
+  }, [reports, perfRuns])
 
-  // Grouped by dataset
-  const groupedByDataset = useMemo(() => {
-    const map = new Map<string, ReportSummary[]>()
-    for (const r of sortedReports) {
-      const list = map.get(r.dataset_name) || []
-      list.push(r)
-      map.set(r.dataset_name, list)
+  const latestRunLabel = useMemo(() => {
+    if (!kpi.latest) return t('dashboard.neverText')
+    const value = new Date(kpi.latest)
+    const today = new Date()
+    const time = value.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    if (value.toDateString() === today.toDateString()) return `${t('dashboard.today')}, ${time}`
+    return formatTimestamp(kpi.latest, 'seconds')
+  }, [kpi.latest, t])
+
+  const kpiItems = useMemo<KpiItem[]>(() => [
+    {
+      icon: <FileText size={17} strokeWidth={2} />,
+      value: String(kpi.evals),
+      label: t('dashboard.totalEvaluations'),
+      onClick: () => navigate('/reports'),
+    },
+    {
+      icon: <Gauge size={17} strokeWidth={2} />,
+      value: String(kpi.perfs),
+      label: t('dashboard.totalPerfRuns'),
+      onClick: () => navigate('/performance'),
+    },
+    {
+      icon: <Cpu size={17} strokeWidth={2} />,
+      value: String(kpi.models),
+      label: t('dashboard.modelsEvaluated'),
+    },
+    {
+      icon: <Clock size={17} strokeWidth={2} />,
+      value: latestRunLabel,
+      label: t('dashboard.latestRun'),
+      title: kpi.latest ? formatTimestamp(kpi.latest, 'seconds') : undefined,
+    },
+  ], [kpi, latestRunLabel, navigate, t])
+
+  const recentChange = useMemo(() => {
+    return visibleRows
+      .filter((row) => row.cell.history.length > 1)
+      .map((row) => {
+        const latest = row.cell.history[row.cell.history.length - 1]
+        const previous = row.cell.history
+          .slice(0, -1)
+          .reverse()
+          .find((point) => point.score !== latest.score)
+        if (!previous) return null
+        return { row, latest, delta: latest.score - previous.score }
+      })
+      .filter((change): change is NonNullable<typeof change> => change !== null)
+      .filter(({ delta }) => Number.isFinite(delta))
+      .sort((a, b) => b.latest.timestamp.localeCompare(a.latest.timestamp))[0]
+  }, [visibleRows])
+
+  const openRun = (row: AggregatedRow, point: CellPoint) => {
+    const root = encodeURIComponent(rootPath)
+    if (row.cell.kind === 'eval') {
+      const { runId, modelId } = parseReportRef(point.runId)
+      navigate(`/reports/${encodeURIComponent(runId)}/${encodeURIComponent(modelId)}?root_path=${root}`)
+      return
     }
-    return Array.from(map.entries())
-  }, [sortedReports])
-
-  const toggleGroup = (model: string) => {
-    setExpandedGroups(prev => {
-      const next = new Set(prev)
-      if (next.has(model)) next.delete(model)
-      else next.add(model)
-      return next
-    })
+    navigate(`/perf-report?path=${encodeURIComponent(point.runId)}&root_path=${root}`)
   }
 
-  const navigateToReport = (report: ReportSummary) => {
-    navigate(`/reports/${encodeURIComponent(report.name)}?root_path=${encodeURIComponent(rootPath)}`)
-  }
+  const hasData = scanned && rows.length > 0
 
-  const hasData = scanned && reports.length > 0
+  const recentChangeStrip = recentChange ? (
+    <div className="flex flex-col gap-2 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--accent-dim)] px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <span className="mr-3 type-label-xs text-[var(--accent)]">{t('dashboard.recentChange')}</span>
+        <span className="type-body-sm text-[var(--text-muted)]">
+          {t('dashboard.recentChangeSummary', {
+            benchmark: recentChange.row.cell.benchmarkLabel || recentChange.row.cell.benchmark,
+            metric: recentChange.row.cell.semantics?.metric_name || recentChange.row.cell.metricName,
+            latest: formatMetric(recentChange.row.stats.latest, recentChange.row.cell.semantics).primary,
+            change: formatSignedDifference(recentChange.delta, recentChange.row.cell.semantics),
+          })}
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={() => openRun(recentChange.row, recentChange.latest)}
+        className="inline-flex shrink-0 items-center gap-1 type-body-xs font-medium text-[var(--accent)] transition-colors hover:text-[var(--accent-dark)]"
+      >
+        {t('dashboard.viewDetails')}
+        <ArrowRight size={13} />
+      </button>
+    </div>
+  ) : null
 
-  const viewLabels: Record<DashboardView, string> = {
-    timeline: t('dashboard.timelineView'),
-    grouped: t('dashboard.groupedView'),
-    byDataset: t('dashboard.byDatasetView'),
-  }
+  // One node, handed to whichever panel is selected: the tab decides the rows, not the markup.
+  const resultsPanel = visibleRows.length > 0 ? (
+    <div className="mt-3 flex min-w-0 flex-col gap-3">
+      {recentChangeStrip}
+      <AggregatedResults rows={visibleRows} onOpenRun={openRun} sort={sort} onSortChange={setSort} />
+    </div>
+  ) : (
+    <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-card)]">
+      <EmptyStateSystem reason="no-match" context={{ view: 'dashboard' }} />
+    </div>
+  )
 
   return (
-    <div className="flex flex-col gap-5 min-h-0">
-      {/* ── Path Bar ── */}
-      <PathBar
-        value={pathInput}
-        onChange={setPathInput}
-        onSubmit={handleScan}
-        placeholder={t('dashboard.pathPlaceholder')}
-        submitLabel={t('dashboard.scanBtn')}
-        scanningLabel={t('dashboard.scanning')}
-        scanning={scanning}
-        disabled={!pathInput.trim()}
-      />
+    <div className="flex min-h-0 w-full flex-col gap-4">
+      {loadError && <ErrorAlert className="rounded-[var(--radius-sm)]">{loadError}</ErrorAlert>}
 
-      {/* ── KPI Cards ── */}
-      {scanning ? (
-        <KpiSkeleton />
+      {loading && !scanned ? (
+        <div className={KPI_HERO_CONTAINER}>
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className={KPI_HERO_CELL}>
+              <Skeleton width={32} height={32} className="mb-2" />
+              <Skeleton width={60} height={24} className="mb-1" />
+              <Skeleton width={100} height={14} />
+            </div>
+          ))}
+        </div>
       ) : (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <KpiCard
-            icon={<FileText size={18} strokeWidth={2} />}
-            value={String(kpiStats.totalEvals)}
-            label={t('dashboard.totalEvaluations')}
-            gradient="var(--kpi-grad-0)"
-            delay={0}
-            onClick={() => { setView('timeline'); evalListRef.current?.scrollIntoView({ behavior: 'smooth' }) }}
-          />
-          <KpiCard
-            icon={<Cpu size={18} strokeWidth={2} />}
-            value={String(kpiStats.models)}
-            label={t('dashboard.modelsEvaluated')}
-            gradient="var(--kpi-grad-1)"
-            delay={60}
-            onClick={() => { setView('grouped'); evalListRef.current?.scrollIntoView({ behavior: 'smooth' }) }}
-          />
-          <KpiCard
-            icon={<Database size={18} strokeWidth={2} />}
-            value={String(kpiStats.datasets)}
-            label={t('dashboard.datasetsUsed')}
-            gradient="var(--kpi-grad-2)"
-            delay={120}
-            onClick={() => { setView('byDataset'); evalListRef.current?.scrollIntoView({ behavior: 'smooth' }) }}
-          />
-          <KpiCard
-            icon={<Clock size={18} strokeWidth={2} />}
-            value={kpiStats.latest.length > 20 ? kpiStats.latest.slice(0, 20) + '…' : kpiStats.latest}
-            label={t('dashboard.latestEval')}
-            gradient="var(--kpi-grad-3)"
-            delay={180}
-            onClick={() => reports.length > 0 && navigateToReport(reports[0])}
-          />
-        </div>
+        <KpiStrip items={kpiItems} />
       )}
 
-      {/* ── Loading skeleton for content ── */}
-      {scanning && (
-        <Card title={t('dashboard.evaluations')}>
+      {loading && !scanned ? (
+        <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-card)] p-4">
           <Skeleton lines={8} height={14} />
-        </Card>
-      )}
-
-      {/* ── Unified Evaluation List ── */}
-      {hasData && !scanning && (
-        <div ref={evalListRef}>
-          <Card title={t('dashboard.evaluations')} badge={<Badge>{sortedReports.length}</Badge>}>
-            {/* Controls bar */}
-            <div className="flex items-center gap-3 flex-wrap mb-4">
-              <ViewToggle value={view} onChange={setView} labels={viewLabels} />
-
-              {/* Search */}
-              <input
-                type="text"
-                placeholder={t('dashboard.searchPlaceholder')}
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                className="flex-1 min-w-[160px] max-w-[300px] px-3 py-1.5 type-body-xs rounded-[var(--radius-sm)] bg-[var(--bg-deep)] border border-[var(--border)] text-[var(--text)] placeholder-[var(--text-dim)]"
-              />
-
-              {/* Sort */}
-              <select
-                value={sortBy}
-                onChange={e => setSortBy(e.target.value)}
-                className="px-3 py-1.5 type-body-xs rounded-[var(--radius-sm)] bg-[var(--bg-deep)] border border-[var(--border)] text-[var(--text)]"
-              >
-                <option value="time">{t('dashboard.sortTime')}</option>
-                <option value="score">{t('dashboard.sortScore')}</option>
-                <option value="model">{t('dashboard.sortModel')}</option>
-              </select>
-            </div>
-
-            {/* List content */}
-            <div className="overflow-y-auto max-h-[calc(100vh-300px)]">
-              {sortedReports.length === 0 ? (
-                <div className="text-center py-8 type-body-sm text-[var(--text-muted)]">
-                  {t('dashboard.noEvals')}
-                </div>
-              ) : view === 'timeline' ? (
-                /* ── Timeline view ── */
-                <div className="flex flex-col gap-3">
-                  {sortedReports.map((report) => (
-                    <EvalRunCard
-                      key={`${report.name}-${report.dataset_name}`}
-                      report={report}
-                      onClick={() => navigateToReport(report)}
-                    />
-                  ))}
-                </div>
-              ) : view === 'grouped' ? (
-                /* ── Grouped view ── */
-                <div className="flex flex-col gap-2">
-                  {grouped.map(([model, runs]) => {
-                    const expanded = expandedGroups.has(model)
-                    const bestScore = Math.max(...runs.map(r => r.score))
-
-                    return (
-                      <div key={model} className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
-                        <ModelGroupHeader
-                          title={model}
-                          count={runs.length}
-                          runsLabel={t('dashboard.runs')}
-                          bestScore={bestScore}
-                          bestScoreLabel={t('dashboard.bestScore')}
-                          expanded={expanded}
-                          onToggle={() => toggleGroup(model)}
-                        />
-
-                        {expanded && (
-                          <div className="border-t border-[var(--border)]">
-                            {runs.map((report) => (
-                              <CompactRunRow
-                                key={`${report.name}-${report.dataset_name}`}
-                                report={report}
-                                onClick={() => navigateToReport(report)}
-                              />
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              ) : view === 'byDataset' ? (
-                /* ── By Dataset view ── */
-                <div className="flex flex-col gap-2">
-                  {groupedByDataset.map(([dataset, runs]) => {
-                    const expanded = expandedGroups.has(dataset)
-                    const bestScore = Math.max(...runs.map(r => r.score))
-
-                    return (
-                      <div key={dataset} className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
-                        <ModelGroupHeader
-                          title={dataset}
-                          count={runs.length}
-                          runsLabel={t('dashboard.runs')}
-                          bestScore={bestScore}
-                          bestScoreLabel={t('dashboard.bestScore')}
-                          expanded={expanded}
-                          onToggle={() => toggleGroup(dataset)}
-                        />
-
-                        {expanded && (
-                          <div className="border-t border-[var(--border)]">
-                            {runs.map((report) => (
-                              <CompactRunRow
-                                key={`${report.name}-${report.dataset_name}`}
-                                report={report}
-                                onClick={() => navigateToReport(report)}
-                              />
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              ) : null}
-            </div>
-          </Card>
         </div>
-      )}
-
-      {/* ── Empty state after scan ── */}
-      {scanned && !hasData && !scanning && (
-        <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-card)]">
-          <EmptyState
-            icon={<Inbox size={28} strokeWidth={1.5} />}
-            title={t('dashboard.noReportsYet')}
-            hint={t('dashboard.noReportsHint')}
+      ) : hasData ? (
+        <div className="flex min-w-0 flex-col gap-3">
+          <Tabs
+            tabs={KIND_TABS}
+            activeKey={kindFilter}
+            onChange={(key) => setKindFilter(key as KindFilter)}
+            panels={Object.fromEntries(KIND_TABS.map((tab) => [tab.panelId, resultsPanel]))}
+            className="self-start"
+            actions={
+              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+                <SearchInput
+                  value={query}
+                  onChange={setQuery}
+                  placeholder={t('dashboard.searchPlaceholder')}
+                  className="w-full sm:w-64"
+                />
+                <select
+                  aria-label={t('dashboard.sortResults')}
+                  value={`${sort.key}-${sort.descending ? 'desc' : 'asc'}`}
+                  onChange={(event) => setSort(parseSort(event.target.value))}
+                  className="rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg-deep)] px-3 py-2 type-body-sm text-[var(--text-muted)] outline-none transition-colors focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent-dim)]"
+                >
+                  <option value="lastRun-desc">{t('dashboard.sortLastRunNewest')}</option>
+                  <option value="lastRun-asc">{t('dashboard.sortLastRunOldest')}</option>
+                  <option value="runs-desc">{t('dashboard.sortRunsMost')}</option>
+                  <option value="runs-asc">{t('dashboard.sortRunsLeast')}</option>
+                  <option value="model-asc">{t('dashboard.sortModelAsc')}</option>
+                  <option value="model-desc">{t('dashboard.sortModelDesc')}</option>
+                  <option value="benchmark-asc">{t('dashboard.sortBenchmarkAsc')}</option>
+                  <option value="benchmark-desc">{t('dashboard.sortBenchmarkDesc')}</option>
+                </select>
+              </div>
+            }
           />
         </div>
-      )}
-
-      {/* ── Welcome state (before any scan) ── */}
-      {!scanned && !scanning && (
+      ) : scanned ? (
+        <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-card)]">
+          <EmptyStateSystem reason="no-data" context={{ view: 'dashboard' }} hint={t('dashboard.noReportsHint')} />
+        </div>
+      ) : (
         <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-card)]">
           <EmptyState
             variant="welcome"
-            icon={<FolderOpen size={28} strokeWidth={1.5} />}
+            icon={<FileText size={28} strokeWidth={1.5} />}
             title={t('dashboard.welcomeTitle')}
             hint={t('dashboard.welcomeDesc')}
           />
@@ -448,4 +316,14 @@ export default function DashboardPage() {
       )}
     </div>
   )
+}
+
+function parseSort(value: string): SortState {
+  const [key, direction] = value.split('-') as [SortState['key'], 'asc' | 'desc']
+  return { key, descending: direction === 'desc' }
+}
+
+function formatSignedDifference(value: number, semantics: MetricSemantics | null): string {
+  const formatted = formatDifference(value, semantics).primary
+  return value > 0 ? `+${formatted}` : formatted
 }

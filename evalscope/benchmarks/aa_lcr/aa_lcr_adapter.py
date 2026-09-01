@@ -1,21 +1,39 @@
 # Copyright (c) Alibaba, Inc. and its affiliates.
 # flake8: noqa: E501
-import re
-import urllib.request
 import zipfile
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List, Literal
+
+from pydantic import BaseModel
 
 from evalscope.api.benchmark import BenchmarkMeta, DefaultDataAdapter
 from evalscope.api.dataset import Sample
-from evalscope.api.evaluator import TaskState
+from evalscope.api.judge import (
+    CaseVerdict,
+    JudgeCase,
+    JudgeContext,
+    JudgeDefinition,
+    JudgeRequest,
+    OutputContract,
+    ReducedVerdict,
+)
 from evalscope.api.messages import ChatMessageUser
 from evalscope.api.metric import Score
 from evalscope.api.registry import register_benchmark
-from evalscope.constants import DEFAULT_EVALSCOPE_CACHE_DIR, Tags
+from evalscope.constants import DEFAULT_EVALSCOPE_CACHE_DIR, ScoringPolicy, Tags
+from evalscope.utils.download_utils import download_url
 from evalscope.utils.logger import get_logger
 
 logger = get_logger()
+
+
+# The judge prompt ends with "Reply only with CORRECT or INCORRECT."
+class Grade(BaseModel):
+    reasoning: str = ''
+    verdict: Literal['CORRECT', 'INCORRECT']
+
+
+GRADE_CONTRACT = OutputContract(schema_model=Grade)
 
 # Default judge prompt template
 JUDGE_PROMPT = """Assess whether the following CANDIDATE ANSWER is CORRECT or INCORRECT. For the CANDIDATE ANSWER to be correct, it must be consistent with the OFFICIAL ANSWER.
@@ -94,17 +112,16 @@ AA-LCR (Artificial Analysis Long Context Retrieval) is a benchmark for evaluatin
             'text_dir': {
                 'type': 'str | null',
                 'description': 'Local directory containing extracted AA-LCR text files; if null will auto-download & extract.',
-                'value': None
+                'value': None,
             }
-        }
+        },
     )
 )
 class AALCRAdapter(DefaultDataAdapter):
+    scoring_policy = ScoringPolicy.JUDGE_ONLY
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
-        self._use_llm_judge = True
 
         # Get extra parameters
         self.text_dir = self.extra_params.get('text_dir')
@@ -136,7 +153,7 @@ class AALCRAdapter(DefaultDataAdapter):
 
         try:
             logger.info(f'Downloading AA-LCR documents from {DOWNLOAD_URL} to {zip_path}...')
-            urllib.request.urlretrieve(DOWNLOAD_URL, zip_path)
+            download_url(DOWNLOAD_URL, str(zip_path))
 
             logger.info(f'Extracting {zip_path} to {cache_root}...')
             with zipfile.ZipFile(zip_path, 'r') as zf:
@@ -180,7 +197,7 @@ class AALCRAdapter(DefaultDataAdapter):
                         logger.warning(f'Could not read file {file_path}, skipping: {e}')
         except OSError as e:
             logger.warning(f'Could not access document folder {doc_folder}: {e}')
-            return f"ERROR: Could not read documents for {record['document_category']}/{record['document_set_id']}"
+            return f'ERROR: Could not read documents for {record["document_category"]}/{record["document_set_id"]}'
 
         documents_text = '\n\n'.join(
             f'BEGIN DOCUMENT {i + 1}:\n{doc}\nEND DOCUMENT {i + 1}' for i, doc in enumerate(doc_blocks)
@@ -199,39 +216,28 @@ class AALCRAdapter(DefaultDataAdapter):
                 'question': record['question'],
                 'data_source_urls': record['data_source_urls'],
                 'input_tokens': record.get('input_tokens', 0),
-            }
+            },
         )
 
-    def llm_match_score(
-        self,
-        original_prediction: str,
-        filtered_prediction: str,
-        reference: str,
-        task_state: TaskState,
-    ) -> Score:
-        score = Score(
-            extracted_prediction=filtered_prediction,
-            prediction=original_prediction,
+    def judge_definition(self, context: JudgeContext) -> JudgeDefinition:
+
+        def request(case, placement, completed_cases, judge_context) -> JudgeRequest:
+            prompt = (
+                JUDGE_PROMPT.format(
+                    question=judge_context.task_state.metadata['question'],
+                    correct_answer=judge_context.reference,
+                    response=judge_context.filtered_prediction,
+                )
+                + case.output_contract.instruction()
+            )
+            return JudgeRequest(messages=[ChatMessageUser(content=prompt)])
+
+        def reduce(case_verdicts, judge_context) -> ReducedVerdict:
+            return ReducedVerdict(value={'acc': 1.0 if case_verdicts[0].value.verdict == 'CORRECT' else 0.0})
+
+        return JudgeDefinition.workflow(
+            cases=[JudgeCase(case_id='grade', output_contract=GRADE_CONTRACT)],
+            request=request,
+            reduce=reduce,
+            main_score_name='acc',
         )
-
-        judge_prompt = JUDGE_PROMPT.format(
-            question=task_state.metadata['question'], correct_answer=reference, response=filtered_prediction
-        )
-
-        # Request judge and obtain score
-        judge_response = self.llm_judge.judge(prompt=judge_prompt)
-
-        # Parse judge response to get accuracy score
-        # Use word boundaries to avoid matching "CORRECT" within "INCORRECT"
-        is_correct = bool(re.search(r'\bCORRECT\b', judge_response, re.IGNORECASE))
-        score.value = {
-            'acc': 1.0 if is_correct else 0.0,
-        }
-        score.explanation = f'LLM judge: {judge_response}'
-        score.metadata = {
-            'source': 'llm_judge',
-            'judge_strategy': self.judge_strategy,
-            'model': self.llm_judge.model_id,
-        }
-        score.main_score_name = 'acc'
-        return score

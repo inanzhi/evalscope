@@ -1,16 +1,21 @@
 import asyncio
+from typing import List
+
 from harbor.llms.base import BaseLLM, LLMResponse, UsageInfo
 from pydantic import BaseModel, ConfigDict, PrivateAttr
 
 from evalscope.api.messages.chat_message import dict_to_chat_message
+from evalscope.api.messages.perf_metrics import PerformanceMetrics
 from evalscope.api.model.model import Model
 from evalscope.models.utils.openai import openai_chat_choices
 
 
 class HarborLLM(BaseModel, BaseLLM):
     """A mock LLM that simulates sandboxed code execution."""
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
     _model: Model = PrivateAttr()
+    _perf_metrics: List[PerformanceMetrics] = PrivateAttr(default_factory=list)
 
     def __init__(self, model: Model, **kwargs):
         super().__init__(**kwargs)
@@ -19,6 +24,10 @@ class HarborLLM(BaseModel, BaseLLM):
     @property
     def model(self):
         return self._model
+
+    @property
+    def perf_metrics(self) -> List[PerformanceMetrics]:
+        return list(self._perf_metrics)
 
     async def call(self, prompt, **kwargs):
         message_history = kwargs.get('message_history', [])
@@ -29,6 +38,8 @@ class HarborLLM(BaseModel, BaseLLM):
         completion = await loop.run_in_executor(
             None, lambda: self._model.generate(input=[dict_to_chat_message(msg) for msg in messages])
         )
+        if completion.perf_metrics is not None:
+            self._perf_metrics.append(completion.perf_metrics)
 
         # Process the completion to extract content and usage
         oa_choices = openai_chat_choices(completion.choices, include_reasoning=False)
@@ -42,8 +53,8 @@ class HarborLLM(BaseModel, BaseLLM):
                 prompt_tokens=usage.get('input_tokens', 0),
                 completion_tokens=usage.get('output_tokens', 0),
                 cache_tokens=usage.get('input_tokens_cache_read', 0),
-                cost_usd=usage.get('cost_usd', 0.0)
-            )
+                cost_usd=usage.get('cost_usd', 0.0),
+            ),
         )
 
     def get_model_context_limit(self):

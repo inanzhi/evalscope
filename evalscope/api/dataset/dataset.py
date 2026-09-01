@@ -1,13 +1,41 @@
 import abc
 import copy
+import hashlib
+import math
 import random
 from collections import defaultdict
 from dataclasses import dataclass, field
-from pydantic import BaseModel, Field
 from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Union
+
+from pydantic import BaseModel, Field
 
 from evalscope.api.messages import ChatMessage, messages_to_markdown
 from evalscope.api.tool import ToolInfo
+
+_LIMIT_ERROR = 'Limit must be a non-negative integer or a finite float between 0 and 1.'
+
+
+def validate_dataset_limit(limit: Optional[Union[int, float]]) -> Optional[Union[int, float]]:
+    """Validate a dataset sample count or fraction without changing its value."""
+    if limit is None:
+        return None
+    if isinstance(limit, int):
+        if limit < 0:
+            raise ValueError(_LIMIT_ERROR)
+        return limit
+    if isinstance(limit, float):
+        if not math.isfinite(limit) or not 0.0 <= limit <= 1.0:
+            raise ValueError(_LIMIT_ERROR)
+        return limit
+    raise ValueError(_LIMIT_ERROR)
+
+
+def resolve_dataset_limit(limit: Optional[Union[int, float]], dataset_size: int) -> Optional[int]:
+    """Resolve a validated fraction against a dataset size, or return an integer count."""
+    validated_limit = validate_dataset_limit(limit)
+    if isinstance(validated_limit, float):
+        return int(dataset_size * validated_limit)
+    return validated_limit
 
 
 class Sample(BaseModel):
@@ -93,18 +121,15 @@ class Dataset(Sequence[Sample], abc.ABC):
 
     @property
     @abc.abstractmethod
-    def name(self) -> Optional[str]:
-        ...
+    def name(self) -> Optional[str]: ...
 
     @property
     @abc.abstractmethod
-    def location(self) -> Optional[str]:
-        ...
+    def location(self) -> Optional[str]: ...
 
     @property
     @abc.abstractmethod
-    def shuffled(self) -> bool:
-        ...
+    def shuffled(self) -> bool: ...
 
     @abc.abstractmethod
     def __iter__(self) -> Iterator[Sample]:
@@ -112,12 +137,10 @@ class Dataset(Sequence[Sample], abc.ABC):
         ...
 
     @abc.abstractmethod
-    def __getitem__(self, index: Union[int, slice]) -> Union[Sample, 'Dataset']:
-        ...
+    def __getitem__(self, index: Union[int, slice]) -> Union[Sample, 'Dataset']: ...
 
     @abc.abstractmethod
-    def __len__(self) -> int:
-        ...
+    def __len__(self) -> int: ...
 
     @abc.abstractmethod
     def filter(self, predicate: Callable[[Sample], bool], name: Optional[str] = None) -> 'Dataset':
@@ -229,10 +252,19 @@ class MemoryDataset(Dataset):
     def shuffle_choices(self, seed: Optional[int] = None) -> None:
         from evalscope.utils.multi_choices import answer_character
 
-        rand = random.Random(seed)
+        unseeded_random = random.Random() if seed is None else None
         for sample in self.samples:
             if not sample.choices:
                 continue
+            if seed is None:
+                rand = unseeded_random
+            else:
+                input_text = sample.input if isinstance(sample.input, str) else messages_to_markdown(sample.input)
+                # Derive each permutation from sample content rather than its reindexed
+                # position, so filtering one sample cannot remap any other sample's answer.
+                seed_material = '\x00'.join([str(seed), input_text, *sorted(sample.choices)])
+                choice_seed = int.from_bytes(hashlib.sha256(seed_material.encode('utf-8')).digest()[:8], 'big')
+                rand = random.Random(choice_seed)
             # The original positions
             positions = list(range(len(sample.choices)))
 
@@ -308,7 +340,7 @@ class DatasetDict:
         dataset: Dataset,
         subset_list: List[str],
         limit: Optional[Union[int, float]] = None,
-        repeats: int = 1
+        repeats: int = 1,
     ) -> 'DatasetDict':
         """
         Create a DatasetDict from a single Dataset using subset key in the sample.
@@ -322,6 +354,7 @@ class DatasetDict:
         Returns:
             DatasetDict: A new DatasetDict containing the provided dataset.
         """
+        limit = validate_dataset_limit(limit)
         data_dict = defaultdict(list)
         dataset_dict = defaultdict(list)
         # init subset keys to prevent order issues
@@ -337,11 +370,11 @@ class DatasetDict:
         for key, samples in data_dict.items():
             if key not in subset_list:
                 continue
-            # Apply limit if specified
+            # Apply limit if specified; resolve float limits per subset without
+            # mutating `limit`, so each subset takes its own fraction
             if limit is not None:
-                if isinstance(limit, float):
-                    limit = int(len(samples) * limit)
-                samples = samples[:limit]
+                subset_limit = resolve_dataset_limit(limit, len(samples))
+                samples = samples[:subset_limit]
             # Repeat k times; always deepcopy to avoid mutating the original dataset
             # (repeats=0 yields empty list; repeats=1 yields one isolated copy per sample)
             samples = [copy.deepcopy(sample) for sample in samples for _ in range(repeats)]

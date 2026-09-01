@@ -13,14 +13,15 @@ Python SDK v2.x.
 
 import asyncio
 import json
-import pytest
 import urllib.error
 import urllib.request
+
+import pytest
 
 from evalscope.agent.external.bridge import ModelProxyServer
 from evalscope.api.model import GenerateConfig, Model
 from evalscope.models.mockllm import MockLLM
-from evalscope.utils.function_utils import AsyncioLoopRunner
+from evalscope.utils.asyncio_runtime import AsyncioLoopRunner
 
 
 @pytest.fixture(autouse=True)

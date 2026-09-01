@@ -59,19 +59,25 @@ For details, please [refer to](https://github.com/modelscope/evalscope/pull/964)
 
 **Q: How to remove the "thinking process" (such as `<think>...</think>`) from model outputs?**
 
-**A:** For `evalscope >= v1.0` versions, the `<think>...</think>` is automatically handled by default. If you need custom handling, use the `--dataset-args` parameter to add `filters` for specific datasets. For example, to remove content before `</think>` when evaluating ifeval dataset:
-```shell
---dataset-args '{"ifeval": {"filters": {"remove_until": "</think>"}}}'
-```
-If your model uses different thinking tags like `<|end_of_thinking|>`, simply replace it accordingly.
+**A:** For `evalscope >= v1.0` versions, **paired** `<think>...</think>` blocks are stripped automatically.
+
+Note: most thinking models (Qwen3, DeepSeek series, etc.) prefill `<think>` into the prompt via their chat template, so the completion only contains the closing `</think>`. Such **unpaired** tags are not stripped automatically, the thinking process stays in the output and can interfere with answer extraction. Use any of the following:
+
+1.  **Enable a reasoning parser on the inference engine** (recommended): pass `--reasoning-parser` when starting SGLang / vLLM (see the engine docs for the accepted values). The thinking content is then returned in a separate `reasoning_content` field, which EvalScope picks up automatically, so `prediction` no longer contains it.
+2.  **Configure `filters` yourself**: use `--dataset-args` to remove everything before `</think>` for a specific dataset:
+    ```shell
+    --dataset-args '{"ifeval": {"filters": {"remove_until": "</think>"}}}'
+    ```
+    If your model uses different thinking tags like `<|end_of_thinking|>`, simply replace it accordingly.
+3.  **Fall back to a judge model**: set `judge={'strategy': 'llm_recall', 'models': {...}}` so rule-based misses are re-judged. See "Abnormal Results & Troubleshooting" below.
 
 **Q: How to use a local model as a Judge Model?**
 
-**A:** You can deploy the local model as an API service using frameworks like vLLM, then specify its service address in `--judge-model-args`.
+**A:** You can deploy the local model as an API service using frameworks like vLLM, then set its service address in `--judge` under `models`.
 
 **Q: How to set timeout for judge models?**
 
-**A:** Set the `timeout` parameter in the `generation_config` of `--judge-model-args`.
+**A:** Set `generation_config.timeout` for the relevant entry in `judge.models`.
 
 **Q: How to add custom request headers when evaluating API services?**
 
@@ -121,18 +127,27 @@ task_config = TaskConfig(
 **A:** Math problem answer formats are complex, and rule-based parsing can't cover all cases. We recommend using LLM as an auxiliary judge to improve accuracy:
 ```python
 # Set in TaskConfig or DataAdapter
-judge_strategy=JudgeStrategy.LLM_RECALL,
-judge_model_args={
-    'model_id': 'qwen2.5-72b-instruct',
-    'api_url': '...',
-    'api_key': '...'
+judge={
+    'strategy': 'llm_recall',
+    'models': {'model_id': 'qwen2.5-72b-instruct', 'api_url': '...', 'api_key': '...'},
 }
 ```
 Reference documentation: [Judge Model Parameters](https://evalscope.readthedocs.io/zh-cn/latest/get_started/parameters.html#judge).
 
+**Q: Multiple-choice datasets (e.g. `gpqa_diamond`, `mmlu`) are graded incorrectly, with an empty or wrong `extracted_prediction`?**
+
+**A:** The usual cause is a thinking process left in the model output, which interferes with rule-based extraction. For example the model first restates the required `ANSWER: [LETTER]` format, or discusses an option it then rejects. Recommended:
+1.  Strip the thinking process first, as described [above](#evaluation-configuration--parameters) (enable a reasoning parser on the inference engine, or configure `filters: {"remove_until": "</think>"}`).
+2.  Then add a judge model as a fallback so failed rule-based extractions are recalled:
+    ```python
+    # Set in TaskConfig
+    judge={'strategy': 'llm_recall', 'models': {'model_id': '...', 'api_url': '...', 'api_key': '...'}}
+    ```
+    `llm_recall` only calls the judge model when the rule-based score is not perfect, so it adds no across-the-board overhead.
+
 **Q: `Connection error` when evaluating `alpaca_eval`?**
 
-**A:** `alpaca_eval` requires specifying a Judge Model for scoring. It uses OpenAI API by default, and connection will fail if related keys aren't configured. Please specify an available judge model through `--judge-model-args`.
+**A:** `alpaca_eval` requires a Judge Model for scoring. It uses OpenAI API by default, and connection will fail if related keys are not configured. Specify one through `--judge`.
 
 **Q: How to continue from checkpoint after evaluation interruption?**
 
@@ -152,7 +167,7 @@ Reference documentation: [Judge Model Parameters](https://evalscope.readthedocs.
 
 **Q: How to evaluate multimodal models (like Qwen-VL, Gemma3)?**
 
-**A:** We recommend deploying multimodal models as API services using frameworks like vLLM, then evaluating through API. Direct local loading of multimodal models for pure text evaluation may not be fully supported.
+**A:** The recommended approach is the Native backend with API-based evaluation: deploy the multimodal model as an OpenAI-compatible service using vLLM, ms-swift, LMDeploy, etc., then run `evalscope eval` against multimodal benchmarks (e.g. `ocr_bench`, `mmmu`, `math_vista` — see the full list in [VLM Benchmarks](../get_started/supported_dataset/vlm.md)). The Native backend does not support loading multimodal model checkpoints locally for evaluation. If you need the VLMEvalKit backend, see [VLMEvalKit Backend](../user_guides/backend/vlmevalkit_backend.md).
 
 **Q: Error when evaluating `embeddings` models via API service: `dimensions is currently not supported`?**
 
@@ -207,6 +222,21 @@ Reference documentation: [Judge Model Parameters](https://evalscope.readthedocs.
 
 **A:** Specify `--dataset-path` and set `--dataset line_by_line`. The program will read file content line by line as prompts.
 
+**Q: How to use pre-downloaded datasets in offline environments?**
+
+**A:** Use `--dataset-path` to point to the local dataset path. Two approaches are supported:
+
+- **Point to a directory** (for Arrow/Parquet format datasets like `flickr8k`, `kontext_bench`, `longalpaca`):
+  ```bash
+  evalscope perf --dataset kontext_bench --dataset-path /path/to/local/kontext-bench ...
+  ```
+- **Point to a file** (for JSONL format datasets like `openqa`, `share_gpt_zh`):
+  ```bash
+  evalscope perf --dataset openqa --dataset-path /path/to/open_qa.jsonl ...
+  ```
+
+You can also use `--data-source` to specify the data source (defaults to `modelscope`, can be switched to `huggingface`).
+
 **Q: How to stress test multimodal models?**
 
 **A:** Currently supports the `flickr8k` dataset for multimodal stress testing. Set `--dataset flickr8k`.
@@ -238,7 +268,7 @@ Reference documentation: [Judge Model Parameters](https://evalscope.readthedocs.
 
 **Q: How to visualize stress test results?**
 
-**A:** Results from the `perf` subcommand are not suitable for `evalscope service`. However, visualization through `wandb` or `swanlab` is supported. Please refer to [Stress Test Result Visualization Guide](https://evalscope.readthedocs.io/zh-cn/latest/user_guides/stress_test/quick_start.html#id6).
+**A:** Start `evalscope service` with the output root containing the `perf` results (default: `outputs/`), then open the **Performance** page in the Web Dashboard. You can also send results to `wandb`, `swanlab`, or `clearml`. See the [Stress Test Result Visualization Guide](../user_guides/stress_test/quick_start.md#visualizing-test-results).
 
 ## Citing Us
 

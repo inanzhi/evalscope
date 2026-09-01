@@ -11,6 +11,7 @@ from evalscope.config import TaskConfig
 @dataclass
 class DatasetInfo:
     """Metadata and configuration for a single dataset in a collection."""
+
     name: str
     weight: float = 1.0  # dataset-level weight in the collection
     task_type: str = ''
@@ -21,6 +22,7 @@ class DatasetInfo:
     def get_data(self) -> DatasetDict:
         """Load dataset data using the benchmark registry."""
         dataset_args = {self.name: self.args}
+        # Metadata/data only; this adapter never scores, so it needs no judge configuration.
         benchmark_meta = get_benchmark(self.name, config=TaskConfig(dataset_args=dataset_args))
         data_dict = benchmark_meta.load_dataset()
         return data_dict
@@ -63,6 +65,7 @@ def flatten_datasets(collection: 'CollectionSchema') -> List[DatasetInfo]:
 @dataclass
 class CollectionSchema:
     """Schema describing a collection of datasets, possibly nested."""
+
     name: str
     weight: float = 1.0
     datasets: List[Union[DatasetInfo, 'CollectionSchema']] = field(default_factory=list)
@@ -91,12 +94,12 @@ class CollectionSchema:
 
     def dump_json(self, file_path: str) -> None:
         d = self.to_dict()
-        with open(file_path, 'w') as f:
+        with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(d, f, ensure_ascii=False, indent=4)
 
     @classmethod
     def from_json(cls, file_path: str) -> 'CollectionSchema':
-        with open(file_path, 'r') as f:
+        with open(file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         return cls.from_dict(data)
 
@@ -112,14 +115,17 @@ if __name__ == '__main__':
     schema = CollectionSchema(
         name='reasoning',
         datasets=[
-            CollectionSchema(name='english', datasets=[
-                DatasetInfo(name='arc', weight=1, tags=['en']),
-            ]),
+            CollectionSchema(
+                name='english',
+                datasets=[
+                    DatasetInfo(name='arc', weight=1, tags=['en']),
+                ],
+            ),
             CollectionSchema(
                 name='chinese',
-                datasets=[DatasetInfo(name='ceval', weight=1, tags=['zh'], args={'subset_list': ['logic']})]
-            )
-        ]
+                datasets=[DatasetInfo(name='ceval', weight=1, tags=['zh'], args={'subset_list': ['logic']})],
+            ),
+        ],
     )
     print(schema)
     print(schema.flatten())
@@ -130,4 +136,4 @@ if __name__ == '__main__':
     # 打印扁平化后的结果
     for dataset in schema.flatten():
         print(f'Dataset: {dataset.name}')
-        print(f"Hierarchy: {' -> '.join(dataset.hierarchy)}")
+        print(f'Hierarchy: {" -> ".join(dataset.hierarchy)}')

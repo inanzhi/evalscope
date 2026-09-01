@@ -8,15 +8,16 @@ covers both the warning path and the "request still succeeds" property.
 import asyncio
 import json
 import logging
-import pytest
 import urllib.request
+
+import pytest
 
 from evalscope.agent.external.bridge import ModelProxyServer
 from evalscope.api.messages import ChatMessageAssistant
 from evalscope.api.model import GenerateConfig, Model, ModelOutput
 from evalscope.api.model.model_output import ChatCompletionChoice
 from evalscope.models.mockllm import MockLLM
-from evalscope.utils.function_utils import AsyncioLoopRunner
+from evalscope.utils.asyncio_runtime import AsyncioLoopRunner
 
 
 @pytest.fixture(autouse=True)

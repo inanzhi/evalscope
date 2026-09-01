@@ -8,6 +8,7 @@ and report generation.
 """
 
 import os
+import threading
 import traceback
 from collections import defaultdict
 from dataclasses import dataclass
@@ -15,12 +16,15 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from evalscope.api.dataset import Dataset, Sample
 from evalscope.api.evaluator import CacheManager, Evaluator, TaskState
+from evalscope.api.judge import summarize_judge_runs
 from evalscope.api.metric import AggScore, SampleScore
 from evalscope.api.registry import register_evaluator
-from evalscope.constants import HEARTBEAT_INTERVAL_SEC
+from evalscope.constants import HEARTBEAT_INTERVAL_SEC, ScoreStatus
+from evalscope.evaluation_versioning import ResolvedBenchmarkSpec, build_benchmark_identity
 from evalscope.evaluator.batch_reviewer import BatchReviewer
+from evalscope.evaluator.execution_tracker import ExecutionTracker
 from evalscope.evaluator.perf_collector import PerfCollector
-from evalscope.report import Report, gen_perf_table, gen_table
+from evalscope.report import ExecutionSummary, Report, build_analysis_context, gen_perf_table, gen_table
 from evalscope.utils.function_utils import run_in_threads_with_progress
 from evalscope.utils.logger import get_logger
 
@@ -51,6 +55,9 @@ class _WorkItem:
 
     task_state: Optional[TaskState] = None
     """Cached task state. Set when only review is required."""
+
+    prediction_persisted: bool = False
+    """Whether a newly generated prediction was durably written before review began."""
 
     @property
     def needs_predict(self) -> bool:
@@ -143,6 +150,11 @@ class DefaultEvaluator(Evaluator):
 
         # Initialize PerfCollector for collecting per-request performance metrics
         self.perf_collector = PerfCollector()
+        self._prediction_cache_lock = threading.Lock()
+        self._sample_scores_by_subset: Dict[str, List[SampleScore]] = {}
+        self._execution_tracker = ExecutionTracker()
+        self._perf_request_count = 0
+        self._perf_metric_count = 0
 
     def eval(self) -> Report:
         """
@@ -156,46 +168,76 @@ class DefaultEvaluator(Evaluator):
         Returns:
             Report: The complete evaluation report.
         """
-        logger.info(f'Start loading benchmark dataset: {self.benchmark_name}')
-        dataset_dict = {k: v for k, v in self.benchmark.load_dataset().items() if len(v) > 0}
+        try:
+            logger.info(f'Start loading benchmark dataset: {self.benchmark_name}')
+            dataset_dict = {k: v for k, v in self.benchmark.load_dataset().items() if len(v) > 0}
 
-        if not dataset_dict:
-            logger.warning(f'No samples found in any subset of {self.benchmark_name}. Skipping.')
+            if not dataset_dict:
+                logger.warning(f'No samples found in any subset of {self.benchmark_name}. Skipping.')
+                return {}
+
+            subset_list = list(dataset_dict.keys())
+
+            # Report the resolved sample total up front. `--limit` applies per subset,
+            # so on multi-subset datasets the total can be much larger than expected.
+            num_subsets = len(dataset_dict)
+            total_items = sum(len(v) for v in dataset_dict.values())
+            subset_word = 'subset' if num_subsets == 1 else 'subsets'
+            limit = self.task_config.limit
+            if limit is not None:
+                logger.warning(
+                    f'{self.benchmark_name}: {total_items} samples to evaluate '
+                    f'({num_subsets} {subset_word}, --limit={limit} per subset). '
+                    f'Remove `--limit` for a formal evaluation.'
+                )
+            else:
+                logger.info(f'{self.benchmark_name}: {total_items} samples to evaluate ({num_subsets} {subset_word})')
+            logger.info(f'Subsets of {self.benchmark_name}: {subset_list}')
+
+            # Phase 1 – build unified work pool from all subsets
+            context = self._collect_work_items(dataset_dict)
+            # Report the cache split when resuming: items still needing prediction vs. the
+            # rest loaded from cache. Derived from `total_items` so it stays accurate for
+            # batch-scoring benchmarks too (their review-pending items skip `grand_total`).
+            to_run = sum(1 for item in context.work_items if item.needs_predict)
+            if to_run < total_items:
+                logger.info(
+                    f'{self.benchmark_name}: resuming from cache — {total_items - to_run} cached, '
+                    f'{to_run} to run ({total_items} total).'
+                )
+
+            # Phase 2 – execute unified thread pool (single progress bar)
+            results_by_subset = self._run_pool(context)
+            logger.info(f'{self.benchmark_name}: predictions complete, aggregating scores...')
+
+            # Phase 3 – aggregate scores per subset (batch review happens here too)
+            agg_score_dict = self._aggregate_scores(dataset_dict, context, results_by_subset)
+            self.cache_manager.commit_review_reruns()
+            execution_summary = self._execution_tracker.summarize(dataset_dict, self._sample_scores_by_subset)
+
+            # Phase 4 – generate report
+            if not agg_score_dict:
+                logger.warning(
+                    f'No valid scores generated for {self.benchmark_name} '
+                    '(all samples filtered or failed). Writing an incomplete no-score report.'
+                )
+            else:
+                logger.info('Generating report...')
+            report = self.get_report(agg_score_dict, execution_summary)
+
+            if execution_summary.incomplete:
+                logger.warning(
+                    f'{self.benchmark_name}: score computed from {execution_summary.succeeded}/'
+                    f'{execution_summary.requested} successful samples; {execution_summary.errored} errored.'
+                )
+
+            logger.info(f'Benchmark {self.benchmark_name} evaluation finished.')
+            return report
+        except Exception:
+            self.cache_manager.discard_review_reruns()
+            raise
+        finally:
             self.finalize()
-            return {}
-
-        subset_list = list(dataset_dict.keys())
-        logger.info(f'Start evaluating {len(dataset_dict)} subsets of {self.benchmark_name}: {subset_list}')
-
-        # Phase 1 – build unified work pool from all subsets
-        context = self._collect_work_items(dataset_dict)
-        logger.info(
-            f'Unified pool: {len(context.work_items)} items to process, '
-            f'{context.total_cached} already fully cached '
-            f'({context.grand_total} total across all subsets).'
-        )
-
-        # Phase 2 – execute unified thread pool (single progress bar)
-        results_by_subset = self._run_pool(context)
-        logger.info(f'Unified pool finished for {self.benchmark_name}.')
-
-        # Phase 3 – aggregate scores per subset (batch review happens here too)
-        agg_score_dict = self._aggregate_scores(dataset_dict, context, results_by_subset)
-
-        # Phase 4 – generate report
-        if not agg_score_dict:
-            logger.warning(
-                f'No valid scores generated for {self.benchmark_name} '
-                '(all samples filtered or empty subsets). Skipping report generation.'
-            )
-            report = {}
-        else:
-            logger.info('Generating report...')
-            report = self.get_report(agg_score_dict)
-
-        self.finalize()
-        logger.info(f'Benchmark {self.benchmark_name} evaluation finished.')
-        return report
 
     # ------------------------------------------------------------------ #
     # Phase helpers                                                        #
@@ -285,8 +327,7 @@ class DefaultEvaluator(Evaluator):
             completion order.  ``sample_score`` is ``None`` for batch-scoring
             benchmarks (review is deferred to :meth:`_aggregate_scores`).
         """
-        results_by_subset: Dict[str, List[Tuple[TaskState, Optional[SampleScore]]]] = \
-            defaultdict(list)
+        results_by_subset: Dict[str, List[Tuple[TaskState, Optional[SampleScore]]]] = defaultdict(list)
 
         def worker(item: _WorkItem) -> Tuple[TaskState, Optional[SampleScore]]:
             return self._process_work_item(item, context.model_prediction_dir)
@@ -299,6 +340,7 @@ class DefaultEvaluator(Evaluator):
             tb_str = traceback.format_exc()
             logger.error(f'Processing item in subset={item.subset!r} failed: {exc}\nTraceback:\n{tb_str}')
             if self.task_config.ignore_errors:
+                self._execution_tracker.record_error(item.subset)
                 logger.warning('Error ignored, continuing with next sample.')
                 return
             raise exc
@@ -332,10 +374,14 @@ class DefaultEvaluator(Evaluator):
             ``(task_state, sample_score)`` where ``sample_score`` is ``None``
             for batch-scoring benchmarks (review deferred).
         """
-        task_state = (
-            self._predict_sample(item.sample, model_prediction_dir) if item.needs_predict else item.task_state
-        )
-        sample_score = (None if self.benchmark.use_batch_scoring else self._review_task_state(task_state))
+        task_state = self._predict_sample(item.sample, model_prediction_dir) if item.needs_predict else item.task_state
+        if item.needs_predict:
+            # A review can fail independently of inference. Persist prediction first so offline
+            # re-review never has to regenerate an already completed answer.
+            with self._prediction_cache_lock:
+                self.cache_manager.save_prediction_cache(item.subset, task_state, self.benchmark.save_metadata)
+            item.prediction_persisted = True
+        sample_score = None if self.benchmark.use_batch_scoring else self._review_task_state(task_state)
         return task_state, sample_score
 
     def _persist_result(
@@ -356,7 +402,7 @@ class DefaultEvaluator(Evaluator):
             task_state: The completed task state (prediction output).
             sample_score: The review score, or ``None`` for batch-scoring.
         """
-        if item.needs_predict:
+        if item.needs_predict and not item.prediction_persisted:
             model_result = self.cache_manager.save_prediction_cache(
                 item.subset, task_state, self.benchmark.save_metadata
             )
@@ -382,13 +428,18 @@ class DefaultEvaluator(Evaluator):
         its 0-based ``turn_index``.  Falls back to ``task_state.output`` for
         solvers that set the output directly without appending to messages.
         """
-        perfs = [(t, m.perf_metrics)
-                 for t, m in enumerate(task_state.messages)
-                 if m.role == 'assistant' and m.perf_metrics is not None]
+        assistant_messages = [(t, m) for t, m in enumerate(task_state.messages) if m.role == 'assistant']
+        self._perf_request_count += len(assistant_messages) or 1
+        perfs = [
+            (turn_index, message.perf_metrics)
+            for turn_index, message in assistant_messages
+            if message.perf_metrics is not None
+        ]
         if not perfs and task_state.output.perf_metrics is not None:
             perfs = [(0, task_state.output.perf_metrics)]
         for turn_index, perf in perfs:
             self.perf_collector.record(perf, sample_index=task_state.sample_id, turn_index=turn_index)
+        self._perf_metric_count += len(perfs)
 
     def _aggregate_scores(
         self,
@@ -422,8 +473,18 @@ class DefaultEvaluator(Evaluator):
             if self.benchmark.use_batch_scoring:
                 pending = context.review_pending_by_subset.get(subset, [])
                 new_task_states = [ts for ts, _ in pool_results]
+
+                def on_batch_error(task_state: TaskState, exc: Exception) -> None:
+                    if not self.task_config.ignore_errors:
+                        raise exc
+                    self._execution_tracker.record_error(subset)
+                    logger.warning(f'Batch review failed for sample {task_state.sample_id}: {exc}')
+
                 batch_scores = self.batch_reviewer.review_subset(
-                    subset, pending + new_task_states, review_fn=self._review_task_state
+                    subset,
+                    pending + new_task_states,
+                    review_fn=self._review_task_state,
+                    on_error=on_batch_error,
                 )
                 all_scores = cached_scores + batch_scores
             else:
@@ -435,6 +496,7 @@ class DefaultEvaluator(Evaluator):
                 continue
 
             logger.info(f'Aggregating scores for subset: {subset}')
+            self._sample_scores_by_subset[subset] = all_scores
             agg_score_dict[subset] = self.benchmark.aggregate_scores(sample_scores=all_scores)
 
         return agg_score_dict
@@ -467,7 +529,7 @@ class DefaultEvaluator(Evaluator):
         sample_score = self.benchmark.calculate_metrics(task_state=task_state)
         return sample_score
 
-    def get_report(self, agg_score_dict: Dict[str, List[AggScore]]) -> Report:
+    def get_report(self, agg_score_dict: Dict[str, List[AggScore]], execution_summary: ExecutionSummary) -> Report:
         """
         Generate a comprehensive evaluation report from aggregated scores.
 
@@ -483,40 +545,62 @@ class DefaultEvaluator(Evaluator):
         Returns:
             Report: The complete evaluation report.
         """
-        assert agg_score_dict, 'No scores to generate report from.'
-
         # Get paths for saving the report
         report_path = self.cache_manager.get_report_path()
         report_file = self.cache_manager.get_report_file()
 
-        # Generate the main evaluation report using benchmark-specific logic
-        report = self.benchmark.generate_report(
-            scores=agg_score_dict, model_name=self.model_name, output_dir=report_path
-        )
+        if agg_score_dict:
+            report = self.benchmark.generate_report(
+                scores=agg_score_dict, model_name=self.model_name, output_dir=report_path
+            )
+            report.judge_summary = summarize_judge_runs(self._sample_scores_by_subset.values())
+        else:
+            report = Report(
+                name=self.benchmark_name,
+                dataset_name=self.benchmark_name,
+                dataset_pretty_name=self.benchmark.pretty_name,
+                dataset_description=self.benchmark.description,
+                model_name=self.model_name,
+            )
+        report.execution_summary = execution_summary
 
         # Generate and display a summary table of results
-        try:
-            report_table = gen_table(report_list=[report], add_overall_metric=self.benchmark.add_overall_metric)
-            logger.info(f'\n{self.benchmark_name} report table:'
-                        f'\n{report_table} \n')
-        except Exception:
-            logger.error('Failed to generate report table.')
+        if agg_score_dict:
+            try:
+                report_table = gen_table(report_list=[report], add_overall_metric=self.benchmark.add_overall_metric)
+                logger.info(f'\n{self.benchmark_name} report table:\n{report_table} \n')
+            except Exception as e:
+                logger.error(f'Failed to generate report table: {e}')
 
         # Generate detailed analysis if requested in configuration
-        if self.task_config.analysis_report:
+        if self.task_config.analysis_report and agg_score_dict:
             logger.info('Generating report analysis, please wait ...')
-            analysis = report.generate_analysis(self.task_config)
+            meta = self.benchmark.benchmark_meta
+            spec = ResolvedBenchmarkSpec.from_meta(meta, self.task_config)
+            identity = build_benchmark_identity(spec, meta.evaluation_version, self.task_config)
+            analysis = report.generate_analysis(
+                self.task_config,
+                build_analysis_context(meta, spec, identity, report),
+            )
             logger.info(f'Report analysis:\n{analysis}')
         else:
             logger.info('Skipping report analysis (`analysis_report=False`).')
 
         # Inject perf metrics into the report when collect_perf is enabled
         if self.task_config.collect_perf:
-            report.perf_metrics = self.perf_collector.get_perf_dict() or None
+            perf_metrics = self.perf_collector.get_perf_dict()
+            perf_metrics['coverage'] = {
+                'requests_with_metrics': self._perf_metric_count,
+                'total_requests': self._perf_request_count,
+            }
+            from evalscope.metrics.semantics import attach_perf_semantics
+
+            report.perf_metrics = attach_perf_semantics(perf_metrics)
 
         # Save the complete report to file
         report.to_json(report_file)
-        logger.info(f'Dump report to: {report_file} \n')
+        report_kind = 'report' if agg_score_dict else 'incomplete no-score report'
+        logger.info(f'Dump {report_kind} to: {report_file} \n')
 
         # Print per-benchmark perf table when perf data is available
         if self.task_config.collect_perf and report.perf_metrics:
@@ -531,3 +615,4 @@ class DefaultEvaluator(Evaluator):
 
     def finalize(self, *args, **kwargs):
         self.benchmark.finalize(*args, **kwargs)
+        self.cache_manager.close()

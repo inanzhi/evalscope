@@ -12,7 +12,9 @@ from evalscope.api.messages import (
 )
 from evalscope.api.model import ChatCompletionChoice, GenerateConfig, ModelOutput, ModelUsage, StopReason
 from evalscope.api.tool import ToolCall, ToolChoice, ToolFunction, ToolInfo, parse_tool_call
-from evalscope.utils.url_utils import file_as_data_uri, is_data_uri, is_http_url
+from evalscope.utils import get_secret_value
+from evalscope.utils.uri_utils import file_as_data_uri, is_data_uri, is_http_url
+
 from .openai import openai_assistant_content
 
 try:
@@ -40,13 +42,16 @@ def openai_response_message(message: ChatMessage) -> List[Dict[str, Any]]:
     if message.role == 'system':
         return [{'role': 'system', 'content': message.text}]
     if message.role == 'user':
-        return [{
-            'role': 'user',
-            'content': (
-                message.content if isinstance(message.content, str) else
-                [openai_response_input_part(content) for content in message.content]
-            ),
-        }]
+        return [
+            {
+                'role': 'user',
+                'content': (
+                    message.content
+                    if isinstance(message.content, str)
+                    else [openai_response_input_part(content) for content in message.content]
+                ),
+            }
+        ]
     if message.role == 'assistant':
         return openai_response_assistant_message(message)
     if message.role == 'tool':
@@ -149,7 +154,7 @@ def openai_response_params(model: str, config: GenerateConfig, tools: bool) -> D
     if config.extra_query:
         params['extra_query'] = config.extra_query
     if config.extra_headers:
-        params['extra_headers'] = config.extra_headers
+        params['extra_headers'] = get_secret_value(config.extra_headers)
     return params
 
 

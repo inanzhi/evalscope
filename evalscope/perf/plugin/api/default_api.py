@@ -1,4 +1,3 @@
-import aiohttp
 import codecs
 import json
 import sys
@@ -6,9 +5,11 @@ import time
 import traceback
 from typing import Any, Dict
 
+import aiohttp
+
 from evalscope.perf.arguments import Arguments
 from evalscope.perf.plugin.api.base import ApiPluginBase
-from evalscope.perf.utils.benchmark_util import BenchmarkData
+from evalscope.perf.utils.benchmark_util import BenchmarkData, is_stream_body
 from evalscope.utils.logger import get_logger
 
 logger = get_logger()
@@ -22,6 +23,31 @@ class StreamedResponseHandler:
         self.buffer = ''
         # Keep decoder state across chunks to handle split multibyte sequences
         self.decoder = codecs.getincrementaldecoder('utf-8')()
+
+    @staticmethod
+    def _extract_sse_payload(message: str) -> str | None:
+        """Extract and flatten the 'data:' field(s) from an SSE message block.
+
+        SSE message blocks may contain multiple fields (id:, event:, retry:,
+        data:, ...). Only the 'data:' field(s) carry the JSON payload; other
+        fields are metadata and must be skipped, otherwise they would be fed
+        into ``json.loads`` and raise ``JSONDecodeError``. Multiple 'data:'
+        lines are flattened into a single line so downstream consumers that
+        only recognize one leading 'data:' prefix (e.g. this class itself and
+        ``_extract_sse_data`` in ``openai_responses_api.py``) don't silently
+        drop continuation lines.
+        """
+        data_values: list[str] = []
+        # SSE lines use CR/LF only; splitlines() also splits valid JSON characters
+        # such as U+0085, U+2028, and U+2029.
+        for line in message.strip().split('\n'):
+            if line.startswith('data:'):
+                data_values.append(line.removeprefix('data:').lstrip(' '))
+
+        if not data_values:
+            return None
+        payload = ''.join(data_values).strip()
+        return f'data: {payload}' if payload else None
 
     def add_chunk(self, chunk_bytes: bytes) -> list[str]:
         """Add a chunk of bytes to the buffer and return any complete
@@ -42,21 +68,26 @@ class StreamedResponseHandler:
         # Split by double newlines (SSE message separator)
         while '\n\n' in self.buffer:
             message, self.buffer = self.buffer.split('\n\n', 1)
-            message = message.strip()
-            if message:
-                messages.append(message)
+            normalized_message = self._extract_sse_payload(message)
+            if normalized_message:
+                messages.append(normalized_message)
 
-        # if self.buffer is not empty, check if it is a complete message
-        # by removing data: prefix and check if it is a valid JSON
-        if self.buffer.startswith('data:'):
-            message_content = self.buffer.removeprefix('data:').strip()
+        # If self.buffer is not empty, check if it is a complete message by
+        # extracting the 'data:' field(s) and checking if it is valid JSON.
+        # This must reuse the same extraction as above, otherwise a leftover
+        # chunk that starts with metadata fields (id:/event:) instead of
+        # 'data:' would get stuck in the buffer forever when the stream ends
+        # without a trailing "\n\n" separator.
+        normalized_buffer = self._extract_sse_payload(self.buffer)
+        if normalized_buffer:
+            message_content = normalized_buffer.removeprefix('data:').strip()
             if message_content == '[DONE]':
-                messages.append(self.buffer.strip())
+                messages.append(normalized_buffer)
                 self.buffer = ''
             elif message_content:
                 try:
                     json.loads(message_content)
-                    messages.append(self.buffer.strip())
+                    messages.append(normalized_buffer)
                     self.buffer = ''
                 except json.JSONDecodeError:
                     # Incomplete JSON, wait for more chunks.
@@ -89,21 +120,21 @@ class DefaultApiPlugin(ApiPluginBase):
         data = json.dumps(body, ensure_ascii=False)  # serialize to JSON
 
         output = BenchmarkData()
-        ttft = 0.0
         generated_text = ''
         st = time.perf_counter()
         output.start_time = st
         output.request = data
         most_recent_timestamp = st
+        last_output_timestamp: float | None = None
         try:
             async with client_session.post(url=url, data=data, headers=headers) as response:
                 content_type = response.headers.get('Content-Type', '')
                 if response.status == 200:
                     # Handle streaming responses (SSE)
                     if 'text/event-stream' in content_type:
+                        output.is_stream = True
                         handler = StreamedResponseHandler()
                         async for chunk_bytes in response.content.iter_any():
-
                             if not chunk_bytes:
                                 continue
 
@@ -126,20 +157,23 @@ class DefaultApiPlugin(ApiPluginBase):
                                             content = choices[0].get('text') or ''
                                         else:
                                             delta = choices[0].get('delta', {})
-                                            content = (delta.get('content')
-                                                       or '') + (delta.get('reasoning_content') or '')
-                                        # First token
-                                        if ttft == 0.0:
-                                            ttft = timestamp - st
-                                            output.first_chunk_latency = ttft
+                                            content = (delta.get('content') or '') + (
+                                                delta.get('reasoning_content') or ''
+                                            )
+                                        if content:
+                                            # First token
+                                            if last_output_timestamp is None:
+                                                output.first_chunk_latency = timestamp - st
 
-                                        # Decoding phase
-                                        else:
-                                            output.inter_chunk_latency.append(timestamp - most_recent_timestamp)
+                                            # Decoding phase
+                                            else:
+                                                output.inter_chunk_latency.append(timestamp - last_output_timestamp)
+
+                                            last_output_timestamp = timestamp
 
                                         generated_text += content
                                         output.response_messages.append(data)
-                                    elif usage := data.get('usage'):
+                                    if usage := data.get('usage'):
                                         output.prompt_tokens = usage.get('prompt_tokens')
                                         output.completion_tokens = usage.get('completion_tokens')
                                         # Extract real cached tokens from prompt_tokens_details
@@ -230,5 +264,9 @@ class DefaultApiPlugin(ApiPluginBase):
             exc_info = sys.exc_info()
             output.error = ''.join(traceback.format_exception(*exc_info))
             logger.error(output.error)
+
+        # Fall back to request body — response may not have been SSE (or arrived at all).
+        if not output.success and not output.is_stream:
+            output.is_stream = is_stream_body(body)
 
         return output

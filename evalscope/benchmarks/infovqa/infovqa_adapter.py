@@ -58,10 +58,8 @@ InfoVQA (Infographic Visual Question Answering) is a benchmark designed to evalu
     )
 )
 class InfoVQAAdapter(VisionLanguageAdapter):
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.add_aggregation_name = False
 
     def record_to_sample(self, record: Dict[str, Any]) -> Sample:
 
@@ -79,7 +77,7 @@ class InfoVQAAdapter(VisionLanguageAdapter):
                 'answer_type': record.get('answer_type'),
                 'image_url': record.get('image_url'),
                 'ocr': record.get('ocr'),
-            }
+            },
         )
 
     def extract_answer(self, prediction: str, task_state: TaskState) -> str:

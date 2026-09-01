@@ -29,15 +29,17 @@ class TestCodeBenchmark(TestBenchmark):
                 'parallel_tool_calls': True,
                 'stream': True,
             },
-            'judge_strategy': JudgeStrategy.AUTO,
-            'judge_model_args': {
-                'model_id': 'qwen2.5-72b-instruct',
+            'judge': {
+                'strategy': JudgeStrategy.AUTO,
+                'models': {
+                'model_id': 'qwen-plus',
                 'api_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
                 'api_key': env.get('DASHSCOPE_API_KEY'),
                 'generation_config': {
                     'temperature': 0.0,
                     'max_tokens': 4096,
                 }
+                },
             },
             'use_sandbox': True,
             'sandbox_type': 'docker',
@@ -212,3 +214,33 @@ class TestCodeBenchmark(TestBenchmark):
         ],
         }
         self._run_dataset_test('multiple_humaneval', dataset_args=dataset_args, limit=10, sandbox_type=sandbox_type, use_sandbox=use_sandbox, sandbox_manager_config=sandbox_manager_config)
+
+    def test_bigcodebench(self):
+        """Test BigCodeBench dataset (instruct mode)."""
+        dataset_args = {
+            'extra_params': {
+                'split': 'instruct',
+                'calibrate': True,
+            }
+        }
+        self._run_dataset_test('bigcodebench', dataset_args=dataset_args, limit=5)
+
+    def test_bigcodebench_complete(self):
+        """Test BigCodeBench dataset (complete mode)."""
+        dataset_args = {
+            'extra_params': {
+                'split': 'complete',
+                'calibrate': True,
+            }
+        }
+        self._run_dataset_test('bigcodebench', dataset_args=dataset_args, limit=5)
+
+    def test_bigcodebench_hard(self):
+        """Test BigCodeBench-Hard dataset."""
+        dataset_args = {
+            'extra_params': {
+                'split': 'instruct',
+                'calibrate': True,
+            }
+        }
+        self._run_dataset_test('bigcodebench_hard', dataset_args=dataset_args, limit=5)

@@ -23,20 +23,20 @@ logger = get_logger()
 ## Overview
 
 General-VMCQ is a customizable visual multiple-choice question answering benchmark for multimodal models.
-It uses MMMU-style format with image/video placeholders in text, supporting flexible media inputs.
+It uses MMMU-style format with image/video/audio placeholders in text, supporting flexible media inputs.
 
 ## Task Description
 
 - **Task Type**: Visual Multiple-Choice Question Answering
-- **Input**: Question with `<image N>`/`<video N>` placeholders + choice options + media
+- **Input**: Question with `<image N>`/`<video N>`/`<audio N>` placeholders + choice options + media
 - **Output**: Selected answer choice
 - **Flexibility**: Supports custom datasets via local files
 
 ## Key Features
 
-- MMMU-style format (not OpenAI message format)
-- Supports up to 100 images and 100 videos per sample
-- Flexible image/video input (path, URL, or base64 data URL)
+- MMMU-style format (not OpenAI message format), supporting up to 100 images/videos/audios per sample
+- Flexible image/video/audio input (path, URL, base64 data URL, or Hugging Face media columns with `{"path": ...}` or `{"bytes": ...}`)
+- Additional format support for `images`/`videos`/`audios` column for unlimited list of media
 - Chain-of-thought prompt template option
 - Custom dataset support via local file loading
 
@@ -45,7 +45,7 @@ It uses MMMU-style format with image/video placeholders in text, supporting flex
 - Default configuration uses **0-shot** evaluation
 - Primary metric: **Accuracy**
 - Train split: **dev**, Eval split: **val**
-- Images/videos are plain strings (do not wrap in `{{"url": ...}}`)
+- Raw media bytes require parquet; plaintext files carry paths, URLs, or base64 data URLs
 - See [User Guide](https://evalscope.readthedocs.io/en/latest/advanced_guides/custom_dataset/vlm.html) for dataset format
 """,  # noqa: E501
         tags=[Tags.MULTIPLE_CHOICE, Tags.CUSTOM, Tags.MULTI_MODAL],
@@ -67,6 +67,8 @@ class GeneralVMCQAdapter(VisionLanguageAdapter, MultiChoiceAdapter):
         "question": "<image 1> What animal is this?",
         "options": ["Dog", "Cat", "Tiger", "Elephant"],
         "image_1": "custom_eval/multimodal/images/dog.jpg",
+        # or use a Hugging Face Image undecoded Sequence(Image()) 'images' column
+        # "images": [{"path": "custom_eval/multimodal/images/dog.jpg"}, {"bytes": ...}]
         "answer": "A"
     }
     Video data format example:
@@ -76,14 +78,17 @@ class GeneralVMCQAdapter(VisionLanguageAdapter, MultiChoiceAdapter):
         "video_1": "custom_eval/multimodal/videos/sample.mp4",
         "answer": "C"
     }
-    - Images/videos are plain strings: base64 data URL or local/remote path.
-      Do not wrap in {"url": ...} and do not use 'bytes'.
+    - JSONL/CSV/TSV inputs typically use plain image/video strings: base64 data
+        URLs or local/remote paths.
+    - Parquet inputs may also provide undecoded dict values such as
+        ``{"bytes": ...}`` or ``{"path": ...}``, which are later converted to data URLs.
     - 'options' is a list (JSON array) of strings; do NOT include "A.", "B." prefixes.
     - 'answer' is the correct letter (e.g., 'A').
     """  # noqa: E501
 
     MAX_IMAGES: int = 100
     MAX_VIDEOS: int = 100
+    MAX_AUDIOS: int = 100
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -112,18 +117,9 @@ class GeneralVMCQAdapter(VisionLanguageAdapter, MultiChoiceAdapter):
             tuple: (content_list, answers_list)
         """
         # Prepare image map
-        image_map: Dict[int, str] = {}
-        for i in range(GeneralVMCQAdapter.MAX_IMAGES):
-            image_map[i + 1] = record.get(f'image_{i+1}')
-
-        video_map: Dict[int, Dict[str, Any]] = {}
-        for i in range(GeneralVMCQAdapter.MAX_VIDEOS):
-            video = record.get(f'video_{i+1}')
-            if video:
-                video_map[i + 1] = {
-                    'url': video,
-                    'format': record.get(f'video_{i+1}_format'),
-                }
+        image_map = self._extract_media(record, 'image')
+        video_map = self._extract_media(record, 'video')
+        audio_map = self._extract_media(record, 'audio')
 
         raw_options = record.get('options')
         answers_list: List[str]
@@ -141,5 +137,7 @@ class GeneralVMCQAdapter(VisionLanguageAdapter, MultiChoiceAdapter):
         else:
             raise ValueError('Unsupported options format; expected list or JSON string of list')
         full_text = prompt(question=record['question'], choices=answers_list, template=self.prompt_template)
-        content_list = self._parse_text_with_media(full_text, image_map=image_map, video_map=video_map)
+        content_list = self._parse_text_with_media(
+            full_text, image_map=image_map, video_map=video_map, audio_map=audio_map
+        )
         return content_list, answers_list

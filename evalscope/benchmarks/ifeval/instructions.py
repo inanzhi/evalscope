@@ -19,6 +19,8 @@ import logging
 import random
 import re
 import string
+import threading
+from types import ModuleType
 from typing import Dict, Optional, Sequence, Union
 
 from . import instructions_util
@@ -100,6 +102,42 @@ _ALL_CAPITAL_WORD_FREQUENCY = 20
 _NUM_WORDS_LOWER_LIMIT = 100
 _NUM_WORDS_UPPER_LIMIT = 500
 
+_LANGDETECT_LOCK = threading.Lock()
+_langdetect_module: Optional[ModuleType] = None
+
+
+def _import_langdetect() -> ModuleType:
+    """Import `langdetect` with deterministic detection.
+
+    Two independent sources of non-determinism have to be neutralized, otherwise
+    identical responses can be scored differently (e.g. across `repeats`):
+
+    1. `langdetect` samples randomly while inferring, so the same text may be
+       detected as different languages across calls unless the seed is pinned.
+       See https://github.com/Mimino666/langdetect/issues/3
+    2. `langdetect.detect()` lazily builds a process-global detector factory
+       *without any lock*. Concurrent first calls therefore race: several threads
+       each build a factory while others already detect against one whose
+       language profiles are still half-loaded, which yields wrong results for
+       the first samples of a parallel evaluation. Building the factory once,
+       under a lock, before any detection removes that race.
+    """
+    global _langdetect_module
+
+    if _langdetect_module is not None:
+        return _langdetect_module
+
+    with _LANGDETECT_LOCK:
+        if _langdetect_module is None:
+            import langdetect
+            from langdetect.detector_factory import init_factory
+
+            langdetect.DetectorFactory.seed = 0
+            init_factory()
+            _langdetect_module = langdetect
+
+    return _langdetect_module
+
 
 class Instruction:
     """An instruction template."""
@@ -163,7 +201,7 @@ class ResponseLanguageChecker(Instruction):
           True if the language of `value` follows instruction; otherwise False.
         """
         assert isinstance(value, str)
-        import langdetect
+        langdetect = _import_langdetect()
         try:
             return langdetect.detect(value) == self._language
         except langdetect.LangDetectException as e:
@@ -199,13 +237,12 @@ class NumberOfSentences(Instruction):
             self._comparison_relation = random.choice(_COMPARISON_RELATION)
         elif relation not in _COMPARISON_RELATION:
             raise ValueError(
-                'The supported relation for comparison must be in '
-                f'{_COMPARISON_RELATION}, but {relation} is given.'
+                f'The supported relation for comparison must be in {_COMPARISON_RELATION}, but {relation} is given.'
             )
         else:
             self._comparison_relation = relation
 
-        self._description_pattern = ('Your response should contain {relation} {num_sentences} sentences.')
+        self._description_pattern = 'Your response should contain {relation} {num_sentences} sentences.'
         return self._description_pattern.format(
             relation=self._comparison_relation,
             num_sentences=self._num_sentences_threshold,
@@ -305,7 +342,9 @@ class BulletListChecker(Instruction):
             self._num_bullets = random.randint(1, _NUM_BULLETS)
         self._description_pattern = (
             'Your answer must contain exactly {num_bullets} bullet points. '
-            + 'Use the markdown bullet points such as:\n' + '* This is point 1. \n' + '* This is point 2'
+            + 'Use the markdown bullet points such as:\n'
+            + '* This is point 1. \n'
+            + '* This is point 2'
         )
         return self._description_pattern.format(num_bullets=self._num_bullets)
 
@@ -341,7 +380,7 @@ class ConstrainedResponseChecker(Instruction):
         """Build the instruction description."""
         # A sequence of string(s) representing the options of the expected response.
         self._constrained_responses = _CONSTRAINED_RESPONSE_OPTIONS
-        self._description_pattern = ('Answer with one of the following options: {response_options}')
+        self._description_pattern = 'Answer with one of the following options: {response_options}'
         return self._description_pattern.format(response_options=self._constrained_responses)
 
     def get_instruction_args(self):
@@ -483,7 +522,7 @@ class SectionChecker(Instruction):
         Returns:
           A string representing the instruction description.
         """
-        self._section_spliter = (section_spliter.strip() if isinstance(section_spliter, str) else section_spliter)
+        self._section_spliter = section_spliter.strip() if isinstance(section_spliter, str) else section_spliter
         if self._section_spliter is None:
             self._section_spliter = random.choice(_SECTION_SPLITER)
 
@@ -493,8 +532,11 @@ class SectionChecker(Instruction):
 
         self._description_pattern = (
             'Your response must have {num_sections} sections. Mark the beginning '
-            + 'of each section with {section_spliter} X, such as:\n' + '{section_spliter} 1\n'
-            + '[content of section 1]\n' + '{section_spliter} 2\n' + '[content of section 2]'
+            + 'of each section with {section_spliter} X, such as:\n'
+            + '{section_spliter} 1\n'
+            + '[content of section 1]\n'
+            + '{section_spliter} 2\n'
+            + '[content of section 2]'
         )
 
         return self._description_pattern.format(num_sections=self._num_sections, section_spliter=self._section_spliter)
@@ -596,9 +638,7 @@ class PostscriptChecker(Instruction):
         Returns:
           A string representing the instruction description.
         """
-        self._postscript_marker = (
-            postscript_marker.strip() if isinstance(postscript_marker, str) else postscript_marker
-        )
+        self._postscript_marker = postscript_marker.strip() if isinstance(postscript_marker, str) else postscript_marker
         if self._postscript_marker is None:
             self._postscript_marker = random.choice(_POSTSCRIPT_MARKER)
 
@@ -654,12 +694,12 @@ class RephraseChecker(Instruction):
           A string representing the instruction description.
         """
         if not self.is_change(original_message):
-            raise ValueError(f'Message {original_message} does not contain changes '
-                             'in the form of *change me*.')
+            raise ValueError(f'Message {original_message} does not contain changes in the form of *change me*.')
 
         self._reference_without_change = original_message
         self._description = (
-            'Rephrasing: Your rephrased response should only' + 'change the words/sentences in between two asterisks'
+            'Rephrasing: Your rephrased response should only'
+            + 'change the words/sentences in between two asterisks'
             + 'such as *change me*.'
         )
         return self._description
@@ -685,8 +725,7 @@ class RephraseChecker(Instruction):
         """
 
         if not self.is_change(value):
-            raise ValueError(f'value {value} does not contain '
-                             'changes in the form of *change me*.')
+            raise ValueError(f'value {value} does not contain changes in the form of *change me*.')
 
         response_without_changes = self.strip_changes(value)
         reference_without_changes = self.strip_changes(self._reference_without_change)
@@ -774,8 +813,7 @@ class KeywordFrequencyChecker(Instruction):
             self._comparison_relation = random.choice(_COMPARISON_RELATION)
         elif relation not in _COMPARISON_RELATION:
             raise ValueError(
-                'The supported relation for comparison must be in '
-                f'{_COMPARISON_RELATION}, but {relation} is given.'
+                f'The supported relation for comparison must be in {_COMPARISON_RELATION}, but {relation} is given.'
             )
         else:
             self._comparison_relation = relation
@@ -839,8 +877,7 @@ class NumberOfWords(Instruction):
             self._comparison_relation = random.choice(_COMPARISON_RELATION)
         elif relation not in _COMPARISON_RELATION:
             raise ValueError(
-                'The supported relation for comparison must be in '
-                f'{_COMPARISON_RELATION}, but {relation} is given.'
+                f'The supported relation for comparison must be in {_COMPARISON_RELATION}, but {relation} is given.'
             )
         else:
             self._comparison_relation = relation
@@ -872,8 +909,7 @@ class JsonFormat(Instruction):
 
     def build_description(self):
         self._description_pattern = (
-            'Entire output should be wrapped in JSON format. You can use markdown'
-            ' ticks such as ```.'
+            'Entire output should be wrapped in JSON format. You can use markdown ticks such as ```.'
         )
         return self._description_pattern
 
@@ -887,8 +923,13 @@ class JsonFormat(Instruction):
 
     def check_following(self, value):
         value = (
-            value.strip().removeprefix('```json').removeprefix('```Json').removeprefix('```JSON').removeprefix('```').
-            removesuffix('```').strip()
+            value.strip()
+            .removeprefix('```json')
+            .removeprefix('```Json')
+            .removeprefix('```JSON')
+            .removeprefix('```')
+            .removesuffix('```')
+            .strip()
         )
         try:
             json.loads(value)
@@ -919,7 +960,7 @@ class ParagraphFirstWordCheck(Instruction):
             self._num_paragraphs = random.randint(1, _NUM_PARAGRAPHS)
 
         self._nth_paragraph = nth_paragraph
-        if (self._nth_paragraph is None or self._nth_paragraph <= 0 or self._nth_paragraph > self._num_paragraphs):
+        if self._nth_paragraph is None or self._nth_paragraph <= 0 or self._nth_paragraph > self._num_paragraphs:
             self._nth_paragraph = random.randint(1, self._num_paragraphs + 1)
 
         self._first_word = first_word
@@ -1025,7 +1066,7 @@ class KeySentenceChecker(Instruction):
         else:
             self._num_sentences = num_sentences
 
-        self._description_pattern = ('Include {num_sentences} of the following sentences {key_sentences}')
+        self._description_pattern = 'Include {num_sentences} of the following sentences {key_sentences}'
 
         return self._description_pattern.format(num_sentences=self._num_sentences, key_sentences=self._key_sentences)
 
@@ -1070,7 +1111,7 @@ class ForbiddenWords(Instruction):
         else:
             self._forbidden_words = list(set(forbidden_words))
         self._forbidden_words = sorted(self._forbidden_words)
-        self._description_pattern = ('Do not include keywords {forbidden_words} in the response.')
+        self._description_pattern = 'Do not include keywords {forbidden_words} in the response.'
 
         return self._description_pattern.format(forbidden_words=self._forbidden_words)
 
@@ -1111,9 +1152,12 @@ class RephraseParagraph(Instruction):
         self._high = high
 
         self._description = (
-            'Rephrase the following paragraph: ' + '{original_paragraph}\nYour response should have '
-            + 'between {low} and {high} of the same words. ' + 'Words are the same if and only if all of the '
-            + 'letters, ignoring cases, are the same. For ' + "example, 'run' is the same as 'Run' but different "
+            'Rephrase the following paragraph: '
+            + '{original_paragraph}\nYour response should have '
+            + 'between {low} and {high} of the same words. '
+            + 'Words are the same if and only if all of the '
+            + 'letters, ignoring cases, are the same. For '
+            + "example, 'run' is the same as 'Run' but different "
             + "to 'ran'."
         )
 
@@ -1181,7 +1225,7 @@ class TwoResponsesChecker(Instruction):
                     return False
             else:
                 valid_responses.append(response)
-        return (len(valid_responses) == 2 and valid_responses[0].strip() != valid_responses[1].strip())
+        return len(valid_responses) == 2 and valid_responses[0].strip() != valid_responses[1].strip()
 
 
 class RepeatPromptThenAnswer(Instruction):
@@ -1233,12 +1277,11 @@ class EndChecker(Instruction):
         Returns:
           A string representing the instruction description.
         """
-        self._end_phrase = (end_phrase.strip() if isinstance(end_phrase, str) else end_phrase)
+        self._end_phrase = end_phrase.strip() if isinstance(end_phrase, str) else end_phrase
         if self._end_phrase is None:
             self._end_phrase = random.choice(_ENDING_OPTIONS)
         self._description_pattern = (
-            'Finish your response with this exact phrase {ender}. '
-            'No other words should follow this phrase.'
+            'Finish your response with this exact phrase {ender}. No other words should follow this phrase.'
         )
         return self._description_pattern.format(ender=self._end_phrase)
 
@@ -1262,8 +1305,7 @@ class TitleChecker(Instruction):
     def build_description(self):
         """Build the instruction description."""
         self._description_pattern = (
-            'Your answer must contain a title, wrapped in double angular brackets,'
-            ' such as <<poem of joy>>.'
+            'Your answer must contain a title, wrapped in double angular brackets, such as <<poem of joy>>.'
         )
         return self._description_pattern
 
@@ -1305,7 +1347,7 @@ class LetterFrequencyChecker(Instruction):
         Returns:
           A string representing the instruction description.
         """
-        if (not letter or len(letter) > 1 or ord(letter.lower()) < 97 or ord(letter.lower()) > 122):
+        if not letter or len(letter) > 1 or ord(letter.lower()) < 97 or ord(letter.lower()) > 122:
             self._letter = random.choice(list(string.ascii_letters))
         else:
             self._letter = letter.strip()
@@ -1319,15 +1361,13 @@ class LetterFrequencyChecker(Instruction):
             self._comparison_relation = random.choice(_COMPARISON_RELATION)
         elif let_relation not in _COMPARISON_RELATION:
             raise ValueError(
-                'The supported relation for comparison must be in '
-                f'{_COMPARISON_RELATION}, but {let_relation} is given.'
+                f'The supported relation for comparison must be in {_COMPARISON_RELATION}, but {let_relation} is given.'
             )
         else:
             self._comparison_relation = let_relation
 
         self._description_pattern = (
-            'In your response, the letter {letter} should appear {let_relation}'
-            ' {let_frequency} times.'
+            'In your response, the letter {letter} should appear {let_relation} {let_frequency} times.'
         )
 
         return self._description_pattern.format(
@@ -1364,7 +1404,7 @@ class CapitalLettersEnglishChecker(Instruction):
 
     def build_description(self):
         """Build the instruction description."""
-        self._description_pattern = ('Your entire response should be in English, and in all capital letters.')
+        self._description_pattern = 'Your entire response should be in English, and in all capital letters.'
         return self._description_pattern
 
     def get_instruction_args(self):
@@ -1377,7 +1417,7 @@ class CapitalLettersEnglishChecker(Instruction):
     def check_following(self, value):
         """Checks that the response is in English and in all capital letters."""
         assert isinstance(value, str)
-        import langdetect
+        langdetect = _import_langdetect()
         try:
             return value.isupper() and langdetect.detect(value) == 'en'
         except langdetect.LangDetectException as e:
@@ -1392,8 +1432,7 @@ class LowercaseLettersEnglishChecker(Instruction):
     def build_description(self):
         """Build the instruction description."""
         self._description_pattern = (
-            'Your entire response should be in English, and in all lowercase'
-            ' letters. No capital letters are allowed.'
+            'Your entire response should be in English, and in all lowercase letters. No capital letters are allowed.'
         )
         return self._description_pattern
 
@@ -1407,7 +1446,7 @@ class LowercaseLettersEnglishChecker(Instruction):
     def check_following(self, value):
         """Checks that the response is in English and in all lowercase letters."""
         assert isinstance(value, str)
-        import langdetect
+        langdetect = _import_langdetect()
         try:
             return value.islower() and langdetect.detect(value) == 'en'
         except langdetect.LangDetectException as e:
@@ -1421,7 +1460,7 @@ class CommaChecker(Instruction):
 
     def build_description(self):
         """Build the instruction description."""
-        self._description_pattern = ('In your entire response, refrain from the use of any commas.')
+        self._description_pattern = 'In your entire response, refrain from the use of any commas.'
         return self._description_pattern
 
     def get_instruction_args(self):
@@ -1469,8 +1508,7 @@ class CapitalWordFrequencyChecker(Instruction):
             )
 
         self._description_pattern = (
-            'In your response, words with all capital letters should appear'
-            ' {relation} {frequency} times.'
+            'In your response, words with all capital letters should appear {relation} {frequency} times.'
         )
 
         return self._description_pattern.format(frequency=self._frequency, relation=self._comparison_relation)
@@ -1505,7 +1543,7 @@ class QuotationChecker(Instruction):
 
     def build_description(self):
         """Build the instruction description."""
-        self._description_pattern = ('Wrap your entire response with double quotation marks.')
+        self._description_pattern = 'Wrap your entire response with double quotation marks.'
         return self._description_pattern
 
     def get_instruction_args(self):

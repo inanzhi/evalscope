@@ -1,5 +1,6 @@
 # Copyright (c) Alibaba, Inc. and its affiliates.
 from evalscope.api.benchmark import BenchmarkMeta, Text2ImageAdapter
+from evalscope.api.metric import MetricSelector
 from evalscope.api.registry import register_benchmark
 from evalscope.constants import Tags
 from evalscope.utils.logger import get_logger
@@ -42,12 +43,12 @@ TIFA-160 is a text-to-image benchmark with 160 carefully curated prompts designe
         tags=[Tags.TEXT_TO_IMAGE],
         subset_list=['TIFA-160'],
         metric_list=['PickScore'],
+        primary_metric=MetricSelector(name='pick_score', aggregation='mean', dimensions={'scope': 'overall'}),
         few_shot_num=0,
         train_split=None,
         eval_split='test',
     )
 )
 class TIFA_Adapter(Text2ImageAdapter):
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

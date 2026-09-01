@@ -4,6 +4,7 @@ from typing import Any, Dict, Iterator, List, Union
 
 from evalscope.perf.arguments import Arguments
 from evalscope.perf.plugin.datasets.base import DatasetPluginBase
+from evalscope.perf.plugin.datasets.dataset_args import TextDatasetArgs
 from evalscope.perf.plugin.registry import register_dataset
 
 
@@ -28,13 +29,20 @@ class LineByLineDatasetPlugin(DatasetPluginBase):
        called to merge CLI-level generation parameters.
 
     3. **Complete request body** (JSON object)::
-        # note max_tokens will be overridden by CLI-level generation parameters
+
         example: {"messages": [...], "temperature": 0.6, "max_tokens": 128}
 
-       Treated as a complete request body. The parameters inside the JSON object
-       (e.g. ``temperature``) take precedence and ``__compose_query_from_parameter``
-       is **NOT** called, so CLI-level generation parameters are ignored.
+       Treated as a complete request body. Fields provided in the JSON object
+       (e.g. ``temperature``, ``max_tokens``) are preserved and take precedence;
+       ``__compose_query_from_parameter`` only fills in generation parameters that
+       are **missing** from the body (``setdefault`` semantics), so CLI-level
+       defaults do not silently overwrite a user-supplied body.
+
+    Input-length control (``target_input_len`` / ``prefix_file``) only applies to
+    format 1; a JSON line raises an error when those arguments are set.
     """
+
+    args_schema = TextDatasetArgs
 
     def __init__(self, query_parameters: Arguments):
         super().__init__(query_parameters)
@@ -62,15 +70,17 @@ class LineByLineDatasetPlugin(DatasetPluginBase):
             parsed = self._try_parse_json(line)
 
             if isinstance(parsed, str):
-                prompt = parsed
-                is_valid, _ = self.check_prompt_length(prompt)
-                if not is_valid:
+                result = self.prepare_messages(parsed)
+                if result is None:
                     continue
-                if self.query_parameters.apply_chat_template:
-                    message = self.create_message(prompt)
-                    result = [message]
-                else:
-                    result = prompt
             else:
+                # JSON lines are forwarded verbatim, bypassing prepare_messages, so
+                # length control would silently not apply and mix input lengths.
+                if self.dataset_args.target_input_len is not None:
+                    raise ValueError(
+                        '`target_input_len` / `prefix_file` only support plain-text lines in the '
+                        f'`line_by_line` dataset, but this line is JSON: {line[:80]}... Either drop '
+                        'those arguments or use a plain-text dataset file.'
+                    )
                 result = parsed
             yield result

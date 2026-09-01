@@ -1,4 +1,4 @@
-# Kimi-Vendor-Verifier (Param Compliance)
+# Kimi-Vendor-Verifier
 
 
 ## Overview
@@ -69,7 +69,7 @@ Kimi-Vendor-Verifier is a pre-flight compliance check for Kimi K2 / K2-Thinking 
 {
   "input": [
     {
-      "id": "03c069db",
+      "id": "b2530131",
       "content": "Say 'OK' and nothing else."
     }
   ],
@@ -125,5 +125,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

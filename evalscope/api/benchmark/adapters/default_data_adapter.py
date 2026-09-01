@@ -1,8 +1,9 @@
 import os
 from collections import defaultdict
 from functools import partial
-from overrides import override
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
+
+from overrides import override
 
 from evalscope.api.agent import AgentLoopResult
 from evalscope.api.dataset import DataLoader, Dataset, DatasetDict, LocalDataLoader, RemoteDataLoader, Sample
@@ -14,6 +15,7 @@ from evalscope.api.registry import get_aggregation, get_metric
 from evalscope.constants import HubType, JudgeStrategy
 from evalscope.report import Report, ReportGenerator
 from evalscope.utils import get_logger
+
 from ..benchmark import DataAdapter
 
 logger = get_logger()
@@ -142,7 +144,7 @@ class DefaultDataAdapter(DataAdapter):
         """
         input_text = self.process_sample_input(sample, subset=subset)
         input_messages = [ChatMessageUser(content=input_text)]
-        if self.system_prompt:
+        if self.system_prompt is not None:
             input_messages.insert(0, ChatMessageSystem(content=self.system_prompt))
         return input_messages
 
@@ -151,7 +153,7 @@ class DefaultDataAdapter(DataAdapter):
         Normalize a sample's existing List[ChatMessage] input and ensure system prompt is set once.
         """
         messages = list(sample.input)  # shallow copy to avoid in-place mutations
-        if self.system_prompt and not any(isinstance(m, ChatMessageSystem) for m in messages):
+        if self.system_prompt is not None and not any(isinstance(m, ChatMessageSystem) for m in messages):
             messages = [ChatMessageSystem(content=self.system_prompt)] + messages
         return messages
 
@@ -253,10 +255,12 @@ class DefaultDataAdapter(DataAdapter):
             sample_fields=self.record_to_sample,  # Custom sample conversion function
             filter_func=self.sample_filter,
             limit=self.limit if not self.reformat_subset else None,  # Limit number of samples if specified
-            repeats=self.repeats,  # Number of repetitions for each sample
+            repeats=1 if self.reformat_subset else self.repeats,  # Number of repetitions for each sample
             shuffle=self.shuffle,  # Shuffle dataset if enabled
             shuffle_choices=self.shuffle_choices,  # Shuffle choices if requested
+            seed=self.seed,
             data_source=self.dataset_hub,  # Data source configuration
+            version=self.dataset_revision,  # Remote dataset revision when pinned
             force_redownload=self.force_redownload,  # Force redownload if enabled
             dataset_dir=self.dataset_dir,  # Dataset directory
         )
@@ -286,10 +290,13 @@ class DefaultDataAdapter(DataAdapter):
             sample_fields=self.record_to_sample,
             filter_func=self.sample_filter,  # Apply sample filtering if defined
             limit=self.few_shot_num
-            if not self.reformat_subset else None,  # Limit to specified number of few-shot examples
+            if not self.reformat_subset
+            else None,  # Limit to specified number of few-shot examples
             shuffle=self.few_shot_random,  # Randomize selection if enabled
             shuffle_choices=self.shuffle_choices,  # Shuffle choices if requested
+            seed=self.seed,
             data_source=self.dataset_hub,  # Data source configuration
+            version=self.dataset_revision,  # Remote dataset revision when pinned
             force_redownload=self.force_redownload,  # Force redownload if enabled
             dataset_dir=self.dataset_dir,  # Dataset directory
         )
@@ -391,7 +398,7 @@ class DefaultDataAdapter(DataAdapter):
         """Return a per-sample sandbox config dict.
 
         The result is merged on top of ``TaskConfig.sandbox.default_config``
-        before being passed to the Agent environment constructor.  Override
+        before being passed to the Agent environment constructor. Override
         this hook in benchmarks that need per-sample sandbox customisation
         (e.g. SWE-bench Pro which pins a specific image per instance).
 
@@ -426,6 +433,7 @@ class DefaultDataAdapter(DataAdapter):
         if ac is not None:
             # Local import to avoid pulling the bridge stack at module load.
             from evalscope.agent.external.config import ExternalAgentConfig
+
             if isinstance(ac, ExternalAgentConfig):
                 return self._on_external_agent_inference(model, sample)
             return self._on_agent_inference(model, sample)
@@ -458,10 +466,10 @@ class DefaultDataAdapter(DataAdapter):
         :meth:`run_inference` then assigns these to the resulting
         :class:`TaskState`.
 
-        When ``agent_config.environment`` is set the environment is
+        When ``agent_config.environment`` is set the Agent environment is
         instantiated, used for the full sample, and closed in a ``finally``
-        block regardless of loop outcome.  ``agent_config.environment_extra``
-        is forwarded as keyword arguments to the environment constructor.
+        block regardless of loop outcome. ``agent_config.environment_extra``
+        is forwarded as keyword arguments to its constructor.
         """
         # Local import to keep orchestration imports out of the adapter module.
         from evalscope.agent.runner import run_native_agent
@@ -574,7 +582,7 @@ class DefaultDataAdapter(DataAdapter):
         return any(name in d for d in (self.metric_list or []))
 
     def get_metric_args(self, name: str) -> Dict[str, Any]:
-        for d in (self.metric_list or []):
+        for d in self.metric_list or []:
             if isinstance(d, dict) and name in d:
                 cfg = d.get(name, {})
                 return cfg if isinstance(cfg, dict) else {}
@@ -683,8 +691,7 @@ class DefaultDataAdapter(DataAdapter):
         Raises:
             AssertionError: If the task state is not marked as completed
         """
-        assert task_state.completed, \
-            'TaskState must be completed before calculating metrics.'
+        assert task_state.completed, 'TaskState must be completed before calculating metrics.'
 
         # Extract the raw prediction from the model output
         if task_state.output is None:
@@ -701,33 +708,48 @@ class DefaultDataAdapter(DataAdapter):
                 original_prediction=prediction,
                 filtered_prediction=filtered_prediction,
                 reference=task_state.target,
-                task_state=task_state
+                task_state=task_state,
             )
 
-            # Step 2: Apply LLM judge if enabled and get final score
-            final_score = self.maybe_llm_match_score(
-                original_prediction=prediction,
-                filtered_prediction=filtered_prediction,
-                reference=task_state.target,
-                task_state=task_state,
-                rule_based_score=rule_based_score
-            )
-        else:
-            if self.use_llm_judge:
-                # Use LLM judge to compute the match score directly
-                final_score = self.llm_match_score(
+            if float(rule_based_score.main_value or 0.0) > 0.99:
+                final_score = rule_based_score
+            else:
+                # A valid judge may raise the rule score; an unavailable judge preserves it.
+                judge_score = self.score_with_judge_contracts(
                     original_prediction=prediction,
                     filtered_prediction=filtered_prediction,
                     reference=task_state.target,
-                    task_state=task_state
+                    task_state=task_state,
                 )
+                final_score = self._merge_scores(rule_based_score, judge_score)
+        else:
+            if self.use_llm_judge:
+                # Judge-default benchmarks retain their usable rule score when the judge fails.
+                judge_score = self.score_with_judge_contracts(
+                    original_prediction=prediction,
+                    filtered_prediction=filtered_prediction,
+                    reference=task_state.target,
+                    task_state=task_state,
+                )
+                if not judge_score.status.is_usable and self.scoring_policy.rule_supported:
+                    final_score = self.fallback_to_rule_score(
+                        self.match_score(
+                            original_prediction=prediction,
+                            filtered_prediction=filtered_prediction,
+                            reference=task_state.target,
+                            task_state=task_state,
+                        ),
+                        judge_score,
+                    )
+                else:
+                    final_score = judge_score
             else:
                 # Use standard match score calculation without LLM judge
                 final_score = self.match_score(
                     original_prediction=prediction,
                     filtered_prediction=filtered_prediction,
                     reference=task_state.target,
-                    task_state=task_state
+                    task_state=task_state,
                 )
 
         # Package the results into a sample score object
@@ -735,14 +757,18 @@ class DefaultDataAdapter(DataAdapter):
             score=final_score,
             sample_id=task_state.sample_id,
             group_id=task_state.group_id,
+            generation_index=(task_state.sample_id % self.repeats) if self.repeats > 1 else 0,
             sample_metadata=task_state.metadata,
         )
 
         return sample_score
 
     def batch_match_score(
-        self, original_predictions: List[str], filtered_predictions: List[str], references: List[str],
-        task_states: List[TaskState]
+        self,
+        original_predictions: List[str],
+        filtered_predictions: List[str],
+        references: List[str],
+        task_states: List[TaskState],
     ) -> Optional[List[Score]]:
         """
         Batch calculate evaluation scores by comparing predictions with references.
@@ -762,8 +788,9 @@ class DefaultDataAdapter(DataAdapter):
         return None  # Default implementation does not support batch scoring
 
     @override
-    def batch_calculate_metrics(self, task_states: List[TaskState],
-                                sample_scores: List[SampleScore]) -> List[SampleScore]:
+    def batch_calculate_metrics(
+        self, task_states: List[TaskState], sample_scores: List[SampleScore]
+    ) -> List[SampleScore]:
         """Batch calculate metrics for a list of task states with tqdm progress and batch processing."""
         total = len(task_states)
         if total == 0:
@@ -784,12 +811,11 @@ class DefaultDataAdapter(DataAdapter):
             original_predictions=original_predictions,
             filtered_predictions=filtered_predictions,
             references=references,
-            task_states=task_states
+            task_states=task_states,
         )
 
         if batch_scores is not None:
-            assert len(batch_scores) == len(sample_scores), \
-                'Batch scores length must match sample scores length.'
+            assert len(batch_scores) == len(sample_scores), 'Batch scores length must match sample scores length.'
             for batch_score, sample_score in zip(batch_scores, sample_scores):
                 sample_score.score.value.update(batch_score.value)
 
@@ -852,9 +878,7 @@ class DefaultDataAdapter(DataAdapter):
         Returns:
             Report: The generated evaluation report
         """
-        return ReportGenerator.generate_report(
-            score_dict=scores, model_name=model_name, data_adapter=self, add_aggregation_name=self.add_aggregation_name
-        )
+        return ReportGenerator.generate_report(score_dict=scores, model_name=model_name, data_adapter=self)
 
     @override
     def generate_report(self, scores: Dict[str, List[AggScore]], model_name: str, output_dir: str, **kwargs) -> Report:
@@ -878,7 +902,9 @@ class DefaultDataAdapter(DataAdapter):
 
     def finalize(self, *args, **kwargs):
         # Finalize the evaluation process
-        self.sandbox_finalize(*args, **kwargs)
+        sandbox_finalize = getattr(self, 'sandbox_finalize', None)
+        if callable(sandbox_finalize):
+            sandbox_finalize(*args, **kwargs)
         # Release dataset memory after evaluation to avoid accumulation across benchmarks
         self.test_dataset = None
         self.fewshot_dataset = None

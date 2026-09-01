@@ -34,7 +34,7 @@ MusicTrivia is a curated multiple-choice benchmark for evaluating AI models on m
 | **Dataset ID** | [extraordinarylab/music-trivia](https://modelscope.cn/datasets/extraordinarylab/music-trivia/summary) |
 | **Paper** | N/A |
 | **Tags** | `Knowledge`, `MCQ` |
-| **Metrics** | `acc` |
+| **Metrics** | `accuracy` |
 | **Default Shots** | 0-shot |
 | **Evaluation Split** | `test` |
 
@@ -112,5 +112,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

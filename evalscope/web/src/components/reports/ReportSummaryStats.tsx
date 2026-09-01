@@ -2,6 +2,10 @@ import { useMemo } from 'react'
 import { useLocale } from '@/contexts/LocaleContext'
 import type { ReportData } from '@/api/types'
 import { scoreColor } from '@/utils/colorScale'
+import { formatMetric, getBoundedQualityRatio } from '@/domain/metric'
+import type { MetricSemantics } from '@/domain/metric'
+import { metricComparisonKey } from '@/domain/compare/scoreMatrix'
+import { datasetLabel, primaryMetricOf } from '@/domain/report/primaryMetrics'
 
 interface Props {
   reports: ReportData[]
@@ -12,7 +16,7 @@ function ScoreRing({ score, size = 80 }: { score: number; size?: number }) {
   const stroke = 8
   const r = (size - stroke) / 2
   const circ = 2 * Math.PI * r
-  const offset = circ * (1 - Math.min(1, score))
+  const offset = circ * (1 - Math.max(0, Math.min(1, score)))
   const color = scoreColor(score)
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ transform: 'rotate(-90deg)', flexShrink: 0 }}>
@@ -36,56 +40,78 @@ export default function ReportSummaryStats({ reports }: Props) {
   const stats = useMemo(() => {
     if (!reports.length) return null
 
-    const scores = reports.map((r) => r.score)
-    const avg = scores.reduce((s, v) => s + v, 0) / scores.length
+    const entries = reports.map((report) => {
+      const primary = primaryMetricOf(report)
+      return {
+        name: datasetLabel(report),
+        identity: primary?.identity ?? null,
+        score: primary?.score ?? null,
+        semantics: primary?.semantics ?? null,
+        num: primary?.categories?.reduce((sum, category) => sum + category.num, 0) ?? 0,
+      }
+    })
 
-    const bestIdx = scores.indexOf(Math.max(...scores))
-    const worstIdx = scores.indexOf(Math.min(...scores))
+    // Averaging, best and worst are only meaningful across one and the same metric: a set mixing
+    // an accuracy with a WER has no best dataset, so those cards are omitted instead of ranking
+    // incomparable numbers.
+    const comparisonKeys = entries.map((entry) => (
+      entry.identity == null ? null : metricComparisonKey(entry.identity, entry.semantics)
+    ))
+    const comparable = comparisonKeys.every((key) => key !== null && key === comparisonKeys[0])
+      && entries.every((entry) => entry.score !== null)
+    const scores = entries.map((entry) => entry.score ?? 0)
+    const avg = comparable ? scores.reduce((s, v) => s + v, 0) / scores.length : null
 
-    const totalSamples = reports.reduce((sum, r) => {
-      return sum + (r.metrics[0]?.categories?.reduce((s, c) => s + c.num, 0) ?? 0)
-    }, 0)
+    const lowerIsBetter = entries[0].semantics?.direction === 'lower_is_better'
+    const bestValue = lowerIsBetter ? Math.min(...scores) : Math.max(...scores)
+    const worstValue = lowerIsBetter ? Math.max(...scores) : Math.min(...scores)
+    const bestIdx = scores.indexOf(bestValue)
+    const worstIdx = scores.indexOf(worstValue)
+
+    const totalSamples = entries.reduce((sum, entry) => sum + entry.num, 0)
 
     return {
       avg,
-      best: { name: reports[bestIdx].dataset_name, score: scores[bestIdx] },
-      worst: { name: reports[worstIdx].dataset_name, score: scores[worstIdx] },
+      semantics: entries[0].semantics as MetricSemantics | null,
+      best: comparable ? { name: entries[bestIdx].name, score: scores[bestIdx] } : null,
+      worst: comparable ? { name: entries[worstIdx].name, score: scores[worstIdx] } : null,
       totalSamples,
     }
   }, [reports])
 
   if (!stats) return null
 
-  const toNorm = (s: number) => (s > 1 ? s / 100 : s)
-  const formatPct = (s: number) => (s > 1 ? s.toFixed(1) : (s * 100).toFixed(1)) + '%'
-
-  const scoreCards = [
-    { label: t('reportDetail.avgScore'), norm: toNorm(stats.avg), pct: formatPct(stats.avg) },
-    { label: t('reportDetail.bestDataset'), norm: toNorm(stats.best.score), pct: formatPct(stats.best.score), sub: stats.best.name },
-    { label: t('reportDetail.worstDataset'), norm: toNorm(stats.worst.score), pct: formatPct(stats.worst.score), sub: stats.worst.name },
-  ]
+  const scoreCards = stats.avg == null || stats.best == null || stats.worst == null ? [] : [
+    { label: t('reportDetail.avgScore'), value: stats.avg },
+    { label: t('reportDetail.bestDataset'), value: stats.best.score, sub: stats.best.name },
+    { label: t('reportDetail.worstDataset'), value: stats.worst.score, sub: stats.worst.name },
+  ].map((card) => ({
+    ...card,
+    norm: getBoundedQualityRatio(card.value, stats.semantics),
+    display: formatMetric(card.value, stats.semantics).primary,
+  }))
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
       {/* Score ring cards */}
       {scoreCards.map((card, i) => (
         <div
           key={i}
           className="flex items-center gap-3 p-4 rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-card)]"
         >
-          <ScoreRing score={card.norm} size={72} />
+          {card.norm != null && <ScoreRing score={card.norm} size={72} />}
           <div className="flex flex-col gap-0.5 min-w-0">
             <span className="type-table-xs">
               {card.label}
             </span>
             <span
               className="text-xl font-bold font-mono tabular-nums leading-tight"
-              style={{ color: scoreColor(card.norm) }}
+              style={{ color: card.norm == null ? 'var(--text)' : scoreColor(card.norm) }}
             >
-              {card.pct}
+              {card.display}
             </span>
             {card.sub && (
-              <span className="text-xs text-[var(--text-muted)] truncate" title={card.sub}>
+              <span className="text-xs text-[var(--text-muted)] break-words min-w-0" title={card.sub}>
                 {card.sub}
               </span>
             )}

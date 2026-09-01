@@ -2,6 +2,10 @@
 
 # VLMEvalKit
 
+```{note}
+多模态评测推荐优先使用 Native 后端，已原生支持 OCRBench、MMMU、MMBench、MathVista、ChartQA、DocVQA 等主流评测集，详见 [VLM 评测集](../../get_started/supported_dataset/vlm.md)。VLMEvalKit 后端主要服务于已有 VLMEvalKit 工作流的用户。两个后端因 prompt 模板、答案抽取规则、judge 逻辑不同，结果可能存在差异，对比实验时请保持后端一致。
+```
+
 为便于使用VLMEvalKit 评测后端，我们基于VLMEvalKit源码做了定制，命名为`ms-vlmeval`，该版本在原版基础上对评测任务的配置和执行进行了封装，并支持pypi安装方式，使得用户可以通过EvalScope发起轻量化的VLMEvalKit评测任务。同时，我们支持基于OpenAI API格式的接口评测任务，您可以使用[ms-swift](https://github.com/modelscope/swift)、[vLLM](https://github.com/vllm-project/vllm)、[LMDeploy](https://github.com/InternLM/lmdeploy)、[Ollama](https://ollama.ai/)等模型服务，部署多模态模型服务。
 
 ## 1. 环境准备
@@ -109,7 +113,7 @@ VLLM_USE_MODELSCOPE=True CUDA_VISIBLE_DEVICES=0 python -m vllm.entrypoints.opena
 ```
 
 ```{tip}
-如遇到`ValueError: At most 1 image(s) may be provided in one request`错误，可尝试将设置`--limit-mm-per-prompt "image=5"`参数，并可以将image设置为更大的值。
+如遇到`ValueError: At most 1 image(s) may be provided in one request`错误，可尝试设置`--limit-mm-per-prompt "image=5"`参数，并可以将image设置为更大的值。
 ```
 :::
 
@@ -291,7 +295,7 @@ task_cfg_dict = TaskConfig(
   - `limit`：整数，评测的数据数量，默认值为 `None`，表示运行所有示例。
   - `reuse`：布尔值，是否重用评测结果，否则将删除所有评测临时文件。
     ```{note}
-    对与`ms-vlmeval>=0.0.11`参数`rerun` 更名为`reuse`，默认值为`False`。设置为`True`时需要在task_cfg_dict中添加`use_cache`来指定使用的缓存目录。
+    对于`ms-vlmeval>=0.0.11`参数`rerun` 更名为`reuse`，默认值为`False`。设置为`True`时需要在task_cfg_dict中添加`use_cache`来指定使用的缓存目录。
     ```
   - `nproc`：整数，并行调用 API 的数量。
   - `nframe`：整数，视频数据集的视频帧数，默认值为 `8`，
@@ -303,7 +307,7 @@ task_cfg_dict = TaskConfig(
 部署本地语言模型作为评判 / 选择提取器，同样使用ms-swift部署模型服务，具体可参考：[ms-swift LLM 部署指南](https://swift.readthedocs.io/zh-cn/latest/LLM/VLLM%E6%8E%A8%E7%90%86%E5%8A%A0%E9%80%9F%E4%B8%8E%E9%83%A8%E7%BD%B2.html)
 。
 ````{note}
-在未部署裁判员模型模型时，将使用后处理+精确匹配进行评判；且**必须配置裁判员模型环境变量才能正确调用模型**。
+在未部署裁判员模型时，将使用后处理+精确匹配进行评判；且**必须配置裁判员模型环境变量才能正确调用模型**。
 ````
 
 #### 部署裁判员模型

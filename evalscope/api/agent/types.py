@@ -7,12 +7,15 @@ import from ``evalscope.api.agent`` to participate.
 """
 
 from dataclasses import dataclass, field
-from pydantic import BaseModel, ConfigDict, Field
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 
-from evalscope.api.messages import ChatMessage
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from evalscope.api.messages import ChatMessage, Content
 from evalscope.api.model import ModelOutput
 from evalscope.api.tool import ToolCall, ToolInfo
+
 from .mcp.types import MCPServerConfig
 
 if TYPE_CHECKING:
@@ -24,8 +27,8 @@ class BaseAgentConfig(BaseModel):
 
     Both :class:`NativeAgentConfig` (the AgentLoop path) and
     :class:`ExternalAgentConfig` (the external-CLI bridge path) need an
-    :class:`AgentEnvironment` plus a free-form ``kwargs`` channel; lifting
-    them here avoids duplicating the schema across both subclasses.
+    Agent execution environment plus a free-form ``kwargs`` channel;
+    lifting them here avoids duplicating the schema across both subclasses.
     """
 
     # ``extra='forbid'`` so legacy ``extra=...`` configs (renamed to
@@ -34,14 +37,20 @@ class BaseAgentConfig(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
     environment: Optional[str] = Field(default=None)
-    """Registered environment name.  ``None`` means no sandbox (local tools only)."""
+    """Registered Agent execution environment. ``None`` means no environment."""
 
     environment_extra: Dict[str, Any] = Field(default_factory=dict)
-    """Free-form environment-specific options (passed to environment constructor)."""
+    """Options passed to the Agent execution environment constructor."""
 
     kwargs: Dict[str, Any] = Field(default_factory=dict)
     """Free-form variant-specific options.  Native: forwarded to the
     strategy constructor.  External: forwarded to the runner constructor."""
+
+    skills_dir: Optional[str] = Field(default=None)
+    """Optional Agent Skills directory. Only agent runners consume this field."""
+
+    skill_prompt_nudge: bool = Field(default=True)
+    """Whether to add a neutral prompt nudge when skills are available."""
 
 
 class NativeAgentConfig(BaseAgentConfig):
@@ -49,9 +58,9 @@ class NativeAgentConfig(BaseAgentConfig):
 
     When carried by ``TaskConfig.agent_config``, every
     ``DefaultDataAdapter``-based benchmark routes inference through the
-    AgentLoop instead of calling ``model.generate`` once.  Individual
-    AgentAdapter subclasses (e.g. SWE-bench_Pro) ignore this global config
-    and use their own settings to avoid double wrapping.
+    AgentLoop instead of calling ``model.generate`` once.  AgentLoopAdapter
+    subclasses keep their benchmark defaults when fields are omitted and
+    accept explicitly configured strategy, tools and max_steps values.
     """
 
     mode: Literal['native'] = Field(default='native')
@@ -66,6 +75,13 @@ class NativeAgentConfig(BaseAgentConfig):
     max_steps: int = Field(default=10)
     """Hard upper bound on loop iterations."""
 
+    command_timeout: Optional[float] = Field(default=None)
+    """Default timeout in seconds for native command-style tools.
+
+    Tool calls that explicitly pass a timeout keep their own value. ``None``
+    means use each tool's built-in default.
+    """
+
     mcp_servers: List[MCPServerConfig] = Field(default_factory=list)
     """List of MCP servers spawned alongside this agent's per-sample loop.
 
@@ -75,6 +91,20 @@ class NativeAgentConfig(BaseAgentConfig):
     :class:`MCPServer.__aenter__`, so configurations with empty
     ``mcp_servers`` (the default) do not require ``pip install mcp``.
     """
+
+    @field_validator('max_steps')
+    @classmethod
+    def _validate_max_steps(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError('max_steps must be greater than 0.')
+        return v
+
+    @field_validator('command_timeout')
+    @classmethod
+    def _validate_command_timeout(cls, v: Optional[float]) -> Optional[float]:
+        if v is not None and v <= 0:
+            raise ValueError('command_timeout must be greater than 0.')
+        return v
 
 
 class ExecResult(BaseModel):
@@ -86,6 +116,41 @@ class ExecResult(BaseModel):
     timed_out: bool = False
     duration: float = 0.0
     extra: Dict[str, Any] = Field(default_factory=dict)
+
+
+@dataclass
+class ToolExecutionOutput:
+    """Rich observation returned by tools that produce attachments or termination."""
+
+    text: str
+    attachments: List[Content] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    terminate: bool = False
+    final_answer: Optional[str] = None
+
+
+class TurnOutcome(str, Enum):
+    """What a parsed turn asks the loop to do next.
+
+    The loop must not re-derive this from ``ParsedAction``'s field shape:
+    ``tool_calls`` being empty is a *symptom* shared by two very different
+    states (a malformed turn that tried to act, and an idle turn that only
+    produced text), and conflating them is what made one nudge budget, one
+    terminal exit and one trace label serve both.
+
+    ``done`` is deliberately absent: termination is decided by the strategy
+    hook ``AgentStrategy.is_done``, which is overridable, so folding it into a
+    derived property would replace strategy semantics with a fixed rule.
+    """
+
+    ACT = 'act'
+    """Has tool calls; the loop should execute them."""
+
+    MALFORMED = 'malformed'
+    """Tried to act but violated the protocol; ``error`` describes the rule."""
+
+    IDLE = 'idle'
+    """Only text — either the model's answer, or a stall."""
 
 
 @dataclass
@@ -104,14 +169,30 @@ class ParsedAction:
     error: Optional[str] = None
     raw_text: Optional[str] = None
 
+    @property
+    def outcome(self) -> TurnOutcome:
+        """Classify this turn for the loop; see :class:`TurnOutcome`.
+
+        This is the single place the precedence is defined. ``ACT`` wins over
+        ``MALFORMED`` so a strategy that reports usable tool calls *and* a
+        complaint (e.g. "I dropped the calls past the cap") still makes
+        progress; the complaint reaches the trace through the loop's parse
+        error event.
+        """
+        if self.tool_calls:
+            return TurnOutcome.ACT
+        if self.error:
+            return TurnOutcome.MALFORMED
+        return TurnOutcome.IDLE
+
 
 @dataclass
 class AgentContext:
     """Mutable context shared across AgentLoop iterations.
 
     Strategies and tool executors read/write this object; the loop itself
-    only bumps ``step`` and appends messages.  Not serialized: persistence
-    happens through ``AgentTrace`` attached to ``TaskState``.
+    only bumps ``step`` / the nudge counters and appends messages.  Not
+    serialized: persistence happens through ``AgentTrace``.
     """
 
     sample_id: Any
@@ -121,6 +202,26 @@ class AgentContext:
     max_steps: int = 10
     last_output: Optional[ModelOutput] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    nudge_count: int = 0
+    """Idle nudges injected since the last turn that produced tool calls.
+
+    Owned by :class:`AgentLoop`: it increments the counter when it injects a
+    reminder and resets it once the model calls a tool again. Strategies read
+    it in ``should_nudge`` and must not mutate it. Deriving the count by
+    matching reminder text in ``messages`` instead would silently return 0
+    whenever the reminder wording or shape changes, which reads as "never
+    nudged" and lets a stuck model burn the whole step budget.
+    """
+
+    parse_error_nudge_count: int = 0
+    """Malformed-turn nudges since the last turn that produced tool calls.
+
+    Counted separately from :attr:`nudge_count` because the two failures are
+    not interchangeable: a malformed turn is told the exact rule it broke and
+    is therefore far more recoverable than a model that keeps answering in
+    prose. Sharing one counter let either failure consume the other's retries.
+    Also owned by :class:`AgentLoop`; strategies must not mutate it.
+    """
 
 
 ToolSchemaMode = Literal['function_calling', 'textual_block', 'none']
@@ -149,4 +250,6 @@ __all__ = [
     'NativeAgentConfig',
     'ParsedAction',
     'ToolSchemaMode',
+    'ToolExecutionOutput',
+    'TurnOutcome',
 ]

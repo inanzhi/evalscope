@@ -41,6 +41,7 @@ CoNLL-2003 is a classic Named Entity Recognition (NER) benchmark introduced at t
         train_split='train',
         eval_split='test',
         metric_list=['precision', 'recall', 'f1_score', 'accuracy'],
+        primary_metric='f1',
         prompt_template=PROMPT_TEMPLATE,
         few_shot_prompt_template=FEWSHOT_TEMPLATE,
     )
@@ -65,7 +66,7 @@ class CoNLL2003Adapter(NERAdapter):
             'PER': 'Names of people, including first and last names',
             'ORG': 'Names of companies, institutions, organizations, etc.',
             'LOC': 'Names of locations, cities, states, countries, etc.',
-            'MISC': 'Miscellaneous entities not in the above categories'
+            'MISC': 'Miscellaneous entities not in the above categories',
         }
 
         # Setup entity mappings based on the defined entity types

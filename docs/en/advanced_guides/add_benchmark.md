@@ -47,7 +47,7 @@ DataAdapter adopts a Pipeline architecture, supporting custom behavior through h
    calculate_metrics()
    ├── filter_prediction()
    │   └── extract_answer() [Optional User Implementation]
-   ├── match_score() / llm_match_score()
+   ├── match_score() / score_with_judge_contracts()
    └── Returns SampleScore
 
 4. Result Aggregation Phase
@@ -60,6 +60,31 @@ DataAdapter adopts a Pipeline architecture, supporting custom behavior through h
    └── _on_generate_report_end() [Hook Method]
        └── Returns Report
 ```
+
+### Adding an LLM-Judged Benchmark
+
+Users enable judging with the typed `judge` configuration described in [Judge Parameters](../get_started/parameters.md#judge-parameters):
+
+```python
+TaskConfig(
+    model='MODEL_UNDER_TEST',
+    datasets=['your_benchmark'],
+    judge={
+        'strategy': 'llm',
+        'models': {'model_id': 'JUDGE_MODEL', 'api_url': 'OPENAI_COMPATIBLE_URL', 'api_key': 'API_KEY'},
+    },
+)
+```
+
+For an adapter author, judge I/O belongs to `evalscope.api.judge`; do not call `self.llm_judge.judge()` or parse a model reply in the adapter.
+
+1. Declare `scoring_policy`: use `JUDGE_ONLY` when rule scoring is not meaningful, `JUDGE_DEFAULT` when rules remain available but `auto` should judge, and `RULE_DEFAULT` when `auto` should keep rule scoring.
+2. Implement the single adapter entry point, `judge_definition(context)`. For an ordinary one-verdict task, return `JudgeDefinition.labels(...)` or `JudgeDefinition.numeric(...)` with a Pydantic verdict schema. These helpers append the JSON output instruction and keep the prompt, schema, and metric mapping together.
+3. For a rubric, multiple claims, or staged task, define a Pydantic verdict schema and `OutputContract`, then return `JudgeDefinition.workflow(cases=..., request=..., reduce=...)`. Pass `expand=...`, `fallback=...`, or `finalize=...` only when the workflow needs them. The callbacks can be nested in `judge_definition()` or private adapter helpers, but they must be owned by the returned definition rather than exposed as adapter hooks. Append `case.output_contract.instruction()` in a custom request unless the official fixed JSON instruction exactly matches that schema. Use `CaseVerdict.metadata` rather than encoding state into `case_id`.
+4. When a deterministic rule settles a sample without a model call, return `JudgeDefinition.skip(score, reason='...')`. `reason` is required and is persisted as `Score.metadata['judge_skip_reason']` with `Score.metadata['judge_skipped'] = True`; the web review panel labels this as rule-based scoring rather than an LLM verdict.
+5. Add a scripted-judge test covering a valid JSON verdict, malformed/prose output, and a transport error. Invalid judge replies are excluded from the metric; they are not converted to a zero score and are not automatically retried by the executor.
+
+The executor owns request dispatch, position swaps, repeats, multi-judge quorum, aggregation, and review diagnostics. The model transport owns its own retry policy through `generation_config`.
 
 ### Core Data Structures
 
@@ -108,38 +133,38 @@ class ModelOutput:
 Represents the scoring result of a single sample:
 
 ```python
-@dataclass
-class Score:
-    value: Dict[str, float]      # Scores for each metric {"acc": 1.0, "f1": 0.8}
-    extracted_prediction: str    # Extracted prediction answer
-    prediction: str              # Raw prediction text
-    metadata: Dict = None        # Scoring metadata
+class Score(BaseModel):
+    value: Dict[str, int | float | bool] = Field(default_factory=dict)  # E.g. {"accuracy": 1.0}
+    extracted_prediction: Optional[str] = None
+    prediction: Optional[str] = None
+    explanation: Optional[str] = None
+    metadata: Optional[Dict] = Field(default_factory=dict)
+    main_score_name: Optional[str] = None  # Selects one value within this sample only
 ```
 
 #### 5. SampleScore Object
 Encapsulates the complete scoring information of a single sample:
 
 ```python
-@dataclass
-class SampleScore:
-    score: Score                 # Scoring object
-    sample_id: Optional[str]     # Unique identifier for the sample
-    group_id: Optional[str]      # Group identifier
-    sample_metadata: Optional[Dict] = None  # Sample metadata
+class SampleScore(BaseModel):
+    score: Score
+    sample_id: Optional[str | int] = None
+    group_id: Optional[str | int] = None
+    sample_metadata: Optional[Dict] = None
 ```
 
 #### 6. AggScore Object
 Represents aggregated scoring statistics:
 
 ```python
-@dataclass
-class AggScore:
-    metric: str                  # Metric name
-    value: float                 # Aggregated value (e.g., average score)
-    subset: str                  # Subset name
-    num_samples: int             # Number of samples
-    agg_method: str              # Aggregation method (mean, median, etc.)
-    metadata: Dict = None        # Aggregation metadata
+class AggScore(BaseModel):
+    score: float = 0.0
+    metric_name: str = ''        # Canonical measured concept, e.g. "accuracy"
+    aggregation: str = 'identity'
+    dimensions: Dict[str, str | int | float | bool] = Field(default_factory=dict)
+    num: int = 0
+    ids: Optional[List[str | int]] = None
+    metadata: Optional[Dict] = None
 ```
 
 #### 7. DatasetDict Object
@@ -325,7 +350,7 @@ Reasoning:
         few_shot_num=4,                       # Few-shot example number
         train_split='train',                  # Training set split name
         eval_split='test',                    # Evaluation set split name
-        metric_list=['acc'],                  # Evaluation metrics
+        metric_list=['accuracy'],             # Canonical evaluation metrics
         prompt_template=PROMPT_TEMPLATE,      # Prompt template
     )
 )
@@ -400,7 +425,7 @@ SUBSET_LIST = [
         description='MMLU-Pro is a benchmark for evaluating language models on multiple-choice questions across various subjects.',
         dataset_id='modelscope/MMLU-Pro',
         subset_list=SUBSET_LIST,
-        metric_list=['acc'],
+        metric_list=['accuracy'],
         few_shot_num=5,
         train_split='validation',
         eval_split='test',
@@ -468,6 +493,67 @@ class MMLUProAdapter(MultiChoiceAdapter):
    - General Text Reasoning: Focuses more on guiding the reasoning process
    - Multiple Choice: Focuses on displaying choices and answer format
 
+### Metric Semantics and the Primary Metric
+
+Reports do not guess what a metric means. How a metric is displayed — its name, its optimization
+direction, its unit, its scale and its precision — comes from a central catalog at
+`evalscope/metrics/semantics/catalog.py`, and each benchmark states which of its metrics carries
+the conclusion.
+
+**Most new benchmarks need no catalog change at all.** Reusing an existing canonical metric name
+(`accuracy`, `f1`, `exact_match`, `pass_rate`, ...) means the semantics are already declared:
+
+```python
+metric_list=['accuracy'],
+```
+
+Two cases are worth a line from you:
+
+1. **Your benchmark reports several metrics or several variants of one metric.** Declare exactly
+   which emitted identity is primary. A selector may constrain the aggregation and any structured
+   dimensions such as `k`, `scope`, or `threshold`:
+
+   ```python
+   from evalscope.api.metric.semantics import MetricSelector
+
+   metric_list=['precision', 'recall', 'f1', 'accuracy'],
+   primary_metric=MetricSelector(name='f1', aggregation='mean'),
+   ```
+
+   A single non-diagnostic identity is implicitly primary. If several non-diagnostic identities
+   are emitted, omitting the selector makes report generation fail instead of guessing from list
+   order. A selector must match exactly one emitted identity, and its name must be declared in
+   `metric_list`.
+
+2. **Your benchmark introduces a new canonical metric name.** Add one line to `METRIC_DEFINITIONS`,
+   referencing the baseline that describes it:
+
+   ```python
+   # evalscope/metrics/semantics/catalog.py
+   METRIC_DEFINITIONS['my_new_score'] = MetricEntry(baseline='quality.accuracy.ratio')
+   ```
+
+Keep the naming layers separate:
+
+- `metric_list`, `Score.value`, and custom `AggScore.metric_name` use canonical names such as
+  `accuracy`. A small set of legacy aliases is normalized for compatibility, but new adapters
+  should not introduce more aliases.
+- `AggScore` stores `metric_name`, `aggregation`, and `dimensions` separately. Do not encode
+  `mean`, `pass@k`, thresholds, or scopes into the metric name.
+- The catalog is keyed by the canonical metric name. Aggregation-specific meaning belongs in
+  `AGGREGATION_SEMANTICS`; benchmark-specific name collisions belong in
+  `BENCHMARK_METRIC_OVERRIDES`.
+- `Score.main_score_name` selects one value in a sample, `BenchmarkMeta.primary_metric` declares the
+  report-level primary identity, and `Report.primary_metric_identity` persists that identity.
+
+After changing `primary_metric`, refresh its generated metadata cache with
+`make docs-update BENCHMARK="<name>" FORCE=1`; do not edit `_meta/*.json` by hand.
+
+An undeclared metric degrades to a diagnostic, which displays the stored value without claiming a
+direction or unit and logs the catalog entry to add. Dynamic variants do not require catalog
+enumeration: values such as `k`, question type, threshold, and token range belong in structured
+dimensions and share the canonical metric's semantics.
+
 ## 4. Running Evaluation
 
 Debug the code to see if it can run normally.
@@ -505,11 +591,11 @@ Output Example:
 +-----------------------+-----------+-----------------+------------------+-------+---------+---------+
 | Model                 | Dataset   | Metric          | Subset           |   Num |   Score | Cat.0   |
 +=======================+===========+=================+==================+=======+=========+=========+
-| Qwen2.5-0.5B-Instruct | gsm8k     | mean_acc        | main             |    10 |     0.3 | default |
+| Qwen2.5-0.5B-Instruct | gsm8k     | Accuracy ↑      | main             |    10 |     30% | default |
 +-----------------------+-----------+-----------------+------------------+-------+---------+---------+
-| Qwen2.5-0.5B-Instruct | mmlu_pro  | mean_acc        | computer science |    10 |     0.1 | default |
+| Qwen2.5-0.5B-Instruct | mmlu_pro  | Accuracy ↑      | computer science |    10 |     10% | default |
 +-----------------------+-----------+-----------------+------------------+-------+---------+---------+
-| Qwen2.5-0.5B-Instruct | mmlu_pro  | mean_acc        | math             |    10 |     0.1 | default |
+| Qwen2.5-0.5B-Instruct | mmlu_pro  | Accuracy ↑      | math             |    10 |     10% | default |
 +-----------------------+-----------+-----------------+------------------+-------+---------+---------+
 ```
 
@@ -525,8 +611,8 @@ make docs
 ```
 
 ## 6. Submitting PR
-After completing the implementation of these methods and document generation, your benchmark evaluation is ready! You can submit a [PR](https://github.com/modelscope/evalscope/pulls). Before submitting, please run the following command, which will automatically format the code:
+After completing the implementation and documentation generation, run all repository checks before submitting a [PR](https://github.com/modelscope/evalscope/pulls). This command applies safe Ruff fixes and formatting before validating the remaining hooks:
 ```bash
 make lint
 ```
-Ensure there are no formatting issues, and we will merge your contribution as soon as possible, allowing more users to use the benchmark evaluation you contributed. If you don't know how to submit a PR, you can check our [Guide](https://github.com/modelscope/evalscope/blob/main/CONTRIBUTING.md). Give it a try 🚀
+Once the checks pass, your contribution is ready for review. For the complete development workflow, see the [Contributing Guide](https://github.com/modelscope/evalscope/blob/main/CONTRIBUTING.md). Give it a try 🚀

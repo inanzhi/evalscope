@@ -21,12 +21,13 @@ from typing import Any, List, Optional, Tuple
 from evalscope.api.messages import ChatMessage, ChatMessageSystem, ChatMessageUser
 from evalscope.api.model import Model, ModelOutput, ModelUsage
 from evalscope.utils.logger import get_logger
-from .constants import NUDGE_PROMPT, LoopMessages, MetadataKeys, SubmissionSources, ToolSchemaModes, TraceSources
+
+from .constants import LoopMessages, MetadataKeys, SubmissionSources, ToolSchemaModes, TraceSources
 from .environment import AgentEnvironment
 from .strategy import AgentStrategy
 from .tool_executor import ToolExecutor
 from .trace import AgentTrace, EventType
-from .types import AgentContext, AgentLoopResult, ParsedAction
+from .types import AgentContext, AgentLoopResult, ParsedAction, ToolExecutionOutput, TurnOutcome
 
 logger = get_logger()
 
@@ -109,7 +110,7 @@ class AgentLoop:
                 break
 
             # ---- no tool calls but not done → nudge or implicit submit ----
-            if not parsed.tool_calls:
+            if parsed.outcome is not TurnOutcome.ACT:
                 if self._try_nudge(parsed, ctx):
                     continue
                 self._emit_implicit_submit(ctx, parsed)
@@ -117,6 +118,12 @@ class AgentLoop:
                 break
 
             # ---- tool execution (may set parsed.final_answer post-hoc) ----
+            # An ACT turn ends both no-tool streaks, so the budgets bound
+            # consecutive silent/malformed turns rather than the whole episode.
+            # Without the reset a single stray text-only turn late in a long
+            # task would exhaust the budget and end the episode.
+            ctx.nudge_count = 0
+            ctx.parse_error_nudge_count = 0
             if await self._run_tools(parsed, ctx, assistant_msg):
                 terminated_by_strategy = True
                 break
@@ -182,19 +189,30 @@ class AgentLoop:
         current output as an implicit final answer.
         """
         should_nudge = self.strategy.should_nudge(parsed, ctx)
-        self._dbg(ctx, f'no_tool_calls, should_nudge={should_nudge}')
+        malformed = parsed.outcome is TurnOutcome.MALFORMED
+        self._dbg(ctx, f'outcome={parsed.outcome.value}, should_nudge={should_nudge}')
         if not should_nudge:
             return False
 
-        nudge = ChatMessageUser(content=NUDGE_PROMPT)
+        # Prefer the strategy's own reminder so the model gets feedback that
+        # matches what it actually did wrong (e.g. a parse error, or a bash /
+        # fenced-block protocol) instead of the generic "call the submit tool"
+        # text, which misleads when the strategy exposes no submit tool.
+        reminder = self.strategy.nudge_message(parsed, ctx)
+        nudge = ChatMessageUser(content=reminder)
         ctx.messages.append(nudge)
+        if malformed:
+            ctx.parse_error_nudge_count += 1
+        else:
+            ctx.nudge_count += 1
         self.trace.add_event(
             step=ctx.step,
             type=EventType.NUDGE,
             message_id=nudge.id,
             payload={
                 'source': TraceSources.NUDGE,
-                'message': LoopMessages.NO_TOOL_CALL_REMINDER,
+                'message': (LoopMessages.PARSE_ERROR_REMINDER if malformed else LoopMessages.NO_TOOL_CALL_REMINDER),
+                'outcome': parsed.outcome.value,
             },
         )
         ctx.step += 1
@@ -214,9 +232,9 @@ class AgentLoop:
         """
         self._dbg(
             ctx,
-            f'executing {len(parsed.tool_calls)} tool call(s): '
-            f'{[c.function.name for c in parsed.tool_calls]}',
+            f'executing {len(parsed.tool_calls)} tool call(s): {[c.function.name for c in parsed.tool_calls]}',
         )
+        attachment_messages = []
         for call in parsed.tool_calls:
             self.trace.add_event(
                 step=ctx.step,
@@ -229,17 +247,32 @@ class AgentLoop:
                 },
             )
             observation, error, duration = await self.tool_executor.execute(call)
+            rich_output = observation if isinstance(observation, ToolExecutionOutput) else None
+            observation_text = rich_output.text if rich_output is not None else observation
             self._dbg(
                 ctx,
-                f'tool={call.function.name} duration={duration*1000:.0f}ms '
+                f'tool={call.function.name} duration={duration * 1000:.0f}ms '
                 f'error={error.type if error else None} '
-                f'obs_len={len(observation) if isinstance(observation, str) else 0}',
+                f'obs_len={len(observation_text)}',
             )
             # ``format_observation`` may signal completion by mutating
             # ``parsed.final_answer``; the post-execution ``is_done`` check
             # below picks it up.
-            obs_msg = self.strategy.format_observation(call, observation, error, parsed, ctx)
+            obs_msg = self.strategy.format_observation(call, observation_text, error, parsed, ctx)
+            if rich_output is not None and rich_output.metadata:
+                obs_msg.metadata = {
+                    **(obs_msg.metadata or {}),
+                    **rich_output.metadata,
+                }
             ctx.messages.append(obs_msg)
+            attachment_message = None
+            if rich_output is not None and rich_output.attachments:
+                attachment_message = ChatMessageUser(
+                    content=rich_output.attachments,
+                    tool_call_id=[call.id],
+                    metadata=rich_output.metadata or None,
+                )
+                attachment_messages.append(attachment_message)
             self.trace.add_event(
                 step=ctx.step,
                 type=EventType.TOOL_RESULT,
@@ -249,14 +282,24 @@ class AgentLoop:
                     'name': call.function.name,
                     'id': call.id,
                     'error': error.type if error else None,
-                    'preview': observation[:500] if isinstance(observation, str) else None,
+                    'preview': observation_text[:500],
+                    'metadata': rich_output.metadata if rich_output is not None else {},
+                    'attachments': [
+                        getattr(attachment, 'image', None)
+                        for attachment in (rich_output.attachments if rich_output is not None else [])
+                        if getattr(attachment, 'type', None) == 'image'
+                    ],
                 },
             )
 
+            if rich_output is not None and rich_output.terminate:
+                parsed.final_answer = rich_output.final_answer if rich_output.final_answer is not None else ''
             if self.strategy.is_done(parsed, ctx):
-                self._emit_post_tool_submit(ctx, obs_msg, call, parsed, duration)
+                ctx.messages.extend(attachment_messages)
+                self._emit_post_tool_submit(ctx, attachment_message or obs_msg, call, parsed, duration)
                 return True
 
+        ctx.messages.extend(attachment_messages)
         return False
 
     # ------------------------------------------------------------------
@@ -313,6 +356,13 @@ class AgentLoop:
         assistant_msg: ChatMessage,
         parsed: ParsedAction,
     ) -> None:
+        """Record the strategy's own termination signal.
+
+        ``final_answer`` here is what the *loop observed*, not the prediction
+        that gets reported: that is resolved after the loop returns and lives
+        in ``AgentTrace.final_prediction``. The two coincide for the sentinel
+        protocol but must not be conflated.
+        """
         self._dbg(
             ctx,
             f'is_done=True final_answer={str(parsed.final_answer)[:100]!r}',
@@ -326,14 +376,25 @@ class AgentLoop:
             )
 
     def _emit_implicit_submit(self, ctx: AgentContext, parsed: ParsedAction) -> None:
-        final = parsed.raw_text or ''
+        """Record that the loop gave up nudging and ended the episode.
+
+        The loop deliberately does not publish a ``final_answer`` here: it has
+        no answer of its own, and a malformed turn's ``raw_text`` is incidental
+        prose rather than a submission. Only a short preview is kept, for
+        diagnosis; the reported prediction is ``AgentTrace.final_prediction``.
+        """
+        malformed = parsed.outcome is TurnOutcome.MALFORMED
         self.trace.add_event(
             step=ctx.step,
             type=EventType.SUBMIT,
             message_id=None,
             payload={
-                'final_answer': final,
-                'source': SubmissionSources.IMPLICIT_NO_NUDGE,
+                'source': (
+                    SubmissionSources.PARSE_ERROR_EXHAUSTED if malformed else SubmissionSources.IMPLICIT_NO_NUDGE
+                ),
+                'outcome': parsed.outcome.value,
+                'error': parsed.error,
+                'raw_text_preview': str(parsed.raw_text or '')[:120],
             },
         )
 
@@ -360,13 +421,11 @@ class AgentLoop:
         )
         self._dbg(
             ctx,
-            f'is_done after tool {call.function.name}; '
-            f'final_answer_len={len(str(parsed.final_answer or ""))}',
+            f'is_done after tool {call.function.name}; final_answer_len={len(str(parsed.final_answer or ""))}',
         )
 
     def _emit_max_steps_exceeded(self, ctx: AgentContext) -> None:
-        logger.info(f'AgentLoop reached max_steps={self.max_steps} '
-                    f'for sample {ctx.sample_id}; terminating.')
+        logger.info(f'AgentLoop reached max_steps={self.max_steps} for sample {ctx.sample_id}; terminating.')
         if logger.isEnabledFor(logging.DEBUG):
             self._dbg(ctx, f'max_steps_exceeded total_messages={len(ctx.messages)}')
         self.trace.add_event(
@@ -380,8 +439,7 @@ class AgentLoop:
 
     def _emit_context_overflow(self, ctx: AgentContext) -> None:
         logger.warning(
-            f'AgentLoop sample={ctx.sample_id} step={ctx.step}: '
-            'model context window exceeded; terminating gracefully.'
+            f'AgentLoop sample={ctx.sample_id} step={ctx.step}: model context window exceeded; terminating gracefully.'
         )
         if logger.isEnabledFor(logging.DEBUG):
             self._dbg(ctx, f'context_overflow total_messages={len(ctx.messages)}')

@@ -26,7 +26,7 @@
 - **User Model Configuration**: Requires setting up a user simulation model
 - Primary metric: **Accuracy** based on task completion reward
 - Supports **airline**, **retail**, and **telecom** domains
-- Uses **pass@k** aggregation for robustness evaluation
+- Uses **pass^k** aggregation (`mean_and_pass_hat_k`) for robustness evaluation: the probability that *all* `k` attempts of a task succeed, as defined by the τ-bench paper. This is stricter than `pass@k`, which only requires at least one of `k` attempts to succeed. Set `repeats=k` to enable it.
 - [Usage Example](https://evalscope.readthedocs.io/en/latest/third_party/tau2_bench.html)
 - A newer release **τ³-bench** (v1.0.0) is available as the `tau3_bench` benchmark, with a new `banking_knowledge` domain and 75+ task fixes. Note: the two versions cannot be installed in the same environment.
 
@@ -39,7 +39,7 @@
 | **Dataset ID** | [evalscope/tau2-bench-data](https://modelscope.cn/datasets/evalscope/tau2-bench-data/summary) |
 | **Paper** | N/A |
 | **Tags** | `Agent`, `FunctionCalling`, `Reasoning` |
-| **Metrics** | N/A |
+| **Metrics** | `accuracy` |
 | **Default Shots** | 0-shot |
 | **Evaluation Split** | `test` |
 | **Aggregation** | `mean_and_pass_hat_k` |
@@ -154,5 +154,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

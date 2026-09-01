@@ -7,8 +7,9 @@ file) and is ``None`` for non-agent benchmarks.
 
 import time
 from enum import Enum
-from pydantic import BaseModel, Field
 from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field
 
 from evalscope.api.model import ModelUsage
 
@@ -27,6 +28,9 @@ class EventType(str, Enum):
 
     ENV_EXEC = 'env_exec'
     """Environment executed a raw command (bash, etc.)."""
+
+    ENV_RESET = 'env_reset'
+    """A stateful environment returned its initial observation."""
 
     ERROR = 'error'
     """Parse error / tool error / timeout etc."""

@@ -12,6 +12,7 @@
 | `EVALSCOPE_LANGUAGE` | 全局默认语言，影响报告等输出语言（`en` 或 `zh`） | `en` |
 | `EVALSCOPE_HEARTBEAT_INTERVAL` | 评测进度心跳上报间隔（秒） | `60` |
 | `MODELSCOPE_CACHE` | ModelScope 模型与数据集缓存根目录 | `~/.cache/modelscope/hub` |
+| `DATASET_TF_BATCH_SIZE` | 数据集转换的批处理大小 | `100` |
 
 ## 模型参数
 
@@ -40,23 +41,29 @@
 
 | 参数 | 类型 | 说明 | 支持的后端 |
 |------|------|------|------------|
-| `timeout` | `int` | 请求超时时间（秒） | 所有 |
+| `timeout` | `int`/`float` | 请求超时时间（秒） | 所有 |
 | `retries` | `int` | 重试次数，默认为5 | OpenAI兼容 |
 | `retry_interval` | `int` | 重试间隔时间（秒），默认10 | OpenAI兼容 |
 | `stream` | `bool` | 是否流式返回响应 | 所有 |
 | `max_tokens` | `int` | 最大生成token数量 | 所有 |
 | `top_p` | `float` | Nucleus采样，考虑概率质量为top_p的token | 所有 |
 | `temperature` | `float` | 采样温度，范围0~2，越高越随机 | 所有 |
+| `stop_seqs` | `list[str]` | 触发停止生成的序列列表，返回文本不包含该序列 | 所有 |
 | `frequency_penalty` | `float` | 范围-2.0~2.0，正值惩罚重复token | OpenAI兼容 |
 | `presence_penalty` | `float` | 范围-2.0~2.0，正值惩罚已出现token | OpenAI兼容 |
+| `repetition_penalty` | `float` | 对已生成token施加指数惩罚，1.0 表示不惩罚 | OpenAI兼容、HuggingFace、vLLM |
 | `logit_bias` | `dict` | token id到偏置值的映射（-100~100）<br>示例：`"42=10,43=-10"` | OpenAI兼容 |
 | `seed` | `int` | 随机种子 | OpenAI兼容 |
 | `do_sample` | `bool` | 是否采用采样策略（否则贪婪解码） | Transformers |
-| `top_k` | `int` | 从top_k最可能的词中采样 | Anthropic, Google, HuggingFace, vLLM, SGLang |
-| `logprobs` | `bool` | 是否返回输出token的对数概率 | OpenAI, Grok, TogetherAI, HuggingFace, llama-cpp-python, vLLM, SGLang |
-| `top_logprobs` | `int` | 返回概率最高的前N个token（范围0~20） | OpenAI, Grok, HuggingFace, vLLM, SGLang |
-| `parallel_tool_calls` | `bool` | 工具调用是否支持并行 | OpenAI, Groq |
-| `max_tool_output` | `int` | 工具输出的最大字节数 | 所有（默认16*1024） |
+| `top_k` | `int` | 从top_k最可能的词中采样 | Anthropic、Google、HuggingFace、vLLM、SGLang |
+| `logprobs` | `bool` | 是否返回输出token的对数概率 | OpenAI兼容、HuggingFace、llama-cpp-python |
+| `top_logprobs` | `int` | 返回概率最高的前N个token（范围0~20） | OpenAI兼容、HuggingFace |
+| `parallel_tool_calls` | `bool` | 工具调用是否支持并行 | OpenAI、Groq |
+| `response_schema` | `dict` | 请求结构化输出（JSON Schema），仍需对输出做校验 | OpenAI、Google、Mistral |
+| `reasoning_effort` | `str` | reasoning 努力程度，原样透传给服务端（如 `none` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max`），合法取值由具体模型和服务端决定 | OpenAI兼容 |
+| `reasoning_tokens` | `int` | reasoning 最大 token 预算（thinking budget） | Anthropic Claude |
+| `reasoning_summary` | `str` | reasoning 摘要级别，可选 `concise` / `detailed` / `auto` | OpenAI reasoning 系列 |
+| `reasoning_history` | `str` | 多轮对话中如何编码上一轮 assistant 的 `reasoning_content`。可选值：`reasoning_field`（默认，作为独立顶层字段透传，适配 DeepSeek V4 thinking、Qwen3 thinking 等）、`think_tag`（编码为 `<think>...</think>` 塞进 content 字符串，兼容旧版 Together / Groq 等部署）、`none`（完全剥离，DeepSeek R1 等禁止回传 `reasoning_content` 的 legacy 模型必须显式设此值） | OpenAI兼容 |
 | `extra_body` | `dict` | 向OpenAI兼容服务发送的额外请求体 | OpenAI兼容服务 |
 | `extra_query` | `dict` | 向OpenAI兼容服务发送的额外查询参数 | OpenAI兼容服务 |
 | `extra_headers` | `dict` | 向OpenAI兼容服务发送的额外请求头 | OpenAI兼容服务 |
@@ -101,11 +108,11 @@
 | `few_shot_random` | `bool` | 是否随机采样few-shot数据 |
 | `shuffle` | `bool` | 是否打乱数据 |
 | `shuffle_choices` | `bool` | 是否打乱选项顺序（仅多选题） |
-| `metric_list` | `list[str\|dict]` | 指标列表，默认支持`acc` |
+| `metric_list` | `list[str\|dict]` | 指标列表。应使用 `accuracy` 等规范名称；`acc` 等旧别名仅为兼容用途并会被规范化。 |
 | `aggregation` | `str` | 评测结果聚合方式，默认`mean`。可选：`mean_and_pass_at_k`、`mean_and_vote_at_k`、`mean_and_pass_hat_k`（均需设置`repeats=k`）。<br>• `pass_at_k`：同一样例生成k次至少一次通过的概率（如`humaneval`设`repeats=5`）<br>• `vote_at_k`：对同一样例k次结果投票后计分<br>• `pass_hat_k`：同一样例k次全部通过的概率（如`tau2_bench`设`repeats=3`） |
 | `filters` | `dict` | 输出过滤器<br>• `remove_until`: 过滤指定字符串之前的内容<br>• `extract`: 提取正则匹配的内容 |
 | `force_redownload` | `bool` | 是否强制重新下载数据集 |
-| `extra_params` | `dict` | 数据集相关的**额外参数**，具体参考[各数据集说明](./supported_dataset/index.md)，指定`{<param_name>:<value>}`即可, `value`的类型(`type`)和选择范围(`choices`)根据具体参数而定。SWE-bench agentic 等基准的扩展参数请参见 [Agent 评测](../user_guides/agent/native.md#swe-bench-agentic-基准) |
+| `extra_params` | `dict` | 数据集相关的**额外参数**，具体参考[各数据集说明](./supported_dataset/index.md)，指定`{<param_name>:<value>}`即可, `value`的类型(`type`)和选择范围(`choices`)根据具体参数而定。SWE-bench agentic 等基准的扩展参数请参见 [Agent 评测](../user_guides/agent/native.md#用例swe-bench-agentic) |
 | `sandbox_config` | `dict` | Sandbox配置（详见下方Sandbox参数） |
 
 **sandbox_config 配置项：**
@@ -144,80 +151,65 @@
 
 | 参数 | 类型 | 说明 | 默认值 |
 |------|------|------|--------|
-| `--eval-type` | `str` | 评测类型<br>• `llm_ckpt`: 本地模型推理（transformers）<br>• `openai_api`: OpenAI兼容Chat Completions API服务<br>• `openai_responses_api`: OpenAI官方Responses API服务<br>• `anthropic_api`: Anthropic Claude API服务<br>• `litellm`: LiteLLM多厂商路由（支持100+ LLM服务商）<br>• `text2image`: 文本转图像模型（diffusers）<br>• `image_editing`: 图像编辑模型<br>• `mock_llm`: 模拟推理（功能验证）<br>• `custom`: 自定义评测类型 | `None`（自动判断） |
-| `--eval-batch-size` | `int` | 评测批量大小，作用于以下阶段：<br>• 推理阶段：并发请求数（service模式）或批量大小（checkpoint模式）<br>• LLM-judge 评审阶段：并发线程数<br>• batch_calculate_metrics 阶段：每批次处理的样本数 | `1`（service模式为`8`） |
+| `--eval-type` | `str` | 评测类型<br>• `llm_ckpt`: 本地模型推理（transformers）<br>• `openai_api`: OpenAI兼容Chat Completions API服务<br>• `openai_responses_api`: OpenAI官方Responses API服务<br>• `anthropic_api`: Anthropic Claude API服务<br>• `litellm`: LiteLLM多厂商路由（支持100+ LLM服务商）<br>• `text2image`: 文本转图像模型（diffusers）<br>• `text2speech`: 文本转语音模型服务<br>• `image_editing`: 图像编辑模型<br>• `mock_llm`: 模拟推理（功能验证）<br>• `custom`: 自定义评测类型 | `None`（自动判断） |
+| `--eval-batch-size` | `int` | 评测批量大小，作用于以下阶段：<br>• 推理阶段：并发请求数（远程 API 模式）或批量大小（`llm_ckpt`模式）<br>• LLM-judge 评审阶段：并发线程数<br>• batch_calculate_metrics 阶段：每批次处理的样本数 | `1`（`openai_api`、`openai_responses_api`、`anthropic_api`、`litellm` 等远程 API 模式为`8`） |
 | `--eval-backend` | `str` | 评测后端<br>• `Native`: 默认后端<br>• `OpenCompass`: 大语言模型评测<br>• `VLMEvalKit`: 多模态模型评测<br>• `RAGEval`: RAG/Embedding/Reranker/CLIP评测<br>• `ThirdParty`: 特殊任务评测 | `Native` |
 | `--eval-config` | `str` | 非Native后端的配置文件路径 | - |
 
 ## Judge参数
 
-LLM-as-a-Judge评测参数，使用裁判模型判断正误：
+Native LLM Judge 通过一个 typed `judge` 对象配置：Python/YAML 使用 `judge={...}`，CLI 使用
+`--judge '<JSON object>'`。
 
-| 参数 | 类型 | 说明 | 默认值 |
+```python
+TaskConfig(
+    model='MODEL',
+    datasets=['simple_qa'],
+    judge={
+        'strategy': 'llm',
+        'models': {
+            'model_id': 'JUDGE_MODEL',
+            'api_url': 'OPENAI_COMPATIBLE_URL',
+            'api_key': 'JUDGE_API_KEY',
+            'generation_config': {'temperature': 0.0, 'retries': 3},
+        },
+        'repeats': 1,
+        'position_swap': 'auto',
+        'aggregation': 'mean',
+        'min_valid_judges': 1,
+    },
+)
+```
+
+`models` 可传单个对象或对象列表。列表表示独立 Judge；重复的 `model_id` 必须显式指定不同的
+`judge_id`，唯一 `model_id` 默认同时作为 `judge_id`。
+
+| 字段 | 类型 | 说明 | 默认值 |
 |------|------|------|--------|
-| `--judge-strategy` | `str` | 裁判模型策略<br>• `auto`: 根据数据集自动决定<br>• `llm`: 总是使用裁判模型<br>• `rule`: 只使用规则判断<br>• `llm_recall`: 规则失败后使用裁判模型 | `auto` |
-| `--judge-worker-num` | `int` | **[已废弃]** 请使用 `--eval-batch-size` 代替，将在 v2.0.0 中移除 | `1` |
-| `--judge-model-args` | `dict` | 裁判模型配置（JSON字符串），详见下表 | - |
-| `--analysis-report` | `bool` | 是否生成分析报告（自动判断语言） | `false` |
+| `strategy` | `auto\|rule\|llm\|llm_recall` | `auto` 遵循 benchmark 策略；`llm_recall` 仅复核规则漏判，并取 `max(rule, judge)`。 | `auto` |
+| `models` | `object\|list[object]` | 一个或多个 Judge 模型配置；为保证 review cache 可复现，必须给出 `model_id`。 | `[]` |
+| `repeats` | `int >= 1` | 每个 Judge 的独立判分观测次数，不等同于 transport retry。 | `1` |
+| `position_swap` | `auto\|on\|off` | `auto` 保持 benchmark 官方的位置交换策略。 | `auto` |
+| `aggregation` | `mean\|median\|majority_vote` | 普通指标的跨观测聚合方式。 | `mean` |
+| `min_valid_judges` | `int >= 1` | 一个指标所需的最少有效 Judge verdict 数。 | `1` |
 
-### judge-model-args 配置项
+`models` 的每项支持 `judge_id`、`model_id`、`api_key`、`api_url`、`eval_type`、`model_args` 与
+`generation_config`。provider 私有的模型初始化参数放入 `model_args`；transport 重试放入
+`generation_config.retries`。
 
-| 参数 | 类型 | 说明 | 默认值 |
-|------|------|------|--------|
-| `api_key` | `str` | API密钥 | 从`MODELSCOPE_SDK_TOKEN`读取，默认`EMPTY` |
-| `api_url` | `str` | API端点 | 从`MODELSCOPE_API_BASE`读取，<br>默认`https://api-inference.modelscope.cn/v1/` |
-| `model_id` | `str` | 模型ID | 从`MODELSCOPE_JUDGE_LLM`读取，<br>默认`Qwen/Qwen3-235B-A22B` |
-| `system_prompt` | `str` | 系统prompt | - |
-| `prompt_template` | `str` | Prompt模板 | 根据`score_type`自动选择 |
-| `generation_config` | `dict` | 生成参数（同`--generation-config`） | - |
-| `model_args` | `dict` | 裁判模型加载参数（同`--model-args`），例如`{"default_headers": {"X-API-KEY": "your-api-key"}}` | `{}` |
-| `score_type` | `str` | 打分方式<br>• `pattern`: 判断与参考答案是否相同<br>• `numeric`: 无参考答案打分（0-1） | `pattern` |
-| `score_pattern` | `str` | 解析输出的正则表达式 | `pattern`模式：`(A\|B)`<br>`numeric`模式：`\[\[(\d+(?:\.\d+)?)\]\]` |
-| `score_mapping` | `dict` | `pattern`模式的分数映射 | `{'A': 1.0, 'B': 0.0}` |
+`judge.contract` 仅配置通用单 verdict Judge：`system_prompt`、`prompt_template`、`score_mapping` 和
+`score_type`。`pattern` 要求 Judge 在 JSON 中返回 `score_mapping` 之一；`numeric` 要求 JSON 分数位于
+`[0, 1]`。框架会在 prompt 中追加 JSON 格式要求，只解析一次普通模型回复；不使用 constrained decoding、
+正则提分或纠正性追问。无效回复显示为 unavailable，并从指标中排除，而非记为 0。
 
-```{seealso}
-关于ModelScope模型推理服务，请参考[ModelScope API推理服务](https://modelscope.cn/docs/model-service/API-Inference/intro)
-```
+对于经过 LLM 判定的样本，报告包含 `JudgeSummary`：覆盖率、失败计数与分歧。当 adapter 通过确定性的
+Judge 短路直接判定样本时，得分 metadata 会记录 `judge_skipped=true` 和 `judge_skip_reason`；Web review
+面板会将其标为规则直接判分，而非 LLM verdict。native 评测复用 prediction 和 review 前要求缓存的评测身份完全匹配。
+设置 `rerun_review=True` 可复用 prediction 并重算 review，新的 review 文件只有成功后才原子替换旧文件；它也是身份
+不匹配时唯一的显式覆盖开关，生成的配置会在当前评测版本下记录 prediction 来源。
 
-<details><summary>pattern 模式默认prompt模板</summary>
-
-```text
-Your job is to look at a question, a gold target, and a predicted answer, and return a letter "A" or "B" to indicate whether the predicted answer is correct or incorrect.
-
-[Question]
-{question}
-
-[Reference Answer]
-{gold}
-
-[Predicted Answer]
-{pred}
-
-Evaluate the model's answer based on correctness compared to the reference answer.
-Grade the predicted answer of this new question as one of:
-A: CORRECT
-B: INCORRECT
-
-Just return the letters "A" or "B", with no text around it.
-```
-</details>
-
-<details><summary>numeric 模式默认prompt模板</summary>
-
-```text
-Please act as an impartial judge and evaluate the quality of the response provided by an AI assistant to the user question displayed below. Your evaluation should consider factors such as the helpfulness, relevance, accuracy, depth, creativity, and level of detail of the response.
-
-Begin your evaluation by providing a short explanation. Be as objective as possible.
-
-After providing your explanation, you must rate the response on a scale of 0 (worst) to 1 (best) by strictly following this format: "[[rating]]", for example: "Rating: [[0.5]]"
-
-[Question]
-{question}
-
-[Response]
-{pred}
-```
-</details>
+旧 `judge_strategy` 和单个 mapping `judge_model_args` 仅保留一轮输入迁移并会告警。已删除的
+`judge_worker_num` 和 `score_pattern` 会明确报错。
 
 ## Sandbox参数
 
@@ -237,7 +229,7 @@ EvalScope 使用嵌套的 `--sandbox` 配置（对应 `SandboxTaskConfig`）统�
 
 ## Agent 参数
 
-`--agent-config` / `agent_config` 用于启用 [Agent 评测](../user_guides/agent/index.md)：当设置后，所有基于 `DefaultDataAdapter` 的基准会改用 [内置 AgentLoop](../user_guides/agent/native.md) 进行推理，或通过 [外部 Agent Bridge](../user_guides/agent/bridge.md) 转交给 Claude Code / Codex 等成品 CLI。`AgentLoopAdapter` 子类（如 `swe_bench_*_agentic`）会忽略该全局配置，改用 `dataset_args.extra_params`。
+`--agent-config` / `agent_config` 用于启用 [Agent 评测](../user_guides/agent/index.md)：当设置后，所有基于 `DefaultDataAdapter` 的基准会改用 [内置 AgentLoop](../user_guides/agent/native.md) 进行推理，或通过 [外部 Agent Bridge](../user_guides/agent/bridge.md) 转交给 Claude Code / Codex 等成品 CLI。`AgentLoopAdapter` 子类（如 `swe_bench_*_agentic`）保留 benchmark 默认值，同时接受其支持的显式覆盖，例如策略、步数和工具。
 
 | 参数 | 类型 | 说明 | 默认值 |
 |------|------|------|--------|
@@ -249,10 +241,10 @@ EvalScope 使用嵌套的 `--sandbox` 配置（对应 `SandboxTaskConfig`）统�
 |------|------|------|--------|
 | `strategy` | `str` | 策略名称：`function_calling` / `react` / `swe_bench_toolcall` / `swe_bench_backticks` | `function_calling` |
 | `tools` | `list[str]` | 工具白名单：`bash` / `python_exec`（`submit` 由策略自动注入） | `[]` |
-| `environment` | `str \| None` | 工具运行环境：`local`（子进程）/ `docker`（隔离沙箱） | `None` |
+| `environment` | `str \| None` | Agent 命令执行环境，例如 `local` 或 `docker` | `None` |
+| `environment_extra` | `dict` | Agent 环境构造参数；Docker 镜像放在 `sandbox_config.image` | `{}` |
 | `max_steps` | `int` | 循环迭代硬上限 | `10` |
-| `extra` | `dict` | 策略构造参数，例如 `{'system_prompt': '...'}` | `{}` |
-| `environment_extra` | `dict` | 环境构造参数。`local` 支持 `working_dir`/`env_vars`；`docker` 支持 `image`/`timeout`/`environment` | `{}` |
+| `kwargs` | `dict` | 策略构造参数，例如 `{'system_prompt': '...'}` | `{}` |
 
 ```{seealso}
 完整使用说明、用例与 Trace 可视化请参见 [Agent 评测](../user_guides/agent/index.md)。
@@ -265,7 +257,7 @@ EvalScope 使用嵌套的 `--sandbox` 配置（对应 `SandboxTaskConfig`）统�
 | `--work-dir` | `str` | 评测输出路径（详见下方目录结构） | `./outputs` |
 | `--no-timestamp` | `bool` | 是否不在工作目录中添加时间戳 | `false` |
 | `--use-cache` | `str` | 复用本地缓存路径（如`outputs/20241210_194434`）<br>重用推理结果和评测结果 | `None` |
-| `--rerun-review` | `bool` | 配合 `--use-cache` 使用：删除已有 reviews 缓存并重跑评测/打分阶段，但仍复用 predictions 缓存 | `false` |
+| `--rerun-review` | `bool` | 配合 `--use-cache` 使用：基于 predictions 缓存重跑评测/打分，并仅在成功后原子替换 reviews 缓存 | `false` |
 | `--enable-progress-tracker` | `bool` | 是否开启进度追踪，将层级评测进度实时写入`progress.json`，可通过服务接口查询 | `false` |
 | `--collect-perf` | `bool` | 采集每次推理请求的性能指标（延迟、TTFT、Token 用量），汇总后写入评测报告。采集 TTFT 需开启 `--generation-config stream=true`；使用 `--no-collect-perf` 可禁用 | `true` |
 | `--seed` | `int` | 随机种子 | `42` |

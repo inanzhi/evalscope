@@ -34,7 +34,7 @@ MaritimeBench is a benchmark for evaluating AI models on maritime-related multip
 | **Dataset ID** | [HiDolphin/MaritimeBench](https://modelscope.cn/datasets/HiDolphin/MaritimeBench/summary) |
 | **Paper** | N/A |
 | **Tags** | `Chinese`, `Knowledge`, `MCQ` |
-| **Metrics** | `acc` |
+| **Metrics** | `accuracy` |
 | **Default Shots** | 0-shot |
 | **Evaluation Split** | `test` |
 
@@ -119,5 +119,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

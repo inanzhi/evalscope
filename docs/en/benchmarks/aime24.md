@@ -36,7 +36,7 @@ AIME 2024 (American Invitational Mathematics Examination 2024) is a benchmark ba
 | **Dataset ID** | [evalscope/aime24](https://modelscope.cn/datasets/evalscope/aime24/summary) |
 | **Paper** | N/A |
 | **Tags** | `Math`, `Reasoning` |
-| **Metrics** | `acc` |
+| **Metrics** | `accuracy` |
 | **Default Shots** | 0-shot |
 | **Evaluation Split** | `test` |
 
@@ -108,5 +108,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

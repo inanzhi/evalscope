@@ -1,6 +1,7 @@
-import aiohttp
 import json
 from typing import Any, AsyncGenerator, Dict, List, Tuple, Union
+
+import aiohttp
 
 from evalscope.perf.arguments import Arguments
 from evalscope.perf.multi_turn_args import _sample_int_or_range
@@ -79,7 +80,8 @@ class CustomPlugin(ApiPluginBase):
             Dict: The request payload with added parameters.
         """
         # Add the model name
-        payload['model'] = param.model
+        if param.model is not None:
+            payload['model'] = param.model
 
         # Add various parameters if they are provided
         if param.max_tokens is not None:
@@ -188,6 +190,7 @@ class CustomPlugin(ApiPluginBase):
 if __name__ == '__main__':
     # Example usage of the CustomPlugin
     from dotenv import dotenv_values
+
     env = dotenv_values('.env')
 
     from evalscope.perf.arguments import Arguments
@@ -200,7 +203,7 @@ if __name__ == '__main__':
         api='custom',  # Use the custom API plugin registered above
         dataset='openqa',
         number=1,
-        max_tokens=10
+        max_tokens=10,
     )
 
     run_perf_benchmark(args)

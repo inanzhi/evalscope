@@ -32,6 +32,7 @@ from evalscope.api.messages import (
 from evalscope.api.model import ModelOutput
 from evalscope.api.tool import ToolCall, ToolCallError, ToolFunction
 from evalscope.utils.logger import get_logger
+
 from .translate_anthropic import unpack_tool_call
 
 logger = get_logger()
@@ -114,6 +115,26 @@ class BridgeTraceRecorder:
             messages_key='input',
         )
 
+    def record_gemini_turn(
+        self,
+        request_body: Dict[str, Any],
+        output: ModelOutput,
+        *,
+        latency_ms: Optional[float] = None,
+    ) -> None:
+        """Append events for one Gemini generateContent round-trip.
+
+        Gemini uses ``contents`` (not ``messages``) and ``parts`` (not
+        ``content``).  System prompts live under ``systemInstruction``.
+        """
+        self._record_turn(
+            request_body,
+            output,
+            latency_ms=latency_ms,
+            extract_tool_results=self._extract_gemini_tool_results,
+            messages_key='contents',
+        )
+
     def _record_turn(
         self,
         request_body: Dict[str, Any],
@@ -123,7 +144,7 @@ class BridgeTraceRecorder:
         extract_tool_results,
         messages_key: str = 'messages',
     ) -> None:
-        """Shared per-turn recorder for all three wire protocols.
+        """Shared per-turn recorder for all four wire protocols.
 
         Order: surface any tool results from the previous turn as
         ``TOOL_RESULT`` events on the *next* step, then ``MODEL_GENERATE``
@@ -153,10 +174,7 @@ class BridgeTraceRecorder:
                         step=next_step,
                         type=EventType.TOOL_RESULT,
                         message_id=msg.id,
-                        payload={
-                            'id': tc_id,
-                            'error': 'unknown' if is_error else None
-                        },
+                        payload={'id': tc_id, 'error': 'unknown' if is_error else None},
                     )
 
             self._step += 1
@@ -183,11 +201,7 @@ class BridgeTraceRecorder:
                     step=self._step,
                     type=EventType.TOOL_CALL,
                     message_id=assistant_msg.id,
-                    payload={
-                        'name': name,
-                        'arguments': args,
-                        'id': tc.id
-                    },
+                    payload={'name': name, 'arguments': args, 'id': tc.id},
                 )
 
     def record_run_start(self, *, framework: str, cmd_summary: str) -> None:
@@ -276,12 +290,22 @@ class BridgeTraceRecorder:
         calls / reasoning, not initial setup. ``role: 'assistant'``
         message items are also skipped: model output is captured from
         :class:`ModelOutput` via :meth:`_build_assistant_message`.
+
+        Gemini wire format uses ``contents`` with ``parts`` instead of
+        ``messages`` with ``content``, and ``systemInstruction`` instead
+        of ``instructions``.  Both layouts are handled transparently.
         """
         if self._step >= 0:
             return  # past the first turn; later requests just re-send history.
 
+        # Top-level system instruction — OpenAI/Anthropic use ``instructions``,
+        # Gemini uses ``systemInstruction.parts[].text``.
         if instr := request_body.get('instructions'):
             self._messages.append(ChatMessageSystem(content=str(instr)))
+        elif sys_instr := request_body.get('systemInstruction') or request_body.get('system_instruction'):
+            text = _text_from_gemini_parts(sys_instr.get('parts') if isinstance(sys_instr, dict) else [])
+            if text:
+                self._messages.append(ChatMessageSystem(content=text))
 
         for entry in request_body.get(messages_key) or []:
             if not isinstance(entry, dict):
@@ -290,7 +314,10 @@ class BridgeTraceRecorder:
             if entry_type is not None and entry_type != 'message':
                 continue
             role = entry.get('role')
+            # Try OpenAI/Anthropic ``content`` first, fall back to Gemini ``parts``.
             text = _user_text_from_content(entry.get('content'))
+            if not text:
+                text = _text_from_gemini_parts(entry.get('parts'))
             if not text:
                 continue
             if role in ('system', 'developer'):
@@ -355,9 +382,7 @@ class BridgeTraceRecorder:
             'local_shell_call_output',
         }
         already_recorded = {
-            m.tool_call_id
-            for m in self._messages
-            if isinstance(m, ChatMessageTool) and m.tool_call_id is not None
+            m.tool_call_id for m in self._messages if isinstance(m, ChatMessageTool) and m.tool_call_id is not None
         }
         new_entries: List[Dict[str, Any]] = []
         for entry in items:
@@ -413,6 +438,46 @@ class BridgeTraceRecorder:
         return out
 
     @staticmethod
+    def _extract_gemini_tool_results(contents: List[Any]) -> List[tuple]:
+        """Extract function-response parts from Gemini ``contents``.
+
+        Gemini function call results arrive as a ``role: 'user'`` entry
+        with ``parts`` containing ``functionResponse`` objects:
+
+        .. code-block:: json
+
+            {"role": "user", "parts": [
+                {"functionResponse": {"name": "fn", "response": {...}}}
+            ]}
+
+        Walk backwards collecting consecutive ``user`` entries whose parts
+        are exclusively ``functionResponse`` (mirroring the tail-scan logic
+        of ``_extract_openai_tool_results``).
+        """
+        if not contents:
+            return []
+        tail: List[Dict[str, Any]] = []
+        for entry in reversed(contents):
+            if not isinstance(entry, dict) or entry.get('role') != 'user':
+                break
+            parts = entry.get('parts') or []
+            # Only treat as tool results if all parts are functionResponse
+            if not parts or not all(isinstance(p, dict) and 'functionResponse' in p for p in parts):
+                break
+            tail.append(entry)
+        tail.reverse()
+        out: List[tuple] = []
+        for entry in tail:
+            for part in entry.get('parts') or []:
+                fr = part.get('functionResponse', {})
+                name = fr.get('name', '')
+                resp = fr.get('response', {})
+                text = str(resp) if resp else ''
+                # Use name as the call_id since Gemini doesn't have a separate id field
+                out.append((name, text, False))
+        return out
+
+    @staticmethod
     def _build_assistant_message(output: ModelOutput) -> ChatMessageAssistant:
         if not output.choices:
             return ChatMessageAssistant(content='')
@@ -420,11 +485,13 @@ class BridgeTraceRecorder:
         tool_calls: List[ToolCall] = []
         for tc in src.tool_calls or []:
             name, args = unpack_tool_call(tc)
-            tool_calls.append(ToolCall(
-                id=tc.id,
-                function=ToolFunction(name=name, arguments=args),
-                type='function',
-            ))
+            tool_calls.append(
+                ToolCall(
+                    id=tc.id,
+                    function=ToolFunction(name=name, arguments=args),
+                    type='function',
+                )
+            )
         return ChatMessageAssistant(
             content=src.text or '',
             tool_calls=tool_calls or None,
@@ -449,6 +516,27 @@ def _user_text_from_content(content: Any) -> str:
                 parts.append(block.get('text', '') or '')
         return '\n'.join(p for p in parts if p).strip()
     return ''
+
+
+def _text_from_gemini_parts(parts: Any) -> str:
+    """Extract plain text from Gemini ``parts`` array.
+
+    Gemini content entries use ``parts: [{"text": "..."}]`` without a
+    ``type`` discriminator.  Parts containing ``functionCall`` or
+    ``functionResponse`` are skipped — they represent tool interactions.
+    """
+    if not isinstance(parts, list):
+        return ''
+    texts: List[str] = []
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        # Skip function call / response parts
+        if 'functionCall' in part or 'functionResponse' in part:
+            continue
+        if 'text' in part:
+            texts.append(part['text'])
+    return '\n'.join(t for t in texts if t).strip()
 
 
 def _flat_usage(output: ModelOutput) -> Optional[Dict[str, int]]:

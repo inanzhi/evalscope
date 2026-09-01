@@ -20,8 +20,9 @@ import os
 import shutil
 import subprocess
 import unittest
-from dotenv import dotenv_values, load_dotenv
 from pathlib import Path
+
+from dotenv import dotenv_values, load_dotenv
 
 load_dotenv('.env')
 env = dotenv_values('.env')
@@ -198,7 +199,7 @@ class TestGSM8KAgentPythonExecLocal(unittest.TestCase):
                     tools=['python_exec'],
                     environment='local',
                     max_steps=5,
-                    extra={'system_prompt': (
+                    kwargs={'system_prompt': (
                         'Always call the python_exec tool to compute the answer.'
                     )},
                 ),
@@ -276,9 +277,12 @@ class TestGSM8KAgentPythonExecDocker(unittest.TestCase):
                     strategy='function_calling',
                     tools=['python_exec'],
                     environment='docker',
-                    environment_extra={'image': 'python:3.11-slim', 'timeout': 60},
+                    environment_extra={
+                        'image': 'python:3.11-slim',
+                        'timeout': 60,
+                    },
                     max_steps=5,
-                    extra={'system_prompt': (
+                    kwargs={'system_prompt': (
                         'You are a math solver. '
                         'Use the python_exec tool to verify your calculations.'
                     )},
@@ -398,8 +402,6 @@ class TestGSM8KExternalClaudeCode(_ScrubAnthropicEnvMixin, unittest.TestCase):
                 'mode': 'external',
                 'framework': 'claude-code',
                 'environment': 'docker',
-                # The pre-baked image already has node + claude on PATH;
-                # ``auto_install=False`` short-circuits ``setup()``'s probe.
                 'environment_extra': {
                     'sandbox_config': {
                         'image': _CLAUDE_CODE_IMAGE,
@@ -407,6 +409,8 @@ class TestGSM8KExternalClaudeCode(_ScrubAnthropicEnvMixin, unittest.TestCase):
                     },
                     'timeout': 180.0,
                 },
+                # The pre-baked image already has node + claude on PATH;
+                # ``auto_install=False`` short-circuits ``setup()``'s probe.
                 'kwargs': {
                     'auto_install': False,
                     # Empty string = inherit the inside-container HOME.
@@ -486,8 +490,7 @@ class TestSWEBenchProExternalClaudeCode(_ScrubAnthropicEnvMixin, unittest.TestCa
             agent_config={
                 'mode': 'external',
                 'framework': 'claude-code',
-                # ``environment`` / ``environment_extra`` are intentionally
-                # absent: AgentLoopAdapter uses the benchmark's own
+                # ``environment`` is intentionally absent: AgentLoopAdapter uses the benchmark's own
                 # ``build_environment(sample)`` (per-instance sweap-image).
                 # sweap-images ship Node out of the box; auto_install
                 # auto-detects and skips apt+nodesource (only
@@ -603,7 +606,7 @@ class TestSWEBenchProExternalCodex(unittest.TestCase):
                 'mode': 'external',
                 'framework': 'codex',
                 # AgentLoopAdapter uses the benchmark's per-instance
-                # sweap-image; no environment / environment_extra override
+                # sweap-image; no agent environment override
                 # (parity with the claude-code variant). Kwargs are empty:
                 # CodexRunner defaults already cover the SWE-bench Pro path
                 # (sandbox=workspace-write hardcoded, non-interactive,

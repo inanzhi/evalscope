@@ -18,7 +18,7 @@ Links:
 
 ```{important}
 - **Python Version**: Must use **Python >= 3.12**.
-- **Docker Environment**: Docker is used by default for evaluation. Please ensure Docker Engine and Docker Compose are installed and running locally.
+- **Docker Environment**: Docker is used by default for evaluation. Please ensure Docker Engine, Docker Compose, and the `docker` CLI are installed and available in the environment running EvalScope.
 - **Network Connection**:
   - The dataset is downloaded from Harbor Hub. Please ensure network connectivity.
   - Container building and runtime may require internet access to download dependencies. Ensure a stable network environment.
@@ -65,6 +65,17 @@ task_cfg = TaskConfig(
                 # Timeout multiplier, can be increased if timeout errors occur
                 'timeout_multiplier': 1.0,
 
+                # Reproduce an absolute agent timeout. Do not combine an absolute
+                # phase timeout with that phase's multiplier.
+                'agent_timeout_sec': 3 * 60 * 60,
+                'verifier_timeout_sec': 3 * 60 * 60,
+
+                # Container resources for the published Qwen 3.6 protocol.
+                'environment_kwargs': {
+                    'override_cpus': 32,
+                    'override_memory_mb': 48 * 1024,
+                },
+
                 # Maximum interaction turns, can be increased if tasks are not completed
                 'max_turns': 200,
             }
@@ -89,8 +100,17 @@ The following parameters are supported in `extra_params` within `dataset_args`:
 - `environment_type` (str): The environment type for running the benchmark. Default is `docker`. Supports `docker`, `daytona`, `e2b`, `modal`.
 - `agent_name` (str): The agent type used in Harbor. Default is `terminus-2`. Only `terminus-2` uses the evalscope model for inference; other agents (claude-code, codex, opencode, etc.) are standalone CLI tools with their own API keys.
 - `timeout_multiplier` (float): Timeout multiplier. Default is 1.0.
+- `agent_timeout_sec` / `verifier_timeout_sec` (float): Final phase timeout in seconds. An absolute timeout is not
+  multiplied again by `timeout_multiplier`.
+- `agent_timeout_multiplier` / `verifier_timeout_multiplier` (float): Per-phase multiplier overriding the global
+  multiplier. Do not set a phase multiplier together with that phase's absolute timeout.
 - `max_turns` (int): Maximum interaction turns for the agent to complete tasks. Default is 200.
 - `environment_kwargs` (dict): Extra kwargs passed to Harbor `EnvironmentConfig` for container resource limits. Supported keys: `override_cpus`, `override_memory_mb`, `override_storage_mb`, `override_gpus`, `force_build`, `delete`, `env`, etc.
+
+`override_storage_mb` is only effective when the Docker storage driver and host filesystem support container quotas.
+Container builds and verifier scripts may download dependencies; configure any approved mirror or proxy with
+`environment_kwargs.env`. EvalScope does not infer infrastructure failure from verifier output: a verifier that writes
+a valid reward of `0` is still scored as a model failure.
 
 ## Result Example
 
@@ -119,12 +139,13 @@ After evaluation completes, a result table similar to the following will be outp
 +------------------+-------------------+----------+----------+-------+---------+---------+
 | Model            | Dataset           | Metric   | Subset   |   Num |   Score | Cat.0   |
 +==================+===================+==========+==========+=======+=========+=========+
-| qwen3-coder-plus | terminal_bench_v2 | mean_acc | test     |     5 |     0.2 | default |
+| qwen3-coder-plus | terminal_bench_v2 | Accuracy ↑ | test     |     5 |     20% | default |
 +------------------+-------------------+----------+----------+-------+---------+---------+
 ```
 
 ## Troubleshooting
 
 1. **Docker Connection Failed**: Please check if Docker Desktop or Docker Engine is running and the current user has permission to access the Docker socket.
-2. **Dataset Download Failed**: The dataset is downloaded via GitHub. Please check network connectivity or configure a proxy.
-3. **Python Version Error**: If you encounter syntax errors or package compatibility issues, please confirm you are using Python 3.12+.
+2. **Docker CLI Not Found**: If EvalScope runs inside a container, mounting `/var/run/docker.sock` is not enough. The container also needs the `docker` command-line client installed.
+3. **Dataset Download Failed**: The dataset is downloaded via GitHub. Please check network connectivity or configure a proxy.
+4. **Python Version Error**: If you encounter syntax errors or package compatibility issues, please confirm you are using Python 3.12+.

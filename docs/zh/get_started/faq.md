@@ -60,19 +60,25 @@
 
 **Q: 如何移除模型输出中的“思考过程”（如 `<think>...</think>`）？**
 
-**A:** 对于`evalscope >= v1.0 `版本，默认自动处理`<think>...</think>`。如果需要自定义处理，可以使用 `--dataset-args` 参数为特定数据集添加 `filters`。例如，移除 ifeval 数据集评测时 `</think>` 之前的内容：
-```shell
---dataset-args '{"ifeval": {"filters": {"remove_until": "</think>"}}}'
-```
-如果您的模型使用不同的思考标签，如 `<|end_of_thinking|>`，只需替换即可。
+**A:** 对于`evalscope >= v1.0 `版本，会自动剥离**成对出现**的 `<think>...</think>`。
+
+需要注意：多数 thinking 模型（Qwen3、DeepSeek 系列等）的 chat template 会把 `<think>` 预填进 prompt，模型续写只吐出闭合的 `</think>`。这种**未配对**的情况不会被自动剥离，思考过程会残留在输出里，进而干扰答案提取。推荐按以下任一方式处理：
+
+1.  **在推理引擎侧开启 reasoning parser**（推荐）：SGLang / vLLM 启动时加 `--reasoning-parser`（具体取值见对应引擎文档）。此时思考内容会通过独立的 `reasoning_content` 字段返回，EvalScope 会自动识别，`prediction` 中不再包含思考过程。
+2.  **配置 `filters` 自行过滤**：用 `--dataset-args` 为特定数据集移除 `</think>` 之前的内容：
+    ```shell
+    --dataset-args '{"ifeval": {"filters": {"remove_until": "</think>"}}}'
+    ```
+    如果您的模型使用不同的思考标签，如 `<|end_of_thinking|>`，只需替换即可。
+3.  **用裁判模型兜底**：设置 `judge={'strategy': 'llm_recall', 'models': {...}}`。规则已满分的样本不调用 Judge；其余样本会用 Judge 复核，详见下文“结果异常与问题排查”。
 
 **Q: 如何使用本地模型作为裁判模型（Judge Model）？**
 
-**A:** 您可以使用 vLLM 等框架将本地模型部署为一个 API 服务，然后在 `--judge-model-args` 中指定其服务地址。
+**A:** 您可以使用 vLLM 等框架将本地模型部署为一个 API 服务，然后在 `--judge` 的 `models` 中指定其服务地址。
 
 **Q: 如何为裁判模型设置超时时间？**
 
-**A:** 在 `--judge-model-args` 的 `generation_config` 中设置 `timeout` 参数。
+**A:** 在 `--judge` 的 `models.generation_config` 中设置 `timeout` 参数。
 
 **Q: 如何在评测 API 服务时添加自定义请求头（Header）？**
 
@@ -122,18 +128,26 @@ task_config = TaskConfig(
 **A:** 数学问题的答案格式复杂，规则解析难以覆盖所有情况。建议使用 LLM 作为辅助裁判来提升准确率：
 ```python
 # 在 TaskConfig 中设置
-judge_strategy=JudgeStrategy.LLM_RECALL,
-judge_model_args={
-    'model_id': 'qwen2.5-72b-instruct',
-    'api_url': '...',
-    'api_key': '...'
-}
+judge={'strategy': 'llm_recall', 'models': {
+    'model_id': 'qwen2.5-72b-instruct', 'api_url': '...', 'api_key': '...'
+}}
 ```
 参考文档：[裁判模型参数](https://evalscope.readthedocs.io/zh-cn/latest/get_started/parameters.html#judge)。
 
+**Q: 选择题数据集（如 `gpqa_diamond`、`mmlu`）判题错误，`extracted_prediction` 为空或提取到错误选项？**
+
+**A:** 常见原因是模型输出中残留了思考过程，规则提取被思考过程里的内容干扰。例如模型先复述提示词要求的 `ANSWER: [LETTER]` 格式、或在推理中讨论了一个被否定的选项，都会影响提取。建议：
+1.  先按[上文方法](#评测配置与参数)剥离思考过程（推理引擎开 reasoning parser，或配置 `filters: {"remove_until": "</think>"}`）。
+2.  再配合裁判模型兜底，规则提取失败时自动召回：
+    ```python
+    # 在 TaskConfig 中设置
+    judge={'strategy': 'llm_recall', 'models': {'model_id': '...', 'api_url': '...', 'api_key': '...'}}
+    ```
+    `llm_recall` 仅在规则得分不满分时才调用裁判模型，不会带来额外的全量开销。
+
 **Q: 评测 `alpaca_eval` 时报错 `Connection error`？**
 
-**A:** `alpaca_eval` 需要指定一个裁判模型（Judge Model）进行打分。默认使用 OpenAI API，如果未配置相关 Key 会导致连接失败。请通过 `--judge-model-args` 指定一个可用的裁判模型。
+**A:** `alpaca_eval` 需要指定一个裁判模型（Judge Model）进行打分。默认使用 OpenAI API，如果未配置相关 Key 会导致连接失败。请通过 `--judge` 指定一个可用的裁判模型。
 
 **Q: 评测中断后，如何从断点处继续？**
 
@@ -153,7 +167,7 @@ judge_model_args={
 
 **Q: 如何评测多模态模型（如 Qwen-VL, Gemma3）？**
 
-**A:** 建议使用 vLLM 等框架将多模态模型部署为 API 服务，然后通过 API 方式进行评测。直接本地加载多模态模型进行评测不支持。
+**A:** 推荐使用 Native 后端 + API 方式评测：先用 vLLM、ms-swift、LMDeploy 等框架将多模态模型部署为 OpenAI 兼容服务，再通过 `evalscope eval` 选择多模态评测集（如 `ocr_bench`、`mmmu`、`math_vista` 等，完整列表见 [VLM 评测集](../get_started/supported_dataset/vlm.md)）。Native 后端不支持直接本地加载多模态模型进行评测。如需使用 VLMEvalKit 后端，请参考 [VLMEvalKit 后端](../user_guides/backend/vlmevalkit_backend.md)。
 
 
 **Q: 使用 API 服务评测 `embeddings` 模型时报错 `dimensions is currently not supported`？**
@@ -209,6 +223,21 @@ judge_model_args={
 
 **A:** 指定 `--dataset-path` 并设置 `--dataset line_by_line`，程序会逐行读取文件内容作为 Prompt。
 
+**Q: 离线环境下如何使用已下载的数据集？**
+
+**A:** 通过 `--dataset-path` 指向本地数据集路径即可。支持两种方式：
+
+- **指向目录**（适用于Arrow/Parquet格式数据集，如 `flickr8k`、`kontext_bench`、`longalpaca`）：
+  ```bash
+  evalscope perf --dataset kontext_bench --dataset-path /path/to/local/kontext-bench ...
+  ```
+- **指向文件**（适用于JSONL格式数据集，如 `openqa`、`share_gpt_zh`）：
+  ```bash
+  evalscope perf --dataset openqa --dataset-path /path/to/open_qa.jsonl ...
+  ```
+
+还可以通过 `--data-source` 指定数据源（默认为 `modelscope`，可切换为 `huggingface`）。
+
 **Q: 如何压测多模态模型？**
 
 **A:** 目前支持 `flickr8k` 数据集进行多模态压测。设置 `--dataset flickr8k` 即可。
@@ -240,7 +269,7 @@ judge_model_args={
 
 **Q: 压测结果如何可视化？**
 
-**A:** `perf` 子命令的结果不适用于 `evalscope service`。但支持通过 `wandb` 或 `swanlab` 进行可视化。请参考[压测结果可视化指南](https://evalscope.readthedocs.io/zh-cn/latest/user_guides/stress_test/quick_start.html#id6)。
+**A:** 使用包含 `perf` 结果的输出根目录（默认：`outputs/`）启动 `evalscope service`，然后在 Web Dashboard 中打开**性能测试**页面。也可以将结果发送到 `wandb`、`swanlab` 或 `clearml`。请参考[压测结果可视化指南](../user_guides/stress_test/quick_start.md#可视化测试结果)。
 
 ## 引用我们
 

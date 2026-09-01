@@ -42,12 +42,12 @@ TweetNER7 is a large-scale NER dataset featuring over 11,000 tweets from 2019-20
         train_split='train',
         eval_split='test',
         metric_list=['precision', 'recall', 'f1_score', 'accuracy'],
+        primary_metric='f1',
         prompt_template=PROMPT_TEMPLATE,
         few_shot_prompt_template=FEWSHOT_TEMPLATE,
     )
 )
 class TweetNER7Adapter(NERAdapter):
-
     def __init__(self, **kwargs):
         # Initialize the parent class first
         super().__init__(**kwargs)
@@ -60,7 +60,7 @@ class TweetNER7Adapter(NERAdapter):
             'GROUP': 'group',
             'LOCATION': 'location',
             'PERSON': 'person',
-            'PRODUCT': 'product'
+            'PRODUCT': 'product',
         }
 
         # Add descriptions for each entity type
@@ -71,7 +71,7 @@ class TweetNER7Adapter(NERAdapter):
             'GROUP': 'Names of groups, such as musical bands or political groups.',
             'LOCATION': 'Names of locations, such as cities, countries, and landmarks.',
             'PERSON': 'Names of people.',
-            'PRODUCT': 'Names of commercial products.'
+            'PRODUCT': 'Names of commercial products.',
         }
 
         # Setup entity mappings based on the defined entity types

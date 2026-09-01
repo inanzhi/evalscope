@@ -57,7 +57,6 @@ AI2D (AI2 Diagrams) is a benchmark dataset for evaluating AI systems' ability to
     )
 )
 class Ai2dAdapter(VisionLanguageAdapter):
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -75,5 +74,5 @@ class Ai2dAdapter(VisionLanguageAdapter):
         return Sample(input=[ChatMessageUser(content=content_list)], choices=answers_list, target=label_answer)
 
     def extract_answer(self, prediction: str, task_state: TaskState) -> str:
-        answers = parse_answers(task_state)
+        answers = parse_answers(task_state, completion=prediction)
         return ''.join(sorted(list(answers)))

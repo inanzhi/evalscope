@@ -6,9 +6,12 @@ from evalscope.api.benchmark import BenchmarkMeta, DefaultDataAdapter
 from evalscope.api.dataset import Sample
 from evalscope.api.evaluator import TaskState
 from evalscope.api.metric import Score
+from evalscope.api.metric.semantics import MetricSelector
+from evalscope.api.mixin import CodeExecutionSandboxMixin
 from evalscope.api.registry import register_benchmark
 from evalscope.constants import Tags
 from evalscope.utils.logger import get_logger
+
 from .utils import build_full_code, normalize_languages
 
 logger = get_logger()
@@ -70,6 +73,7 @@ MultiPL-E MBPP is a multilingual code generation benchmark derived from MBPP (Mo
         ],
         metric_list=['acc'],
         aggregation='mean_and_pass_at_k',
+        primary_metric=MetricSelector(name='accuracy', aggregation='pass_at_k', dimensions={'k': 1}),
         eval_split='test',
         prompt_template='{prompt}',
         review_timeout=30,
@@ -78,14 +82,14 @@ MultiPL-E MBPP is a multilingual code generation benchmark derived from MBPP (Mo
             'tools_config': {
                 'shell_executor': {},
                 'python_executor': {},
-                'multi_code_executor': {}  # Multi-language code executor
+                'multi_code_executor': {},  # Multi-language code executor
             },
             'memory_limit': '2g',
             'cpu_limit': '2.0',
         },
     )
 )
-class MultiPLEMBPPAdapter(DefaultDataAdapter):
+class MultiPLEMBPPAdapter(CodeExecutionSandboxMixin, DefaultDataAdapter):
     """
     MultiPL-E MBPP adapter using the new data processing framework.
     Assumptions:
@@ -107,7 +111,7 @@ class MultiPLEMBPPAdapter(DefaultDataAdapter):
                 'task_id': record.get('name', record.get('task_id')),
                 'language': record.get('language'),
                 'doctests': record.get('doctests', ''),
-            }
+            },
         )
 
     def format_prompt_template(self, sample: Sample) -> str:

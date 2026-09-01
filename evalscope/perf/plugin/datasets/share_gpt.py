@@ -4,6 +4,7 @@ from typing import Dict, Iterator, List
 
 from evalscope.perf.arguments import Arguments
 from evalscope.perf.plugin.datasets.base import DatasetPluginBase
+from evalscope.perf.plugin.datasets.dataset_args import TextDatasetArgs
 from evalscope.perf.plugin.registry import register_dataset
 
 
@@ -29,10 +30,18 @@ class ShareGPTDatasetPluginBase(DatasetPluginBase):
     ]
 
     Dataset: https://www.modelscope.cn/datasets/swift/sharegpt
+
+    Length control: with a ``prefix_file`` the budget is measured over the whole
+    conversation (conversations longer than the target are skipped, shorter ones
+    padded by the prefix, no turn is truncated).  Without a prefix, only the last
+    user turn is fit / filtered (``target_input_len`` cap/drop or the legacy
+    ``min/max_prompt_length`` filter), matching the pre-prefix behavior.
     """
 
     # Subclasses must set this
     FILE_NAME: str = None
+
+    args_schema = TextDatasetArgs
 
     def __init__(self, query_parameters: Arguments):
         super().__init__(query_parameters)
@@ -61,11 +70,10 @@ class ShareGPTDatasetPluginBase(DatasetPluginBase):
         return messages
 
     def build_messages(self) -> Iterator[List[Dict]]:
-        if not self.query_parameters.dataset_path:
-            from modelscope import dataset_snapshot_download
-
-            local_path = dataset_snapshot_download('swift/sharegpt', allow_patterns=[self.FILE_NAME])
-            self.query_parameters.dataset_path = os.path.join(local_path, self.FILE_NAME)
+        if not self.query_parameters.dataset_path or os.path.isdir(self.query_parameters.dataset_path):
+            self.query_parameters.dataset_path = self.download_hub_file(
+                dataset_id='swift/sharegpt', file_name=self.FILE_NAME
+            )
 
         for item in self.dataset_line_by_line(self.query_parameters.dataset_path):
             item = json.loads(item)
@@ -77,10 +85,18 @@ class ShareGPTDatasetPluginBase(DatasetPluginBase):
             if not messages:
                 continue
 
-            # Check prompt length using the last user turn content
-            last_user_content = messages[-1]['content']
-            is_valid, _ = self.check_prompt_length(last_user_content)
-            if is_valid:
+            if self._prefix_ids is not None:
+                # Prefix injection: budget measured over the whole conversation.
+                prepared = self.prepare_conversation(messages)
+                if prepared is None:
+                    continue
+                yield prepared
+            else:
+                # Legacy behavior: fit / filter on the last user turn only.
+                last = self.prepare_prompt(messages[-1]['content'])
+                if last is None:
+                    continue
+                messages[-1]['content'] = last
                 yield messages
 
 

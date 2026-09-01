@@ -14,7 +14,24 @@ from evalscope.utils.logger import get_logger
 logger = get_logger()
 
 SUBSET_LIST = [
-    'en', 'zh', 'ar', 'bn', 'de', 'es', 'fr', 'id', 'it', 'ja', 'ko', 'ms', 'pt', 'ru', 'sw', 'te', 'th', 'vi'
+    'en',
+    'zh',
+    'ar',
+    'bn',
+    'de',
+    'es',
+    'fr',
+    'id',
+    'it',
+    'ja',
+    'ko',
+    'ms',
+    'pt',
+    'ru',
+    'sw',
+    'te',
+    'th',
+    'vi',
 ]
 LEVEL_LIST = ['low', 'medium', 'high', 'top']
 
@@ -55,17 +72,12 @@ PolyMath is a multilingual mathematical reasoning benchmark covering 18 language
 """,  # noqa: E501
         dataset_id='evalscope/PolyMath',
         subset_list=SUBSET_LIST,
-        metric_list=[{
-            'acc': {
-                'numeric': True
-            }
-        }],
+        metric_list=[{'acc': {'numeric': True}}],
         eval_split='test',
         prompt_template='{question}',
     )
 )
 class PolyMathAdapter(DefaultDataAdapter):
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -80,8 +92,7 @@ class PolyMathAdapter(DefaultDataAdapter):
                 cur_level_dataset_dict, _ = super().load()
                 # Build a renamed mapping without mutating during iteration
                 renamed: Dict[str, MemoryDataset] = {
-                    f'{subset}-{level}': ds
-                    for subset, ds in cur_level_dataset_dict.items()
+                    f'{subset}-{level}': ds for subset, ds in cur_level_dataset_dict.items()
                 }
                 dataset_list.append(renamed)
         finally:
@@ -112,7 +123,7 @@ class PolyMathAdapter(DefaultDataAdapter):
         )
 
     def extract_answer(self, prediction: str, task_state):
-        from evalscope.metrics.math_parser import extract_answer
+        from evalscope.metrics.math.parser import extract_answer
 
         return extract_answer(prediction)
 
@@ -156,4 +167,13 @@ class PolyMathAdapter(DefaultDataAdapter):
 
         # Append DW-ACC metric
         if dw_subsets:
-            report.metrics.append(Metric(name='DW-ACC', categories=[Category(name='-', subsets=dw_subsets)]))
+            from evalscope.api.metric.semantics import MetricIdentity
+            from evalscope.metrics.semantics import get_semantics_resolver
+
+            identity = MetricIdentity(
+                name='accuracy', aggregation='weighted_mean', dimensions={'weighting': 'difficulty'}
+            )
+            semantics = get_semantics_resolver().resolve(self.name, identity).semantics
+            report.metrics.append(
+                Metric(identity=identity, categories=[Category(name='-', subsets=dw_subsets)], semantics=semantics)
+            )

@@ -1,13 +1,14 @@
 # Copyright (c) Alibaba, Inc. and its affiliates.
 import json
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from evalscope.api.benchmark import BenchmarkMeta, VisionLanguageAdapter
 from evalscope.api.dataset import Sample
 from evalscope.api.evaluator import TaskState
-from evalscope.api.messages import ChatMessage
 from evalscope.api.metric import Score
+from evalscope.api.metric.semantics import MetricSelector
 from evalscope.api.registry import register_benchmark
+from evalscope.benchmarks.general_qa_vqa_metrics import METRIC_SCORE_KEYS, MetricScoringError, calculate_metric_score
 from evalscope.constants import Tags
 from evalscope.models.utils.openai import chat_messages_from_openai
 from evalscope.utils.logger import get_logger
@@ -23,19 +24,20 @@ logger = get_logger()
 ## Overview
 
 General-VQA is a customizable visual question answering benchmark for evaluating multimodal models.
-It supports OpenAI-compatible message format with flexible image/video input (local paths, URLs, or base64).
+It supports OpenAI-compatible message format with flexible image/video/audio input (local paths, URLs, or base64).
 
 ## Task Description
 
 - **Task Type**: Visual Question Answering
-- **Input**: Images/videos + questions in OpenAI chat format
+- **Input**: Images/videos/audio + questions in OpenAI chat format
 - **Output**: Free-form text answer
 - **Flexibility**: Supports custom datasets via TSV/JSONL files
 
 ## Key Features
 
 - OpenAI-compatible message format
-- Supports multiple image/video input methods (path, URL, base64)
+- Supports multiple image/video/audio input methods (path, URL, base64)
+- **Media placeholders**: Use ``<image N>`` / ``<video N>`` / ``<audio N>`` in plain-text user messages with indexed media columns (``image_1``, ``video_1``, ``audio_1``, etc.) for a simpler data format
 - Flexible evaluation with BLEU and Rouge metrics
 - Custom dataset support via local file loading
 - Extensible for various VQA use cases
@@ -50,10 +52,14 @@ It supports OpenAI-compatible message format with flexible image/video input (lo
         tags=[Tags.QA, Tags.CUSTOM, Tags.MULTI_MODAL],
         dataset_id='general_vqa',
         metric_list=['BLEU', 'Rouge'],
+        primary_metric=MetricSelector(
+            name='rouge', aggregation='mean', dimensions={'variant': 'l', 'statistic': 'recall'}
+        ),
         few_shot_num=0,
         train_split=None,
         eval_split='test',
         prompt_template=None,
+        evaluation_version='v1.1',
     )
 )
 class GeneralVQAAdapter(VisionLanguageAdapter):
@@ -102,6 +108,14 @@ class GeneralVQAAdapter(VisionLanguageAdapter):
 
         # Convert messages to ChatMessage objects using the standard OpenAI parser
         if isinstance(messages_data, list):
+            media_indices = self._media_placeholder_indices(messages_data)
+            if any(media_indices.values()):
+                messages_data = self._resolve_media_placeholders(
+                    messages_data,
+                    image_map=self._extract_media(record, 'image', media_indices['image']),
+                    video_map=self._extract_media(record, 'video', media_indices['video']),
+                    audio_map=self._extract_media(record, 'audio', media_indices['audio']),
+                )
             message_list = chat_messages_from_openai(model='', messages=messages_data)
         else:
             logger.warning(f'Unexpected messages format: {type(messages_data)}')
@@ -123,18 +137,16 @@ class GeneralVQAAdapter(VisionLanguageAdapter):
 
         # Calculate scores for each configured metric
         for metric in self.metric_list:
+            if metric not in METRIC_SCORE_KEYS:
+                continue
             try:
-                if metric == 'Rouge':
-                    from evalscope.metrics.rouge_metric import compute_rouge_score_one_sample_zh
-
-                    score.value.update(compute_rouge_score_one_sample_zh([filtered_prediction], [reference]))
-                elif metric == 'BLEU':
-                    from evalscope.metrics import bleu_ngram_one_sample
-
-                    score.value.update(bleu_ngram_one_sample(filtered_prediction, reference))
-            except Exception as e:
+                metric_score = calculate_metric_score(metric, filtered_prediction, reference)
+            except (ImportError, LookupError, MetricScoringError) as e:
                 logger.error(f'Error calculating metric {metric}: {e}')
-                return None
+                score.value.update(dict.fromkeys(METRIC_SCORE_KEYS[metric], 0.0))
+                score.metadata.setdefault('metric_errors', {})[metric] = f'{type(e).__name__}: {e}'
+                continue
+            score.value.update(metric_score)
 
         score.main_score_name = 'Rouge-L-R'
         return score

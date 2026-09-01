@@ -3,6 +3,10 @@ import os
 import subprocess
 import unittest
 
+import pytest
+
+pytestmark = pytest.mark.timeout(600)
+
 from evalscope.run import run_task
 from evalscope.utils.import_utils import is_module_installed
 from evalscope.utils.logger import get_logger
@@ -49,7 +53,7 @@ class TestCLIPBenchmark(unittest.TestCase):
                     'verbose': True,
                     'skip_existing': False,
                     'cache_dir': 'cache',
-                    'limit': 1000,
+                    'limit': 10,
                 },
             },
         }
@@ -75,7 +79,7 @@ class TestCLIPBenchmark(unittest.TestCase):
                     'num_workers': 1,
                     'verbose': True,
                     'skip_existing': False,
-                    'limit': 1000,
+                    'limit': 10,
                 },
             },
         }

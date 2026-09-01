@@ -2,22 +2,29 @@
 
 本框架支持两种自定义多模态评测方式：
 
-- **通用问答题格式（General-VQA）**：基于 OpenAI 消息格式，支持多图片/音频输入、系统提示和 base64 编码，适用于问答类多模态评测任务。
-- **通用选择题格式（General-VMCQ）**：类似 MMMU 格式，问题文本中可包含图片占位符 `<image x>`，适用于选择题类多模态评测任务。
+- **通用问答题格式（General-VQA）**：适用于问答类多模态评测任务。支持两种输入风格：**OpenAI 消息数据** 和 **MMMU 风格媒体占位符数据**。
+- **通用选择题格式（General-VMCQ）**：适用于选择题类多模态评测任务。使用[媒体占位符机制][mp-feature]在问题和选项中嵌入图片、视频和音频，类似 MMMU 格式。
 
 ## 通用问答题格式（General-VQA）
 
-### 1. 数据准备
+General-VQA 支持**两种输入风格**：
 
-准备符合 OpenAI 消息格式的数据文件，支持 **JSONL** 或 **TSV** 格式：
+1. **OpenAI 消息数据** — 完整的结构化内容，在 OpenAI 消息模式中显式包含媒体部分（图片、音频、视频）。支持多轮对话、系统提示以及对每个内容部分的精细控制。
+2. **MMMU 风格媒体占位符数据** — 一种更简单的方式，用户消息为包含 `<image N>`、`<video N>` 或 `<audio N>` 占位符的纯文本字符串，媒体文件通过单独的索引列提供（参见[媒体占位符机制][mp-feature]）。
 
-**JSONL 格式示例** (`example_openai.jsonl`):
+两种格式均支持 **JSONL** 或 **TSV** 文件。
+
+### OpenAI 消息数据
+
+在此格式中，每条记录包含一个遵循 OpenAI 聊天补全模式的 `messages` 数组。媒体（图片、音频、视频）作为结构化内容部分直接嵌入到用户消息中。
+
+**JSONL 示例** (`example_openai.jsonl`):
 ```json
 {"messages": [{"role": "user", "content": [{"type": "text", "text": "What animal is this?"}, {"type": "image_url", "image_url": {"url": "custom_eval/multimodal/images/dog.jpg"}}]}], "answer": "Dog"}
 {"messages": [{"role": "user", "content": [{"type": "text", "text": "What building is this?"}, {"type": "image_url", "image_url": {"url": "custom_eval/multimodal/images/AMNH.jpg"}}]}], "answer": "Museum"}
 ```
 
-**TSV 格式示例** (`example_openai.tsv`):
+**TSV 示例** (`example_openai.tsv`):
 ```text
 messages	answer
 [{"role": "user", "content": [{"type": "text", "text": "What animal is this?"}, {"type": "image_url", "image_url": {"url": "custom_eval/multimodal/images/dog.jpg"}}]}]	Dog
@@ -47,7 +54,7 @@ messages	answer
 - 本地路径：`"url": "custom_eval/multimodal/videos/sample.mp4"`
 - HTTP URL：`"url": "https://example.com/video.mp4"`（需模型服务侧支持）
 - Base64 编码：`"url": "data:video/mp4;base64,AAAAIGZ0eX..."`
-- 视频格式会从路径、URL 或 data URI 中推断；支持 `"mp4"`、`"mpeg"` 和 `"mov"`。
+- 视频格式会从路径、URL 或 data URI 中推断；支持 `"mp4"`、`"mpeg"`、`"mov"` 和 `"avi"`。
 
 **多图片输入**
 
@@ -187,6 +194,30 @@ messages	answer
 }
 ```
 
+### MMMU 格式媒体占位符数据
+
+在此格式中，`messages` 字段将用户消息保留为**纯文本字符串**，其中包含 `<image 1>`、`<video 1>` 或 `<audio 1>` 等占位符，并通过单独的索引列（`image_1`、`video_1`、`audio_1` 等）原地填充。每种媒体类型应在索引列和复数列表列之间二选一，不要混用。有关占位符解析方式、支持的列名和媒体类型的完整详情，请参见[媒体占位符机制][mp-feature]章节。
+
+**JSONL 示例** (`example_placeholder.jsonl`):
+```json
+{"messages": [{"role": "user", "content": "What animal is this?<image 1>"}], "image_1": "custom_eval/multimodal/images/dog.jpg", "answer": "Dog"}
+{"messages": [{"role": "user", "content": "What building is this?<image 1>"}], "image_1": "custom_eval/multimodal/images/AMNH.jpg", "answer": "Museum"}
+{"messages": [{"role": "user", "content": "Which city's skyline is this?<image 1>"}], "image_1": "custom_eval/multimodal/images/tokyo.jpg", "answer": "Tokyo"}
+{"messages": [{"role": "user", "content": "What is the brand of this car?<image 1>"}], "image_1": "custom_eval/multimodal/images/tesla.jpg", "answer": "Tesla"}
+{"messages": [{"role": "user", "content": "What is the person in the picture doing?<image 1>"}], "image_1": "custom_eval/multimodal/images/running.jpg", "answer": "Running"}
+```
+
+**混合媒体示例**：
+```json
+{"messages": [{"role": "user",
+               "content": "<image 1> Watch <video 1> and describe both."}],
+ "answer": "A sunny beach and a wave video.",
+ "image_1": "custom_eval/multimodal/images/beach.jpg",
+ "video_1": "custom_eval/multimodal/videos/wave.mp4"}
+```
+
+**注意**：只有用户消息（`"role": "user"`）且 `content` 为纯文本字符串的消息才会被扫描占位符。已经具有结构化内容（内容部分列表）的消息或其他角色（system、assistant、tool）的消息保持不变。
+
 ### 2. 配置评测任务
 
 使用 Python API 或 CLI 进行评测：
@@ -232,31 +263,31 @@ evalscope eval \
 +--------------+-------------+----------------+----------------+-------+---------+---------+
 | Model        | Dataset     | Metric         | Subset         |   Num |   Score | Cat.0   |
 +==============+=============+================+================+=======+=========+=========+
-| qwen-vl-plus | general_vqa | mean_bleu-1    | example_openai |     5 |  0.0067 | default |
+| qwen-vl-plus | General-VQA | BLEU ↑ · 1              | example_openai |     5 |    0.7% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
-| qwen-vl-plus | general_vqa | mean_bleu-2    | example_openai |     5 |  0      | default |
+| qwen-vl-plus | General-VQA | BLEU ↑ · 2              | example_openai |     5 |      0% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
-| qwen-vl-plus | general_vqa | mean_bleu-3    | example_openai |     5 |  0      | default |
+| qwen-vl-plus | General-VQA | BLEU ↑ · 3              | example_openai |     5 |      0% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
-| qwen-vl-plus | general_vqa | mean_bleu-4    | example_openai |     5 |  0      | default |
+| qwen-vl-plus | General-VQA | BLEU ↑ · 4              | example_openai |     5 |      0% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
-| qwen-vl-plus | general_vqa | mean_Rouge-1-R | example_openai |     5 |  0.4    | default |
+| qwen-vl-plus | General-VQA | ROUGE ↑ · 1 · Recall    | example_openai |     5 |     40% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
-| qwen-vl-plus | general_vqa | mean_Rouge-1-P | example_openai |     5 |  0.0062 | default |
+| qwen-vl-plus | General-VQA | ROUGE ↑ · 1 · Precision | example_openai |     5 |    0.6% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
-| qwen-vl-plus | general_vqa | mean_Rouge-1-F | example_openai |     5 |  0.0121 | default |
+| qwen-vl-plus | General-VQA | ROUGE ↑ · 1 · F1        | example_openai |     5 |    1.2% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
-| qwen-vl-plus | general_vqa | mean_Rouge-2-R | example_openai |     5 |  0      | default |
+| qwen-vl-plus | General-VQA | ROUGE ↑ · 2 · Recall    | example_openai |     5 |      0% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
-| qwen-vl-plus | general_vqa | mean_Rouge-2-P | example_openai |     5 |  0      | default |
+| qwen-vl-plus | General-VQA | ROUGE ↑ · 2 · Precision | example_openai |     5 |      0% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
-| qwen-vl-plus | general_vqa | mean_Rouge-2-F | example_openai |     5 |  0      | default |
+| qwen-vl-plus | General-VQA | ROUGE ↑ · 2 · F1        | example_openai |     5 |      0% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
-| qwen-vl-plus | general_vqa | mean_Rouge-L-R | example_openai |     5 |  0.4    | default |
+| qwen-vl-plus | General-VQA | ROUGE ↑ · L · Recall    | example_openai |     5 |     40% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
-| qwen-vl-plus | general_vqa | mean_Rouge-L-P | example_openai |     5 |  0.0047 | default |
+| qwen-vl-plus | General-VQA | ROUGE ↑ · L · Precision | example_openai |     5 |    0.5% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
-| qwen-vl-plus | general_vqa | mean_Rouge-L-F | example_openai |     5 |  0.0093 | default |
+| qwen-vl-plus | General-VQA | ROUGE ↑ · L · F1        | example_openai |     5 |    0.9% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
 ```
 
@@ -266,7 +297,7 @@ evalscope eval \
 
 ```python
 from evalscope.run import run_task
-from evalscope.constants import EvalType, JudgeStrategy
+from evalscope.constants import EvalType
 from os import environ as env
 
 task_cfg = TaskConfig(
@@ -282,17 +313,16 @@ task_cfg = TaskConfig(
         }
     },
     limit=5,
-    judge_model_args={
-        'model_id': 'qwen-plus', # 无需是多模态模型
-        'api_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-        'api_key': env.get('DASHSCOPE_API_KEY'),
-        'generation_config': {
-            'temperature': 0.0,
-            'max_tokens': 4096
+    judge={
+        'strategy': 'llm',
+        'models': {
+            'model_id': 'qwen-plus', # 无需是多模态模型
+            'api_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            'api_key': env.get('DASHSCOPE_API_KEY'),
+            'generation_config': {'temperature': 0.0, 'max_tokens': 4096},
         },
     },
     eval_batch_size=5,
-    judge_strategy=JudgeStrategy.LLM,
 )
 result = run_task(task_cfg=task_cfg)
 ```
@@ -307,9 +337,8 @@ evalscope eval \
   --datasets general_vqa \
   --dataset-args '{"general_vqa": {"local_path": "custom_eval/multimodal/vqa", "subset_list": ["example_openai"]}}' \
   --limit 5 \
-  --judge-model-args '{"model_id": "qwen-plus", "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "api_key": "$DASHSCOPE_API_KEY", "generation_config": {"temperature": 0.0, "max_tokens": 4096}}' \
-  --judge-worker-num 5 \
-  --judge-strategy llm
+  --eval-batch-size 5 \
+  --judge '{"strategy": "llm", "models": {"model_id": "qwen-plus", "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "api_key": "$DASHSCOPE_API_KEY", "generation_config": {"temperature": 0.0, "max_tokens": 4096}}}'
 ```
 
 评测将输出准确率指标（输出指标较ROUGE和BLEU更直观）：
@@ -317,7 +346,7 @@ evalscope eval \
 +--------------+-------------+----------+----------------+-------+---------+---------+
 | Model        | Dataset     | Metric   | Subset         |   Num |   Score | Cat.0   |
 +==============+=============+==========+================+=======+=========+=========+
-| qwen-vl-plus | general_vqa | mean_acc | example_openai |     5 |       1 | default |
+| qwen-vl-plus | general_vqa | Accuracy ↑ | example_openai |     5 |    100% | default |
 +--------------+-------------+----------+----------------+-------+---------+---------+ 
 ```
 
@@ -325,15 +354,7 @@ evalscope eval \
 
 ### 1. 数据准备
 
-General-VMCQ 采用与 MMMU 相似的结构：问题文本中可包含图片占位符 `<image x>` 和视频占位符 `<video x>`；`options` 为 Python 列表字符串，选项可为文本或媒体占位符。
-
-支持以下媒体形式（均为字符串）：
-- 图片本地或远程路径/URL：`"custom_eval/multimodal/images/dog.jpg"` 或 `"https://.../dog.jpg"`
-- 图片 Base64 Data URL：`"data:image/jpeg;base64,/9j/4AAQSk..."`
-- 视频本地或远程路径/URL：`"custom_eval/multimodal/videos/sample.mp4"` 或 `"https://.../sample.mp4"`
-- 视频 Base64 Data URL：`"data:video/mp4;base64,AAAAIGZ0eX..."`
-
-支持最多 100 张图片（`image_1` 到 `image_100`）和 100 个视频（`video_1` 到 `video_100`）。不存在的媒体占位符会被忽略。
+General-VMCQ 采用与 MMMU 相似的结构：问题文本中可包含图片占位符 `<image x>`、视频占位符 `<video x>` 和音频占位符 `<audio x>`；`options` 为 Python 列表字符串，选项可为文本或媒体占位符。媒体文件通过[媒体占位符机制][mp-feature]章节中描述的媒体列（`image_k`、`images`、`video_k`、`audio_k` 等）提供。
 
 **JSONL 示例**（`example.jsonl`）：
 ```json
@@ -350,12 +371,10 @@ Which image shows a dog?	["<image 1>", "<image 2>", "<image 3>", "<image 4>"]	A	
 ```
 
 **字段说明**：
-- `question`: 问题文本，可包含 `<image x>` 或 `<video x>` 占位符
-- `options`: 列表（JSON 数组），元素可以是文本（如 `"School"`）或媒体占位符（如 `"<image 1>"`、`"<video 1>"`），不需要添加 `A.`、`B.` 等前缀
+- `question`: 问题文本，可包含 `<image x>`、`<video x>` 或 `<audio x>` 占位符
+- `options`: 列表（JSON 数组），元素可以是文本（如 `"School"`）或媒体占位符（如 `"<image 1>"`、`"<video 1>"`、`"<audio 1>"`），不需要添加 `A.`、`B.` 等前缀
 - `answer`: 正确答案字母（如 `"A"`、`"B"`）
-- `image_k`: 图片字符串（本地/远程路径或 base64 Data URL），k ∈ [1, 100]
-- `video_k`: 视频字符串（本地/远程路径或 base64 Data URL），k ∈ [1, 100]
-- `video_k_format`: 可选的视频格式提示；支持 `"mp4"`、`"mpeg"` 和 `"mov"`
+- 媒体列（`image_k`、`images`、`video_k`、`videos`、`video_k_format`、`audio_k`、`audios`、`audio_k_format`）：详见[媒体占位符机制][mp-feature]章节。
 
 ### 2. 配置评测任务
 
@@ -403,9 +422,67 @@ evalscope eval \
 +--------------+--------------+----------+----------+-------+---------+---------+
 | Model        | Dataset      | Metric   | Subset   |   Num |   Score | Cat.0   |
 +==============+==============+==========+==========+=======+=========+=========+
-| qwen-vl-plus | general_vmcq | mean_acc | example  |     3 |       1 | default |
+| qwen-vl-plus | general_vmcq | Accuracy ↑ | example  |     3 |    100% | default |
 +--------------+--------------+----------+----------+-------+---------+---------+ 
 ```
+
+## 媒体占位符机制
+[mp-feature]: #媒体占位符机制
+
+General-VQA 和 General-VMCQ 共享媒体规范化工具，但验证媒体列的时机不同。
+
+### 工作原理
+
+占位符如 `<image 1>`、`<video 1>` 或 `<audio 1>` 在纯文本中会被自动替换为对应媒体。解析在评测时发送给多模态大模型之前完成。
+
+- **General-VQA** 只解析纯文本用户消息中引用的媒体。缺失的已引用媒体会被忽略并发出警告；如果这会使用户消息为空，则保留原始文本。未引用的媒体列会被忽略。
+- **General-VMCQ** 在构造提示词前会校验每个非空媒体列。因此，即使未被使用，格式错误的媒体列也会导致该记录失败。
+- 默认情况下，索引媒体列上限为 100：`image_k`/`video_k`/`audio_k`，其中 k ∈ [1, 100]，例如 `<image 101>` 和 `image_101` 将被忽略。
+- 对每种媒体类型，请在索引列和复数列表列之间二选一，不要混用两种表示：General-VQA 在任一已引用的索引列非空时会忽略复数列表列；General-VMCQ 在任一索引列非空时会忽略复数列表列。列表列等同于按递增顺序编写 `image_1`、`image_2`……，且不受 100 的数量限制。
+- General-VQA 会将解析后的占位符内容转换为结构化 OpenAI 消息内容；General-VMCQ 则将其插入选择题提示词。
+
+### 触发条件
+
+- **General-VQA**：满足以下两个条件的每条消息：1. 其 `"role"` 为 `"user"`，且 2. 其 `"content"` 字段为纯字符串（`str` 类型）。
+- **General-VMCQ**：`question` 和 `options` 字段，始终触发。
+
+要绕过此机制，可以为 General-VQA 消息提供结构化内容，或移除 General-VMCQ 问题/选项中的占位符。以下是一个 General-VQA 示例：
+
+```json
+// <image 1> 标签不会被替换，因为它被结构化为 `{"type": "text"}` 字典
+{"answer": "Dog",
+ "messages": [{"role": "user",
+               "content": [{"type": "text",
+                            "text": "<image 1> What animal is this?"}]}]}
+```
+
+### 媒体列名
+
+| 列名             | 描述                                                                        | k 范围   |
+| ---------------- | --------------------------------------------------------------------------- | -------- |
+| `image_k`        | 占位符 `<image k>` 的图片路径/URL/base64                                    | [1, 100] |
+| `video_k`        | 占位符 `<video k>` 的视频路径/URL/base64                                    | [1, 100] |
+| `video_k_format` | 可选的视频格式提示（`"mp4"`、`"mpeg"`、`"mov"`、`"avi"`），未指定时自动推断 | [1, 100] |
+| `audio_k`        | 占位符 `<audio k>` 的音频路径/URL/base64                                    | [1, 100] |
+| `audio_k_format` | 可选的音频格式提示（`"wav"`、`"mp3"`），未指定时自动推断                    | [1, 100] |
+| `images`         | 图片列表，相当于连续的 `image_1`、`image_2`……不要与索引图片列混用          | 无限制   |
+| `videos`         | 视频列表，相当于连续的 `video_1`、`video_2`……不要与索引视频列混用          | 无限制   |
+| `audios`         | 音频列表，相当于连续的 `audio_1`、`audio_2`……不要与索引音频列混用          | 无限制   |
+
+### 支持的媒体值
+
+每个媒体列接受以下任意形式：
+
+- **本地路径**：`"custom_eval/multimodal/audio/sample.wav"`
+- **HTTP/HTTPS URL**：`"https://.../sample.wav"`
+- **Base64 Data URL**：`"data:audio/wav;base64,UklGRiQ..."`
+- **未解码字典**（用于 Parquet 加载的数据集）：`{"path": "..."}` 或 `{"bytes": b"..."}`
+- **Hugging Face 数据集特征**（用于 Parquet 加载的数据集）：[Image][HFImage]、[Video][HFVideo] 或 [Audio][HFAudio] 特征对象
+
+[HFImage]: https://huggingface.co/docs/datasets/about_dataset_features#image-feature
+[HFVideo]: https://huggingface.co/docs/datasets/package_reference/main_classes#datasets.Video
+[HFAudio]: https://huggingface.co/docs/datasets/en/about_dataset_features#audio-feature
+
 
 ---
 

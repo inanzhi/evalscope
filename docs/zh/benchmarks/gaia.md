@@ -3,7 +3,7 @@
 
 ## 概述
 
-GAIA（General AI Assistants）是一个包含 450 多个问题的基准测试，面向具备工具使用、网页浏览和多步推理能力的新一代大语言模型（LLM）。每个问题都有一个明确的简短答案，并被划分为三个难度等级之一。
+GAIA（General AI Assistants）是一个包含 450 多个问题的基准测试，旨在评估具备工具使用、网页浏览和多步推理能力的新一代大语言模型（LLM）。每个问题都有一个明确的简短答案，并被划分为三个难度等级之一。
 
 ## 任务描述
 
@@ -14,18 +14,17 @@ GAIA（General AI Assistants）是一个包含 450 多个问题的基准测试�
 
 ## 核心特性
 
-- 基于 ReAct 智能体循环，内置单一 ``bash`` 工具，运行于 Docker 沙箱中（默认镜像为 ``python:3.11``，包含 ``curl`` / ``wget`` / ``git``）。
+- 基于 ReAct 智能体循环，内置单一 ``bash`` 工具，运行于 Docker 沙箱中（默认镜像为 ``python:3.11``，已预装 ``curl`` / ``wget`` / ``git``）。
 - 附件文件以只读方式挂载至沙箱内的 ``/shared_files`` 目录。
 - 评分器直接移植自官方 GAIA 排行榜的规则逻辑（不使用 LLM 作为评判）。
-- 数据集默认从 ModelScope（``gaia-benchmark/GAIA``）下载；设置 ``dataset_hub='huggingface'`` 可改从 Hugging Face 加载。
+- 默认从 ModelScope 下载数据集（``gaia-benchmark/GAIA``）；设置 ``dataset_hub='huggingface'`` 可改为从 Hugging Face 加载。
 
 ## 评估说明
 
-- 需本地运行 Docker 守护进程（或通过 ``ms_enclave`` 配置使用远程沙箱引擎）。
-- ``extra_params.max_steps`` 限制智能体循环的最大步数（默认为 50）。
-- ``extra_params.command_timeout`` 设置每条 ``bash`` 命令的超时时间（默认 180 秒，与 inspect_ai 一致）。
-- 默认启用网络访问 — 许多问题需要浏览或搜索。
-- 使用 ``subset_list`` 可限定特定难度级别，例如 ``['2023_level1']``、``['2023_level1', '2023_level2']`` 或 ``['2023_all']``（默认）。
+- 需要在本地运行 Docker 守护进程（或通过 ms_enclave 配置使用远程沙箱引擎）。
+- 智能体循环默认最多执行 50 步。可通过 ``NativeAgentConfig.max_steps`` 覆盖该设置。
+- 默认启用网络访问，因为许多问题需要网页浏览。可通过 ``TaskConfig.sandbox.default_config`` 覆盖镜像、网络、CPU 或内存等配置。
+- 使用 ``subset_list`` 限制评估特定难度级别，例如 ``['2023_level1']``、``['2023_level1', '2023_level2']`` 或默认的 ``['2023_all']``。
 - [使用文档](https://evalscope.readthedocs.io/zh-cn/latest/third_party/gaia.html)
 
 
@@ -37,7 +36,7 @@ GAIA（General AI Assistants）是一个包含 450 多个问题的基准测试�
 | **数据集ID** | [gaia-benchmark/GAIA](https://modelscope.cn/datasets/gaia-benchmark/GAIA/summary) |
 | **论文** | N/A |
 | **标签** | `Agent`, `MultiTurn`, `Reasoning` |
-| **指标** | `acc` |
+| **指标** | `accuracy` |
 | **默认示例数** | 0-shot |
 | **评估划分** | `validation` |
 
@@ -52,7 +51,7 @@ GAIA（General AI Assistants）是一个包含 450 多个问题的基准测试�
 
 **各子集统计数据：**
 
-| 子集 | 样本数 | 提示平均长度 | 提示最小长度 | 提示最大长度 |
+| 子集 | 样本数 | 提示词平均长度 | 提示词最小长度 | 提示词最大长度 |
 |--------|---------|-------------|------------|------------|
 | `2023_level1` | 53 | 906.53 | 604 | 2582 |
 | `2023_level2` | 86 | 816.66 | 596 | 1275 |
@@ -118,15 +117,6 @@ GAIA（General AI Assistants）是一个包含 450 多个问题的基准测试�
 {question}
 ```
 
-## 额外参数
-
-| 参数 | 类型 | 默认值 | 描述 |
-|-----------|------|---------|-------------|
-| `max_steps` | `int` | `50` | 每个样本允许的最大智能体步数。 |
-| `command_timeout` | `float` | `180.0` | 每条 bash 命令的默认超时时间（秒）。 |
-| `docker_image` | `str` | `python:3.11` | 用作每个样本沙箱环境的 Docker 镜像。 |
-| `network_enabled` | `bool` | `True` | 允许沙箱访问网络（GAIA 中涉及浏览的问题需要此选项）。 |
-
 ## 使用方法
 
 ### 使用 CLI
@@ -137,24 +127,28 @@ evalscope eval \
     --api-url OPENAI_API_COMPAT_URL \
     --api-key EMPTY_TOKEN \
     --datasets gaia \
+    --agent-config '{"mode":"native","strategy":"react","max_steps":50}' \
     --limit 10  # 正式评估时请删除此行
 ```
 
 ### 使用 Python
 
 ```python
-from evalscope import run_task
-from evalscope.config import TaskConfig
+from evalscope import TaskConfig, run_task
+from evalscope.api.agent import NativeAgentConfig
 
 task_cfg = TaskConfig(
     model='YOUR_MODEL',
     api_url='OPENAI_API_COMPAT_URL',
     api_key='EMPTY_TOKEN',
     datasets=['gaia'],
+    agent_config=NativeAgentConfig(
+        strategy='react',
+        max_steps=50,
+    ),
     dataset_args={
         'gaia': {
             # subset_list: ['2023_level1', '2023_level2', '2023_level3']  # 可选，用于评估特定子集
-            # extra_params: {}  # 使用默认额外参数
         }
     },
     limit=10,  # 正式评估时请删除此行

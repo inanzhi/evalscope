@@ -36,7 +36,7 @@ CMMU (Chinese Massive Multi-discipline Multimodal Understanding) includes manual
 | **Dataset ID** | [lmms-lab/CMMMU](https://modelscope.cn/datasets/lmms-lab/CMMMU/summary) |
 | **Paper** | N/A |
 | **Tags** | `Chinese`, `Knowledge`, `MultiModal`, `QA` |
-| **Metrics** | `acc` |
+| **Metrics** | `accuracy` |
 | **Default Shots** | 0-shot |
 | **Evaluation Split** | `val` |
 
@@ -178,5 +178,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

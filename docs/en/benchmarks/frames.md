@@ -37,7 +37,7 @@ FRAMES is a comprehensive evaluation dataset designed to test the capabilities o
 | **Dataset ID** | [iic/frames](https://modelscope.cn/datasets/iic/frames/summary) |
 | **Paper** | N/A |
 | **Tags** | `LongContext`, `Reasoning` |
-| **Metrics** | `acc` |
+| **Metrics** | `accuracy` |
 | **Default Shots** | 0-shot |
 | **Evaluation Split** | `test` |
 
@@ -154,5 +154,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

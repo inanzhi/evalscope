@@ -1,4 +1,4 @@
-# general_t2i
+# General-T2I
 
 
 ## Overview
@@ -83,5 +83,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

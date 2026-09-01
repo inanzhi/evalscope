@@ -1,13 +1,16 @@
 import json
+import math
 import os
+import shutil
 import uuid
 from datetime import datetime
+from numbers import Real
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from evalscope.api.agent import AgentTrace, AgentTraceEvent, EventType
 from evalscope.api.benchmark import AgentAdapter, BenchmarkMeta
-from evalscope.api.dataset import DatasetDict, DictDataLoader, Sample
+from evalscope.api.dataset import DatasetDict, Sample, build_dataset_from_records
 from evalscope.api.evaluator import InferenceResult
 from evalscope.api.messages import ChatMessage, ChatMessageAssistant, ChatMessageTool, ChatMessageUser
 from evalscope.api.metric import Score
@@ -15,7 +18,7 @@ from evalscope.api.model import Model, ModelOutput
 from evalscope.api.registry import register_benchmark
 from evalscope.api.tool import ToolCall, ToolFunction
 from evalscope.constants import DEFAULT_EVALSCOPE_CACHE_DIR, Tags
-from evalscope.utils.function_utils import AsyncioLoopRunner
+from evalscope.utils.asyncio_runtime import AsyncioLoopRunner
 from evalscope.utils.import_utils import check_import
 from evalscope.utils.logger import get_logger
 
@@ -26,7 +29,7 @@ COMMON_EXTRA_PARAMS = {
         'type': 'str',
         'description': 'Environment type for running the benchmark.',
         'value': 'docker',
-        'choices': ['docker', 'daytona', 'e2b', 'modal']
+        'choices': ['docker', 'daytona', 'e2b', 'modal'],
     },
     'agent_name': {
         'type': 'str',
@@ -34,13 +37,40 @@ COMMON_EXTRA_PARAMS = {
         'other agents (claude-code, codex, etc.) run as standalone CLI tools with their own API keys.',
         'value': 'terminus-2',
         'choices': [
-            'oracle', 'terminus-2', 'claude-code', 'codex', 'qwen-coder', 'openhands', 'opencode', 'mini-swe-agent'
+            'oracle',
+            'terminus-2',
+            'claude-code',
+            'codex',
+            'qwen-coder',
+            'openhands',
+            'opencode',
+            'mini-swe-agent',
         ],
     },
     'timeout_multiplier': {
         'type': 'float',
         'description': 'Timeout multiplier. If timeout errors occur, consider increasing this value.',
         'value': 1.0,
+    },
+    'agent_timeout_sec': {
+        'type': 'float',
+        'description': 'Final agent timeout in seconds. Cannot be combined with agent_timeout_multiplier.',
+        'value': None,
+    },
+    'verifier_timeout_sec': {
+        'type': 'float',
+        'description': 'Final verifier timeout in seconds. Cannot be combined with verifier_timeout_multiplier.',
+        'value': None,
+    },
+    'agent_timeout_multiplier': {
+        'type': 'float',
+        'description': 'Agent timeout multiplier. Overrides timeout_multiplier for the agent phase.',
+        'value': None,
+    },
+    'verifier_timeout_multiplier': {
+        'type': 'float',
+        'description': 'Verifier timeout multiplier. Overrides timeout_multiplier for the verifier phase.',
+        'value': None,
     },
     'max_turns': {
         'type': 'int',
@@ -57,6 +87,34 @@ COMMON_EXTRA_PARAMS = {
 }
 
 
+def _validate_environment_requirements(environment_type: str):
+    environment_type = (environment_type or '').strip().lower()
+    if environment_type != 'docker':
+        return
+
+    if shutil.which('docker') is None:
+        raise RuntimeError(
+            "Terminal-Bench with environment_type='docker' requires the Docker CLI to be installed in the "
+            'environment running EvalScope. Mounting /var/run/docker.sock only exposes the Docker daemon socket; '
+            'it does not provide the docker command. Install the Docker CLI in the container or switch '
+            "environment_type to 'daytona', 'e2b', or 'modal'."
+        )
+
+
+def _phase_timeout_options(
+    timeout_sec: Optional[float], timeout_multiplier: Optional[float], phase: str
+) -> Tuple[Optional[float], Optional[float]]:
+    if timeout_sec is not None and timeout_multiplier is not None:
+        raise ValueError(f'{phase}_timeout_sec cannot be combined with {phase}_timeout_multiplier.')
+    if timeout_sec is not None:
+        if timeout_sec <= 0:
+            raise ValueError(f'{phase}_timeout_sec must be positive.')
+        return float(timeout_sec), 1.0
+    if timeout_multiplier is not None and timeout_multiplier <= 0:
+        raise ValueError(f'{phase}_timeout_multiplier must be positive.')
+    return None, timeout_multiplier
+
+
 class _TerminalBenchBase(AgentAdapter):
     """Shared logic for Terminal-Bench adapters."""
 
@@ -69,10 +127,20 @@ class _TerminalBenchBase(AgentAdapter):
         self.environment_type = self.extra_params.get('environment_type', 'docker')
         self.agent_name = self.extra_params.get('agent_name', 'terminus-2')
         self.timeout_multiplier = self.extra_params.get('timeout_multiplier', 1.0)
+        self.agent_timeout_sec, self.agent_timeout_multiplier = _phase_timeout_options(
+            self.extra_params.get('agent_timeout_sec'), self.extra_params.get('agent_timeout_multiplier'), 'agent'
+        )
+        self.verifier_timeout_sec, self.verifier_timeout_multiplier = _phase_timeout_options(
+            self.extra_params.get('verifier_timeout_sec'),
+            self.extra_params.get('verifier_timeout_multiplier'),
+            'verifier',
+        )
         self.max_turns = self.extra_params.get('max_turns', 200)
         self.environment_kwargs = self.extra_params.get('environment_kwargs', {})
 
     def load(self):
+        _validate_environment_requirements(self.environment_type)
+
         from harbor.models.job.config import DatasetConfig
 
         config = DatasetConfig(
@@ -85,13 +153,16 @@ class _TerminalBenchBase(AgentAdapter):
         task_configs = AsyncioLoopRunner.run(config.get_task_configs())
 
         datasets = {}
-        dataset = DictDataLoader(
-            dict_list=[tc.model_dump(mode='json') for tc in task_configs],
+        dataset = build_dataset_from_records(
+            records=[tc.model_dump(mode='json') for tc in task_configs],
+            sample_fields=self.record_to_sample,
+            name=self.eval_split,
+            location=self.hub_dataset_name,
             limit=self.limit,
             repeats=self.repeats,
-            sample_fields=self.record_to_sample,
             shuffle=self.shuffle,
-        ).load()
+            seed=None,
+        )
 
         datasets[self.eval_split] = dataset
 
@@ -102,9 +173,8 @@ class _TerminalBenchBase(AgentAdapter):
         return Sample(input='', metadata=record)
 
     def _on_inference(self, model: Model, sample: Sample) -> InferenceResult:
-        from harbor.models.trial.config import AgentConfig, EnvironmentConfig
+        from harbor.models.trial.config import AgentConfig, EnvironmentConfig, TrialConfig, VerifierConfig
         from harbor.models.trial.config import TaskConfig as TrialTaskConfig
-        from harbor.models.trial.config import TrialConfig
         from harbor.trial.trial import Trial
 
         from .utils import HarborLLM
@@ -114,16 +184,19 @@ class _TerminalBenchBase(AgentAdapter):
 
         agent_kwargs = {'max_turns': self.max_turns}
         if self.agent_name == 'terminus-2':
-            agent_kwargs.update({
-                'parser_name': 'json',
-                'enable_summarize': True,
-                'proactive_summarization_threshold': 8000,
-                'collect_rollout_details': False,
-            })
+            agent_kwargs.update(
+                {
+                    'parser_name': 'json',
+                    'enable_summarize': True,
+                    'proactive_summarization_threshold': 8000,
+                    'collect_rollout_details': False,
+                }
+            )
 
         agent_config = AgentConfig(
             name=self.agent_name,
             model_name=model.name,
+            override_timeout_sec=self.agent_timeout_sec,
             kwargs=agent_kwargs,
         )
 
@@ -132,16 +205,20 @@ class _TerminalBenchBase(AgentAdapter):
             task=trial_task_config,
             trials_dir=Path(self.output_dir) / 'trials',
             agent=agent_config,
+            verifier=VerifierConfig(override_timeout_sec=self.verifier_timeout_sec),
             environment=environment_config,
             timeout_multiplier=self.timeout_multiplier,
+            agent_timeout_multiplier=self.agent_timeout_multiplier,
+            verifier_timeout_multiplier=self.verifier_timeout_multiplier,
         )
 
         try:
+            harbor_llm = HarborLLM(model=model) if self.agent_name == 'terminus-2' else None
 
             async def _run_trial():
                 trial = await Trial.create(trial_config)
-                if self.agent_name == 'terminus-2':
-                    trial.agent._llm = HarborLLM(model=model)
+                if harbor_llm is not None:
+                    trial.agent._llm = harbor_llm
                 return await trial.run()
 
             result = AsyncioLoopRunner.run(_run_trial())
@@ -161,10 +238,14 @@ class _TerminalBenchBase(AgentAdapter):
             model=model.name,
             content=result_dict.get('trial_uri', ''),
         )
-        trace, messages = self._load_harbor_trace(result_dict)
+        trace, messages = self._load_harbor_trace(result_dict, harbor_llm.perf_metrics if harbor_llm else None)
         return InferenceResult(output=output, trace=trace, messages=messages)
 
-    def _load_harbor_trace(self, result_dict: dict) -> Tuple[Optional[AgentTrace], Optional[List[ChatMessage]]]:
+    def _load_harbor_trace(
+        self,
+        result_dict: dict,
+        perf_metrics: Optional[List[Any]] = None,
+    ) -> Tuple[Optional[AgentTrace], Optional[List[ChatMessage]]]:
         trial_uri = result_dict.get('trial_uri') or ''
         if trial_uri.startswith('file://'):
             trajectory_path = Path(trial_uri[7:]) / 'agent' / 'trajectory.json'
@@ -184,6 +265,7 @@ class _TerminalBenchBase(AgentAdapter):
             environment=self.environment_type,
         )
         messages: List[ChatMessage] = []
+        perf_index = 0
         prev_ts: Optional[float] = None
 
         for step in raw.get('steps', []):
@@ -207,8 +289,7 @@ class _TerminalBenchBase(AgentAdapter):
                 for tc in step.get('tool_calls', []):
                     tool_calls.append(
                         ToolCall(
-                            id=tc.get('tool_call_id',
-                                      uuid.uuid4().hex[:8]),
+                            id=tc.get('tool_call_id', uuid.uuid4().hex[:8]),
                             function=ToolFunction(
                                 name=tc.get('function_name', 'bash_command'),
                                 arguments=tc.get('arguments', {}),
@@ -221,8 +302,12 @@ class _TerminalBenchBase(AgentAdapter):
                         content=content,
                         model=model_name,
                         tool_calls=tool_calls or None,
+                        perf_metrics=(
+                            perf_metrics[perf_index] if perf_metrics and perf_index < len(perf_metrics) else None
+                        ),
                     )
                 )
+                perf_index += 1
                 token_usage = None
                 step_metrics = step.get('metrics')
                 if step_metrics:
@@ -247,11 +332,7 @@ class _TerminalBenchBase(AgentAdapter):
                             step=step_id,
                             type=EventType.TOOL_CALL,
                             timestamp=ts_epoch or 0,
-                            payload={
-                                'id': tc.id,
-                                'name': tc.function.name,
-                                'arguments': tc.function.arguments
-                            },
+                            payload={'id': tc.id, 'name': tc.function.name, 'arguments': tc.function.arguments},
                         )
                     )
 
@@ -312,12 +393,63 @@ class _TerminalBenchBase(AgentAdapter):
             )
         return trace, messages
 
-    def match_score(self, original_prediction, filtered_prediction, reference, task_state):
+    @staticmethod
+    def _extract_valid_reward(result: Any) -> float:
+        if not isinstance(result, dict):
+            raise RuntimeError('Terminal-Bench trial <unknown> returned an invalid result: expected an object.')
+
+        trial_uri = result.get('trial_uri') or '<unknown>'
+        exception_info = result.get('exception_info')
+        if exception_info:
+            if isinstance(exception_info, dict):
+                exc_type = exception_info.get('exception_type') or exception_info.get('type') or 'UnknownHarborError'
+                exc_msg = exception_info.get('message') or exception_info.get('exception_message')
+                exc_msg = exc_msg or 'no message provided'
+            else:
+                exc_type = type(exception_info).__name__
+                exc_msg = str(exception_info)
+            raise RuntimeError(f'Terminal-Bench trial {trial_uri} failed with {exc_type}: {exc_msg}')
+
+        verifier_result = result.get('verifier_result')
+        if verifier_result is None:
+            raise RuntimeError(
+                f'Terminal-Bench trial {trial_uri} returned an invalid result: verifier_result is missing or null.'
+            )
+        if not isinstance(verifier_result, dict):
+            raise RuntimeError(
+                f'Terminal-Bench trial {trial_uri} returned an invalid result: verifier_result must be an object.'
+            )
+
+        rewards = verifier_result.get('rewards')
+        if rewards is None:
+            raise RuntimeError(
+                f'Terminal-Bench trial {trial_uri} returned an invalid result: rewards is missing or null.'
+            )
+        if not isinstance(rewards, dict):
+            raise RuntimeError(
+                f'Terminal-Bench trial {trial_uri} returned an invalid result: rewards must be an object.'
+            )
+        if 'reward' not in rewards:
+            raise RuntimeError(f'Terminal-Bench trial {trial_uri} returned an invalid result: reward is missing.')
+
+        reward = rewards['reward']
+        if isinstance(reward, bool) or not isinstance(reward, Real):
+            raise RuntimeError(f'Terminal-Bench trial {trial_uri} returned an invalid reward: {reward!r}.')
+
+        reward = float(reward)
+        if not math.isfinite(reward) or not 0.0 <= reward <= 1.0:
+            raise RuntimeError(f'Terminal-Bench trial {trial_uri} returned an invalid reward: {reward!r}.')
+        return reward
+
+    def match_score(
+        self,
+        original_prediction: str,
+        filtered_prediction: str,
+        reference: str,
+        task_state: Any,
+    ) -> Score:
         result = task_state.metadata.get('result', {})
-        try:
-            reward = result.get('verifier_result', {}).get('rewards', {}).get('reward', 0)
-        except Exception:
-            reward = 0
+        reward = self._extract_valid_reward(result)
         score = Score(
             extracted_prediction=filtered_prediction,
             prediction=original_prediction,
@@ -365,10 +497,10 @@ Terminal-Bench v2 is a command-line benchmark suite that evaluates AI agents on 
         eval_split='test',
         prompt_template='{question}',
         extra_params=COMMON_EXTRA_PARAMS,
+        evaluation_version='v1.1',
     )
 )
 class TerminalBenchV2Adapter(_TerminalBenchBase):
-
     hub_dataset_name = 'terminal-bench/terminal-bench-2'
 
 
@@ -410,8 +542,8 @@ Terminal-Bench v2.1 is an improved iteration of Terminal-Bench 2.0, with 26 task
         eval_split='test',
         prompt_template='{question}',
         extra_params=COMMON_EXTRA_PARAMS,
+        evaluation_version='v1.1',
     )
 )
 class TerminalBenchV2_1Adapter(_TerminalBenchBase):
-
     hub_dataset_name = 'terminal-bench/terminal-bench-2-1'

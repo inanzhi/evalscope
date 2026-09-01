@@ -73,89 +73,83 @@ run_task(task_cfg=task_list)
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
 | Model                 | Dataset    | Metric          | Subset   |   Num |   Score | Cat.0   |
 +=======================+============+=================+==========+=======+=========+=========+
-| qwen2.5-0.5b-instruct | general_qa | AverageAccuracy | arena    |    10 | -1      | default |
+| qwen2.5-0.5b-instruct | General-QA | ROUGE ↑ · 1 · Recall    | example | 12 | 86.1% | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-0.5b-instruct | general_qa | Rouge-1-R       | example  |    12 |  0.8611 | default |
+| qwen2.5-0.5b-instruct | General-QA | ROUGE ↑ · 1 · Precision | example | 12 | 13.4% | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-0.5b-instruct | general_qa | Rouge-1-P       | example  |    12 |  0.1341 | default |
+| qwen2.5-0.5b-instruct | General-QA | ROUGE ↑ · 1 · F1        | example | 12 | 19.8% | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-0.5b-instruct | general_qa | Rouge-1-F       | example  |    12 |  0.1983 | default |
+| qwen2.5-0.5b-instruct | General-QA | ROUGE ↑ · 2 · Recall    | example | 12 | 55%   | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-0.5b-instruct | general_qa | Rouge-2-R       | example  |    12 |  0.55   | default |
+| qwen2.5-0.5b-instruct | General-QA | ROUGE ↑ · 2 · Precision | example | 12 | 4%    | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-0.5b-instruct | general_qa | Rouge-2-P       | example  |    12 |  0.0404 | default |
+| qwen2.5-0.5b-instruct | General-QA | ROUGE ↑ · 2 · F1        | example | 12 | 7.2%  | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-0.5b-instruct | general_qa | Rouge-2-F       | example  |    12 |  0.0716 | default |
+| qwen2.5-0.5b-instruct | General-QA | ROUGE ↑ · L · Recall    | example | 12 | 86.1% | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-0.5b-instruct | general_qa | Rouge-L-R       | example  |    12 |  0.8611 | default |
+| qwen2.5-0.5b-instruct | General-QA | ROUGE ↑ · L · Precision | example | 12 | 11.9% | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-0.5b-instruct | general_qa | Rouge-L-P       | example  |    12 |  0.1193 | default |
+| qwen2.5-0.5b-instruct | General-QA | ROUGE ↑ · L · F1        | example | 12 | 17.5% | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-0.5b-instruct | general_qa | Rouge-L-F       | example  |    12 |  0.1754 | default |
+| qwen2.5-0.5b-instruct | General-QA | BLEU ↑ · 1              | example | 12 | 11.9% | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-0.5b-instruct | general_qa | bleu-1          | example  |    12 |  0.1192 | default |
+| qwen2.5-0.5b-instruct | General-QA | BLEU ↑ · 2              | example | 12 | 4%    | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-0.5b-instruct | general_qa | bleu-2          | example  |    12 |  0.0403 | default |
+| qwen2.5-0.5b-instruct | General-QA | BLEU ↑ · 3              | example | 12 | 1.4%  | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-0.5b-instruct | general_qa | bleu-3          | example  |    12 |  0.0135 | default |
+| qwen2.5-0.5b-instruct | General-QA | BLEU ↑ · 4              | example | 12 | 0.8%  | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-0.5b-instruct | general_qa | bleu-4          | example  |    12 |  0.0079 | default |
+| qwen2.5-72b-instruct  | General-QA | ROUGE ↑ · 1 · Recall    | example | 12 | 97.2% | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-72b-instruct  | general_qa | AverageAccuracy | arena    |    10 | -1      | default |
+| qwen2.5-72b-instruct  | General-QA | ROUGE ↑ · 1 · Precision | example | 12 | 11.5% | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-72b-instruct  | general_qa | Rouge-1-R       | example  |    12 |  0.9722 | default |
+| qwen2.5-72b-instruct  | General-QA | ROUGE ↑ · 1 · F1        | example | 12 | 16.1% | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-72b-instruct  | general_qa | Rouge-1-P       | example  |    12 |  0.1149 | default |
+| qwen2.5-72b-instruct  | General-QA | ROUGE ↑ · 2 · Recall    | example | 12 | 68.3% | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-72b-instruct  | general_qa | Rouge-1-F       | example  |    12 |  0.1612 | default |
+| qwen2.5-72b-instruct  | General-QA | ROUGE ↑ · 2 · Precision | example | 12 | 8.1%  | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-72b-instruct  | general_qa | Rouge-2-R       | example  |    12 |  0.6833 | default |
+| qwen2.5-72b-instruct  | General-QA | ROUGE ↑ · 2 · F1        | example | 12 | 10.3% | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-72b-instruct  | general_qa | Rouge-2-P       | example  |    12 |  0.0813 | default |
+| qwen2.5-72b-instruct  | General-QA | ROUGE ↑ · L · Recall    | example | 12 | 97.2% | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-72b-instruct  | general_qa | Rouge-2-F       | example  |    12 |  0.1027 | default |
+| qwen2.5-72b-instruct  | General-QA | ROUGE ↑ · L · Precision | example | 12 | 10.1% | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-72b-instruct  | general_qa | Rouge-L-R       | example  |    12 |  0.9722 | default |
+| qwen2.5-72b-instruct  | General-QA | ROUGE ↑ · L · F1        | example | 12 | 13.6% | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-72b-instruct  | general_qa | Rouge-L-P       | example  |    12 |  0.101  | default |
+| qwen2.5-72b-instruct  | General-QA | BLEU ↑ · 1              | example | 12 | 10.1% | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-72b-instruct  | general_qa | Rouge-L-F       | example  |    12 |  0.1361 | default |
+| qwen2.5-72b-instruct  | General-QA | BLEU ↑ · 2              | example | 12 | 8.1%  | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-72b-instruct  | general_qa | bleu-1          | example  |    12 |  0.1009 | default |
+| qwen2.5-72b-instruct  | General-QA | BLEU ↑ · 3              | example | 12 | 6.3%  | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-72b-instruct  | general_qa | bleu-2          | example  |    12 |  0.0807 | default |
+| qwen2.5-72b-instruct  | General-QA | BLEU ↑ · 4              | example | 12 | 5.6%  | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-72b-instruct  | general_qa | bleu-3          | example  |    12 |  0.0625 | default |
+| qwen2.5-7b-instruct   | General-QA | ROUGE ↑ · 1 · Recall    | example | 12 | 97.2% | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-72b-instruct  | general_qa | bleu-4          | example  |    12 |  0.0556 | default |
+| qwen2.5-7b-instruct   | General-QA | ROUGE ↑ · 1 · Precision | example | 12 | 10.4% | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-7b-instruct   | general_qa | AverageAccuracy | arena    |    10 | -1      | default |
+| qwen2.5-7b-instruct   | General-QA | ROUGE ↑ · 1 · F1        | example | 12 | 14.2% | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-7b-instruct   | general_qa | Rouge-1-R       | example  |    12 |  0.9722 | default |
+| qwen2.5-7b-instruct   | General-QA | ROUGE ↑ · 2 · Recall    | example | 12 | 70%   | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-7b-instruct   | general_qa | Rouge-1-P       | example  |    12 |  0.104  | default |
+| qwen2.5-7b-instruct   | General-QA | ROUGE ↑ · 2 · Precision | example | 12 | 7.8%  | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-7b-instruct   | general_qa | Rouge-1-F       | example  |    12 |  0.1418 | default |
+| qwen2.5-7b-instruct   | General-QA | ROUGE ↑ · 2 · F1        | example | 12 | 9.6%  | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-7b-instruct   | general_qa | Rouge-2-R       | example  |    12 |  0.7    | default |
+| qwen2.5-7b-instruct   | General-QA | ROUGE ↑ · L · Recall    | example | 12 | 97.2% | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-7b-instruct   | general_qa | Rouge-2-P       | example  |    12 |  0.078  | default |
+| qwen2.5-7b-instruct   | General-QA | ROUGE ↑ · L · Precision | example | 12 | 9.4%  | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-7b-instruct   | general_qa | Rouge-2-F       | example  |    12 |  0.0964 | default |
+| qwen2.5-7b-instruct   | General-QA | ROUGE ↑ · L · F1        | example | 12 | 12.4% | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-7b-instruct   | general_qa | Rouge-L-R       | example  |    12 |  0.9722 | default |
+| qwen2.5-7b-instruct   | General-QA | BLEU ↑ · 1              | example | 12 | 9.4%  | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-7b-instruct   | general_qa | Rouge-L-P       | example  |    12 |  0.0942 | default |
+| qwen2.5-7b-instruct   | General-QA | BLEU ↑ · 2              | example | 12 | 7.8%  | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-7b-instruct   | general_qa | Rouge-L-F       | example  |    12 |  0.1235 | default |
+| qwen2.5-7b-instruct   | General-QA | BLEU ↑ · 3              | example | 12 | 6.3%  | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-7b-instruct   | general_qa | bleu-1          | example  |    12 |  0.0939 | default |
-+-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-7b-instruct   | general_qa | bleu-2          | example  |    12 |  0.0777 | default |
-+-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-7b-instruct   | general_qa | bleu-3          | example  |    12 |  0.0625 | default |
-+-----------------------+------------+-----------------+----------+-------+---------+---------+
-| qwen2.5-7b-instruct   | general_qa | bleu-4          | example  |    12 |  0.0556 | default |
+| qwen2.5-7b-instruct   | General-QA | BLEU ↑ · 4              | example | 12 | 5.6%  | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
 ```
 </details>
@@ -202,8 +196,8 @@ task_cfg = TaskConfig(
             }
         }
     },
-    # 配置judge模型参数
-    judge_model_args={
+    # 配置 Judge 模型参数
+    judge={'models': {
         'model_id': 'qwen-plus',
         'api_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
         'api_key': os.getenv('DASHSCOPE_API_KEY'),
@@ -211,7 +205,7 @@ task_cfg = TaskConfig(
             'temperature': 0.0,
             'max_tokens': 8000
         },
-    },
+    }},
     eval_batch_size=5,
     # use_cache='outputs/xxx' # 可选，若想在已有评测结果上添加新的候选模型，可以指定已有评测结果路径
 )
@@ -295,7 +289,7 @@ qwen2.5-0.5b            7.5  (-5.0 / +1.6)
 
 ## 对战结果可视化
 
-为了直观的展现模型候选模型与baseline模型的对战结果，EvalScope提供了可视化功能，可以对比每个候选模型与baseline模型在每个样本上的对战结果。
+为了直观的展现候选模型与baseline模型的对战结果，EvalScope提供了可视化功能，可以对比每个候选模型与baseline模型在每个样本上的对战结果。
 
 运行下面命令启动可视化界面：
 ```shell

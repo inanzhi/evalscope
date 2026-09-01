@@ -1,6 +1,6 @@
 from typing import Any, Dict, List
 
-from evalscope.api.benchmark import BenchmarkMeta, MultiChoiceAdapter, VisionLanguageAdapter
+from evalscope.api.benchmark import AudioLanguageAdapter, BenchmarkMeta, MultiChoiceAdapter, VisionLanguageAdapter
 from evalscope.api.dataset import Sample
 from evalscope.api.messages import ChatMessageUser, Content, ContentAudio, ContentImage, ContentText
 from evalscope.api.registry import register_benchmark
@@ -61,18 +61,17 @@ OmniBench is a pioneering universal multimodal benchmark designed to rigorously 
             'use_image': {
                 'type': 'bool',
                 'description': 'Whether to provide the raw image. False uses textual alternative.',
-                'value': True
+                'value': True,
             },
             'use_audio': {
                 'type': 'bool',
                 'description': 'Whether to provide the raw audio. False uses textual alternative.',
-                'value': True
-            }
-        }
+                'value': True,
+            },
+        },
     )
 )
-class OmniBenchAdapter(VisionLanguageAdapter, MultiChoiceAdapter):
-
+class OmniBenchAdapter(VisionLanguageAdapter, AudioLanguageAdapter, MultiChoiceAdapter):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -115,5 +114,5 @@ class OmniBenchAdapter(VisionLanguageAdapter, MultiChoiceAdapter):
                 'answer': answer,
                 'image_content': record['image content'],
                 'audio_content': record['audio content'],
-            }
+            },
         )

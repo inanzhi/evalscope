@@ -37,7 +37,7 @@ AA-LCR (Artificial Analysis Long Context Retrieval) is a benchmark for evaluatin
 | **Dataset ID** | [evalscope/AA-LCR](https://modelscope.cn/datasets/evalscope/AA-LCR/summary) |
 | **Paper** | N/A |
 | **Tags** | `Knowledge`, `LongContext`, `Reasoning` |
-| **Metrics** | `acc` |
+| **Metrics** | `accuracy` |
 | **Default Shots** | 0-shot |
 | **Evaluation Split** | `test` |
 
@@ -136,5 +136,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

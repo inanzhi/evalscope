@@ -2,7 +2,7 @@
 import json
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from evalscope.api.benchmark import BenchmarkMeta, VendorVerifierAdapter
+from evalscope.api.benchmark import BenchmarkMeta, FunctionCallAdapter
 from evalscope.api.dataset import Sample
 from evalscope.api.evaluator import TaskState
 from evalscope.api.messages import dict_to_chat_message
@@ -52,16 +52,14 @@ General-FunctionCalling is a customizable benchmark for evaluating function call
             'schema_accuracy',
             'tool_call_f1',
         ],
+        primary_metric='tool_call_f1',
         aggregation='f1',
         eval_split='test',
     )
 )
-class GeneralFCAdapter(VendorVerifierAdapter):
-
+class GeneralFCAdapter(FunctionCallAdapter):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-
-        self.add_aggregation_name = False
 
     def load_from_disk(self, **kwargs):
         return super().load_from_disk(use_local_loader=True)
@@ -85,7 +83,7 @@ class GeneralFCAdapter(VendorVerifierAdapter):
             metadata={
                 'should_call_tool': should_call_tool,
                 'tools': tools,
-            }
+            },
         )
 
     def match_score(self, original_prediction, filtered_prediction, reference, task_state: TaskState) -> Score:

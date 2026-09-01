@@ -2,6 +2,16 @@ import type { ReactNode } from 'react'
 import { useLocale } from '@/contexts/LocaleContext'
 import type { PerfMetrics, PercentileStats } from '@/api/types'
 import { cn } from '@/lib/utils'
+import { formatMetric } from '@/domain/metric'
+import type { MetricSemantics } from '@/domain/metric'
+import KpiStrip from '@/components/ui/KpiStrip'
+
+function formatPerfValue(
+  value: number | null | undefined,
+  semantics: MetricSemantics,
+): string {
+  return formatMetric(value, semantics).primary
+}
 
 interface PerfMetricsPanelProps {
   perfMetrics: PerfMetrics
@@ -17,14 +27,16 @@ const C_TOKEN   = 'var(--chart-token)'
 
 interface PercTableProps {
   stats: PercentileStats
-  unit: string
+  semantics: MetricSemantics
   accentCol?: string
-  /** multiply values before display (e.g. ×1000 for ms) */
-  scale?: number
 }
 
-function PercTable({ stats, unit, accentCol = 'var(--accent)', scale = 1 }: PercTableProps) {
-  const fmt = (v: number) => (v * scale).toFixed(scale === 1000 ? 1 : 3)
+function PercTable({
+  stats,
+  semantics,
+  accentCol = 'var(--accent)',
+}: PercTableProps) {
+  const fmt = (value: number | null | undefined) => formatPerfValue(value, semantics)
 
   const cols: { label: string; key: keyof PercentileStats; accent?: boolean }[] = [
     { label: 'Mean', key: 'mean', accent: true },
@@ -62,7 +74,7 @@ function PercTable({ stats, unit, accentCol = 'var(--accent)', scale = 1 }: Perc
                 c.accent ? 'text-[var(--text)] font-medium' : 'text-[var(--text-muted)]',
               )}
             >
-              {fmt(stats[c.key] as number)}{unit}
+              {fmt(stats[c.key])}
             </td>
           ))}
         </tr>
@@ -111,22 +123,23 @@ interface TokenTableProps {
     input_tokens: PercentileStats
     output_tokens: PercentileStats
     total_tokens: PercentileStats
-    total_input_tokens?: number
-    total_output_tokens?: number
-    total_tokens_count?: number
+    total_input_tokens?: number | null
+    total_output_tokens?: number | null
+    total_tokens_count?: number | null
   }
   labels: { input: string; output: string; total: string; totalCount: string }
+  semantics: Record<string, MetricSemantics>
 }
 
-function TokenTable({ usage, labels }: TokenTableProps) {
+function TokenTable({ usage, labels, semantics }: TokenTableProps) {
   const rows = [
-    { label: labels.input,  stats: usage.input_tokens,  count: usage.total_input_tokens },
-    { label: labels.output, stats: usage.output_tokens, count: usage.total_output_tokens },
-    { label: labels.total,  stats: usage.total_tokens,  count: usage.total_tokens_count },
+    { key: 'usage.input_tokens', label: labels.input,  stats: usage.input_tokens,  count: usage.total_input_tokens },
+    { key: 'usage.output_tokens', label: labels.output, stats: usage.output_tokens, count: usage.total_output_tokens },
+    { key: 'usage.total_tokens', label: labels.total,  stats: usage.total_tokens,  count: usage.total_tokens_count },
   ]
 
   // whether any total counts are available (new-format reports only)
-  const hasCount = rows.some((r) => r.count !== undefined)
+  const hasCount = rows.some((r) => r.count != null)
 
   const headers = ['', 'Mean', '±Std', 'P50', 'P99', 'Min', 'Max', ...(hasCount ? [labels.totalCount] : [])]
 
@@ -160,64 +173,32 @@ function TokenTable({ usage, labels }: TokenTableProps) {
               {row.label}
             </td>
             <td className={cn(cellBase, 'text-[var(--text)] font-medium')}>
-              {row.stats.mean.toFixed(0)}
+              {formatPerfValue(row.stats.mean, semantics[row.key])}
             </td>
             <td className={cn(cellBase, 'text-[var(--text-muted)]')}>
-              {row.stats.std.toFixed(0)}
+              {formatPerfValue(row.stats.std, semantics[row.key])}
             </td>
             <td className={cn(cellBase, 'text-[var(--text-muted)]')}>
-              {row.stats['50%'].toFixed(0)}
+              {formatPerfValue(row.stats['50%'], semantics[row.key])}
             </td>
             <td className={cn(cellBase, 'text-[var(--text-muted)]')}>
-              {row.stats['99%'].toFixed(0)}
+              {formatPerfValue(row.stats['99%'], semantics[row.key])}
             </td>
             <td className={cn(cellBase, 'text-[var(--text-muted)]')}>
-              {row.stats.min.toFixed(0)}
+              {formatPerfValue(row.stats.min, semantics[row.key])}
             </td>
             <td className={cn(cellBase, 'text-[var(--text-muted)]')}>
-              {row.stats.max.toFixed(0)}
+              {formatPerfValue(row.stats.max, semantics[row.key])}
             </td>
             {hasCount && (
               <td className={cn(cellBase, 'text-[var(--text)] font-semibold')}>
-                {row.count !== undefined ? row.count.toLocaleString() : '—'}
+                {row.count != null ? formatPerfValue(row.count, semantics[row.key]) : '—'}
               </td>
             )}
           </tr>
         ))}
       </tbody>
     </table>
-  )
-}
-
-// ── Overview KPI strip ────────────────────────────────────────────────────────
-
-function KpiStrip({
-  items,
-}: {
-  items: { label: string; value: string; color: string }[]
-}) {
-  return (
-    <div className="flex bg-[var(--bg-card)] border border-[var(--border)] rounded-[var(--radius-sm)] overflow-hidden">
-      {items.map((item, i) => (
-        <div
-          key={item.label}
-          className={cn(
-            'flex-1 px-3 py-2.5',
-            i < items.length - 1 && 'border-r border-[var(--border)]',
-          )}
-        >
-          <div
-            className="text-lg font-semibold tabular-nums leading-tight"
-            style={{ color: item.color }}
-          >
-            {item.value}
-          </div>
-          <div className="text-[10px] text-[var(--text-muted)] mt-0.5 whitespace-nowrap">
-            {item.label}
-          </div>
-        </div>
-      ))}
-    </div>
   )
 }
 
@@ -231,35 +212,38 @@ function Sep() {
 
 export default function PerfMetricsPanel({ perfMetrics }: PerfMetricsPanelProps) {
   const { t } = useLocale()
+  if (!perfMetrics.summary) return null
+
   const { n_samples, latency, throughput, usage, ttft, tpot } = perfMetrics.summary
+  const semantics = perfMetrics.metric_semantics ?? {}
 
   const kpis = [
     {
       label: t('reportDetail.samples'),
-      value: String(n_samples),
+      value: formatPerfValue(n_samples, semantics.n_samples),
       color: 'var(--text)',
     },
     {
       label: t('reportDetail.avgLatency'),
-      value: `${latency.mean.toFixed(3)}s`,
+      value: formatPerfValue(latency.mean, semantics.latency),
       color: C_LATENCY,
     },
     ...(ttft
-      ? [{ label: t('reportDetail.ttft'), value: `${(ttft.mean * 1000).toFixed(0)}ms`, color: C_TTFT }]
+      ? [{ label: t('reportDetail.ttft'), value: formatPerfValue(ttft.mean, semantics.ttft), color: C_TTFT }]
       : []),
     ...(tpot
-      ? [{ label: t('reportDetail.tpot'), value: `${(tpot.mean * 1000).toFixed(0)}ms`, color: C_TPOT }]
+      ? [{ label: t('reportDetail.tpot'), value: formatPerfValue(tpot.mean, semantics.tpot), color: C_TPOT }]
       : []),
     {
       label: t('reportDetail.outputTps'),
-      value: `${throughput.avg_output_tps.toFixed(1)} tok/s`,
+      value: formatPerfValue(throughput.avg_output_tps, semantics['throughput.avg_output_tps']),
       color: 'var(--text)',
     },
     ...(usage.total_input_tokens !== undefined
-      ? [{ label: t('reportDetail.totalInputTokens'), value: usage.total_input_tokens.toLocaleString(), color: 'var(--text)' }]
+      ? [{ label: t('reportDetail.totalInputTokens'), value: formatPerfValue(usage.total_input_tokens, semantics['usage.input_tokens']), color: 'var(--text)' }]
       : []),
     ...(usage.total_output_tokens !== undefined
-      ? [{ label: t('reportDetail.totalOutputTokens'), value: usage.total_output_tokens.toLocaleString(), color: 'var(--text)' }]
+      ? [{ label: t('reportDetail.totalOutputTokens'), value: formatPerfValue(usage.total_output_tokens, semantics['usage.output_tokens']), color: 'var(--text)' }]
       : []),
   ]
 
@@ -267,14 +251,14 @@ export default function PerfMetricsPanel({ perfMetrics }: PerfMetricsPanelProps)
     <div className="flex flex-col gap-4">
 
       {/* Overview strip */}
-      <KpiStrip items={kpis} />
+      <KpiStrip items={kpis} layout="dense" />
 
       <Sep />
 
       {/* Latency distribution */}
       <MetricSection color={C_LATENCY} label={t('reportDetail.latencyDist')} sublabel="(s)">
         <div className="overflow-x-auto">
-          <PercTable stats={latency} unit="s" accentCol={C_LATENCY} />
+          <PercTable stats={latency} semantics={semantics.latency} accentCol={C_LATENCY} />
         </div>
       </MetricSection>
 
@@ -288,7 +272,11 @@ export default function PerfMetricsPanel({ perfMetrics }: PerfMetricsPanelProps)
             sublabel={`${t('reportDetail.ttftDesc')} (ms)`}
           >
             <div className="overflow-x-auto">
-              <PercTable stats={ttft} unit="ms" accentCol={C_TTFT} scale={1000} />
+              <PercTable
+                stats={ttft}
+                semantics={semantics.ttft}
+                accentCol={C_TTFT}
+              />
             </div>
           </MetricSection>
         </>
@@ -304,7 +292,11 @@ export default function PerfMetricsPanel({ perfMetrics }: PerfMetricsPanelProps)
             sublabel={`${t('reportDetail.tpotDesc')} (ms)`}
           >
             <div className="overflow-x-auto">
-              <PercTable stats={tpot} unit="ms" accentCol={C_TPOT} scale={1000} />
+              <PercTable
+                stats={tpot}
+                semantics={semantics.tpot}
+                accentCol={C_TPOT}
+              />
             </div>
           </MetricSection>
         </>
@@ -317,6 +309,7 @@ export default function PerfMetricsPanel({ perfMetrics }: PerfMetricsPanelProps)
         <div className="overflow-x-auto">
           <TokenTable
             usage={usage}
+            semantics={semantics}
             labels={{
               input:  t('reportDetail.tokenInput'),
               output: t('reportDetail.tokenOutput'),

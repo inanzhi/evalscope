@@ -42,6 +42,7 @@ OntoNotes Release 5.0 is a large, multilingual corpus containing text in English
         train_split='train',
         eval_split='test',
         metric_list=['precision', 'recall', 'f1_score', 'accuracy'],
+        primary_metric='f1',
         prompt_template=PROMPT_TEMPLATE,
         few_shot_prompt_template=FEWSHOT_TEMPLATE,
     )
@@ -77,7 +78,7 @@ class OntoNotes5Adapter(NERAdapter):
             'PRODUCT': 'product',
             'QUANTITY': 'quantity',
             'TIME': 'time',
-            'WORK_OF_ART': 'work_of_art'
+            'WORK_OF_ART': 'work_of_art',
         }
 
         # Add descriptions for each entity type
@@ -99,7 +100,7 @@ class OntoNotes5Adapter(NERAdapter):
             'MONEY': 'Monetary values, including unit',
             'QUANTITY': 'Measurements, as of weight or distance',
             'ORDINAL': '"first", "second"',
-            'CARDINAL': 'Numerals that do not fall under another type'
+            'CARDINAL': 'Numerals that do not fall under another type',
         }
 
         # Setup entity mappings based on the defined entity types

@@ -18,8 +18,9 @@ covers reasoning translation.
 """
 
 import os
-import pytest
 import shutil
+
+import pytest
 
 from evalscope.agent.external import ExternalAgentConfig
 from evalscope.agent.external.adapter import run_external_agent
@@ -27,7 +28,7 @@ from evalscope.api.agent import EventType
 from evalscope.api.dataset import Sample
 from evalscope.api.model import GenerateConfig, Model
 from evalscope.models.openai_compatible import OpenAICompatibleAPI
-from evalscope.utils.function_utils import AsyncioLoopRunner
+from evalscope.utils.asyncio_runtime import AsyncioLoopRunner
 
 
 def _load_env_file() -> None:

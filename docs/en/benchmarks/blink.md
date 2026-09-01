@@ -36,7 +36,7 @@ BLINK is a benchmark designed to evaluate the core visual perception abilities o
 | **Dataset ID** | [evalscope/BLINK](https://modelscope.cn/datasets/evalscope/BLINK/summary) |
 | **Paper** | N/A |
 | **Tags** | `Knowledge`, `MCQ`, `MultiModal` |
-| **Metrics** | `acc` |
+| **Metrics** | `accuracy` |
 | **Default Shots** | 0-shot |
 | **Evaluation Split** | `val` |
 
@@ -159,5 +159,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

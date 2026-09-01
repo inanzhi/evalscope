@@ -42,6 +42,7 @@ The MIT-Restaurant dataset is a collection of restaurant review text specificall
         train_split='train',
         eval_split='test',
         metric_list=['precision', 'recall', 'f1_score', 'accuracy'],
+        primary_metric='f1',
         prompt_template=PROMPT_TEMPLATE,
         few_shot_prompt_template=FEWSHOT_TEMPLATE,
     )
@@ -67,7 +68,7 @@ class MITRestaurantAdapter(NERAdapter):
             'LOCATION': 'location',
             'PRICE': 'price',
             'RATING': 'rating',
-            'RESTAURANT_NAME': 'restaurant_name'
+            'RESTAURANT_NAME': 'restaurant_name',
         }
 
         # Add descriptions for each entity type

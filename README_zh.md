@@ -13,6 +13,7 @@
 <a href="https://badge.fury.io/py/evalscope"><img src="https://badge.fury.io/py/evalscope.svg" alt="PyPI version" height="18"></a>
 <a href="https://pypi.org/project/evalscope"><img alt="PyPI - Downloads" src="https://static.pepy.tech/badge/evalscope"></a>
 <a href="https://github.com/modelscope/evalscope/pulls"><img src="https://img.shields.io/badge/PR-welcome-55EB99.svg"></a>
+<a href="https://github.com/modelscope/evalscope"><img alt="GitHub stars" src="https://img.shields.io/github/stars/modelscope/evalscope?style=flat&logo=github"></a>
 <a href='https://evalscope.readthedocs.io/zh-cn/latest/?badge=latest'><img src='https://readthedocs.org/projects/evalscope/badge/?version=latest' alt='Documentation Status' /></a>
 <p>
 
@@ -39,7 +40,7 @@ evalscope eval --model your-model-name --api-url $OPENAI_API_BASE_URL --api-key 
 - **🚀 多后端集成**: 无缝集成 OpenCompass, VLMEvalKit, RAGEval 等多种评测后端，满足不同评测需求。
 - **🤖 Agent 评测模式**: 在受控的多轮 AgentLoop 中驱动 GSM8K、AIME、SWE-bench Agentic 等基准；支持可插拔的策略、工具与 Docker 沙箱，每条样本完整记录 Agent Trace 并可在仪表盘中按步骤回放。
 - **⚡ 推理性能测试**: 提供强大的模型服务压力测试工具，支持 TTFT, TPOT 等多项性能指标。
-- **📊 交互式报告**: 提供 WebUI 可视化界面，支持多维度模型对比、报告概览和详情查阅。
+- **📊 交互式报告**: 提供 Web Dashboard，支持多维度模型对比、报告概览和详情查阅。
 - **⚔️ 竞技场模式**: 支持多模型对战 (Pairwise Battle)，直观地对模型进行排名和评估。
 - **🔧 高度可扩展**: 开发者可以轻松添加自定义数据集、模型和评测指标。
 
@@ -74,22 +75,32 @@ EvalScope 提供交互式 Web Dashboard，支持多维度模型对比和深入�
 
 ## 🎉 内容更新
 
+- 🔥 **[2026.08.24] v1.11.0** 引入可发布的评测版本标识，保障基准结果可复现；优化评测报告语义与不完整运行处理，并增强多模态媒体加载和任务配置校验。
+- 🔥 **[2026.08.13]** 评测报告升级：统一指标语义，并改善 Agent Trace 步骤分组与工具调用/结果关联的可靠性。
+- 🔥 **[2026.08.10]** 新增 **AutomationBench**、**JobBench**、**MiniWoB**、**OmniDocBench-v1.6**、**PerceptionBench**、**ScreenSpot-Pro**、**PLawBench**、**PMC-VQA**、**HiPhO**、**LogicVista** 和 **CC-OCR-V2** 基准。
+- 🔥 **[2026.07.21]** 新增 **Claw-Eval**、**ResearchRubrics**、**Toolathlon**（Agent）、**TVBench**（视频）、**WideSearch**、**PerspectiveGap** 基准。
+- 🔥 **[2026.07.03]** 新增 **CharXiv** & **BabyVision**（图表理解、视觉认知）及 **ERQA** & **WorldVQA**（实体识别 QA，支持 LLM judge + CoT）多模态基准。
+- 🔥 **[2026.06.23]** Agent 与代码评测大幅扩展：新增 **BigCodeBench**、**SWE-bench Multilingual**、**BrowseComp**、**MCP-Atlas**、**GDPval** 基准；新增 **OpenCode** / **OpenHands** runner；适配器架构重构，引入 `AudioLanguageAdapter`、统一 `FunctionCallAdapter`、公开 `run_agent_loop` API。
+- 🔥 **[2026.06.16]** 新增全参考**图像质量指标**（SSIM、PSNR 等）、长上下文基准（**LoCoMo QA**、**LongMemEval**）、**Caption** & **Maritime-OCR-Bench** 基准；Perf 模块支持统一 `--data-source` 参数及并行化请求生成。
+- 🔥 **[2026.06.02]** **RAG 评测**模块重构：升级 MTEB 2.x 与 RAGAS 0.4.x，配置统一为 Pydantic 模型。参考[RAGEval 使用文档](https://evalscope.readthedocs.io/zh-cn/latest/user_guides/backend/rageval_backend/index.html)。
 - 🔥 **[2026.05.27]** 新增 **Trie agentic 轨迹回放**压测：三个数据集插件（`trie_agentic_coding` / `trie_code_qa` / `trie_office_work`）可回放真实多轮 Agent 轨迹，支持逐轮 token 上限和工具调用延迟模拟；同时新增 `--duration` 墙钟时间预算（适用于所有压测模式）和 `Turn` 数据类。
-- 🔥 **[2026.05.27]** 新增 **Vendor Verifier 基准**（`k2_verifier`、`kimi_verifier`、`minimax_verifier`），用于验证第三方 API 部署是否忠实复现官方模型行为，共享 `VendorVerifierAdapter` 基类。
+- 🔥 **[2026.05.27]** 新增 **Vendor Verifier 基准**（`k2_verifier`、`kimi_verifier`、`minimax_verifier`），用于验证第三方 API 部署是否忠实复现官方模型行为，共享 `FunctionCallAdapter` 基类。
 - 🔥 **[2026.05.26]** 新增 [GAIA](https://evalscope.readthedocs.io/zh-cn/latest/third_party/gaia.html) agent 基准（Docker sandbox 内多轮 ReAct + `bash`，复用官方规则评分器）和通用 [MCP 服务器](https://evalscope.readthedocs.io/zh-cn/latest/user_guides/agent/native.html#mcp-工具接入)接入 —— 任何基于 `NativeAgentConfig` 的 benchmark 都可直接挂载 stdio / HTTP / SSE 的 MCP server（`fetch`、网页搜索、GitHub 等），无需 benchmark 端改动。
 - 🔥 **[2026.05.22]** 新增 **外部 Agent Bridge** 模式：可直接评测 Anthropic [Claude Code](https://github.com/anthropics/claude-code)、OpenAI [Codex](https://github.com/openai/codex) 等成品 Agent CLI。Bridge 透明转发 CLI 的 LLM 请求（Anthropic Messages / OpenAI Chat / OpenAI Responses，含 SSE 流式响应）到评测模型，同时把完整交互轨迹录制为 `agent_trace`；通过 `@register_runner` 可接入任意第三方 CLI。详见[外部 Agent Bridge 指南](https://evalscope.readthedocs.io/zh-cn/latest/user_guides/agent/bridge.html)。
 - 🔥 **[2026.05.19]** 新增对 [SWE-bench_Pro](https://evalscope.readthedocs.io/zh-cn/latest/third_party/swe_bench_pro.html) 与 [τ³-bench](https://evalscope.readthedocs.io/zh-cn/latest/third_party/tau3_bench.html) 的支持：SWE-bench_Pro 是 Scale AI 推出的更具挑战性的多语言、长周期软件工程基准，相比原始 SWE-bench 数据污染更少、覆盖语言更广，**推荐替代原始 SWE-bench 使用**，每个实例的 Docker 镜像直接从 DockerHub 拉取，无需本地构建；τ³-bench 是 tau-bench 系列的 v1.0.0 版本，在 τ²-bench 基础上新增 `banking_knowledge` 知识检索领域（RAG）、修复 75+ 项任务，并提供可插拔的检索流水线（BM25 / 稠密嵌入 / 重排序器 / 沙箱 shell）。
-- 🔥 **[2026.05.15]** 新增 **Agent 评测模式**：所有基于 `DefaultDataAdapter` 的基准（GSM8K、AIME、IFEval 等）现在均可通过多轮 AgentLoop 驱动，支持可插拔策略（`function_calling` / `react` / `swe_bench_*`）、工具（`bash` / `python_exec` / `submit`）以及 `local` / `docker` 运行环境，每条样本的 `agent_trace` 会随评测结果落盘，并在仪表盘的预测视图中按步骤回放。详见[Agent 评测指南](https://evalscope.readthedocs.io/zh-cn/latest/user_guides/agent/native.html)。
-- 🔥 **[2026.05.08]** 与 [LightSeek](https://lightseek.org/) 联合推出 [TokenSpeed](https://lightseek.org/blog/lightseek-tokenspeed.html)——面向 Agentic 工作负载的极速 LLM 推理引擎。EvalScope 提供 SWE-smith 压测流水线，基于真实 Coding Agent 轨迹衡量单 GPU 吞吐（TPM）与单用户延迟（TPS），作为 TokenSpeed 性能评测的官方基准工具。参考 [SWE-smith 使用指南](https://evalscope.readthedocs.io/zh-cn/latest/user_guides/stress_test/multi_turn.html#swe-smith) 快速上手。
-- 🔥 **[2026.05.07]** 全新 Web 界面升级：使用 React + Vite 重构可视化平台，替换原有 Gradio 界面，提供更流畅的交互体验。
-- 🔥 **[2026.04.23]** 支持在评测任务中记录性能（perf）指标，可在单次评测运行中同时追踪模型准确率与 TTFT、TPOT、吞吐量等推理效率指标。
-- 🔥 **[2026.04.17]** 支持多轮对话性能压测，可对具备多轮上下文的对话模型服务进行负载测试，参考[使用文档](https://evalscope.readthedocs.io/zh-cn/latest/user_guides/stress_test/examples.html)。
-- 🔥 **[2026.04.10]** 新增支持 [TIR-Bench](https://arxiv.org/abs/2511.01833)（Thinking-with-Images Reasoning Benchmark），一个面向视觉语言模型的多模态推理基准。
-- 🔥 **[2026.03.24]** 支持 Agent Skill，任何支持 Skill/Tool 调用的 Agent 模型均可通过自然语言直接驱动 EvalScope 完成模型评测、性能压测和结果可视化。
-- 🔥 **[2026.03.09]** 支持评测进度追踪和自动生成HTML格式可视化报告。
 
 <details><summary>更多历史更新</summary>
 
+- 🔥 **[2026.05.15]** 新增 **Agent 评测模式**：所有基于 `DefaultDataAdapter` 的基准（GSM8K、AIME、IFEval 等）现在均可通过多轮 AgentLoop 驱动，支持可插拔策略（`function_calling` / `react` / `swe_bench_*`）、工具（`bash` / `python_exec` / `submit`）以及 `local` / `docker` 运行环境，每条样本的 `agent_trace` 会随评测结果落盘，并在仪表盘的预测视图中按步骤回放。详见[Agent 评测指南](https://evalscope.readthedocs.io/zh-cn/latest/user_guides/agent/native.html)。
+- 🔥 **[2026.05.08]** 与 [LightSeek](https://lightseek.org/) 联合推出 [TokenSpeed](https://lightseek.org/blog/lightseek-tokenspeed.html)——面向 Agentic 工作负载的极速 LLM 推理引擎。EvalScope 提供 SWE-smith 压测流水线，基于真实 Coding Agent 轨迹衡量单 GPU 吞吐（TPM）与单用户延迟（TPS），作为 TokenSpeed 性能评测的官方基准工具。参考 [SWE-smith 使用指南](https://evalscope.readthedocs.io/zh-cn/latest/user_guides/stress_test/multi_turn.html#swe-smith) 快速上手。
+
+- 🔥 **[2026.05.07]** 全新 Web 界面升级：使用 React + Vite 重构可视化平台，替换原有 Gradio 界面，提供更流畅的交互体验。
+- 🔥 **[2026.04.23]** 支持在评测任务中记录性能（perf）指标，可在单次评测运行中同时追踪模型准确率与 TTFT、TPOT、吞吐量等推理效率指标。
+- 🔥 **[2026.04.17]** 支持多轮对话性能压测，可对具备多轮上下文的对话模型服务进行负载测试，参考[使用文档](https://evalscope.readthedocs.io/zh-cn/latest/user_guides/stress_test/examples.html)。
+
+- 🔥 **[2026.04.10]** 新增支持 [TIR-Bench](https://arxiv.org/abs/2511.01833)（Thinking-with-Images Reasoning Benchmark），一个面向视觉语言模型的多模态推理基准。
+- 🔥 **[2026.03.24]** 支持 Agent Skill，任何支持 Skill/Tool 调用的 Agent 模型均可通过自然语言直接驱动 EvalScope 完成模型评测、性能压测和结果可视化。
+- 🔥 **[2026.03.09]** 支持评测进度追踪和自动生成HTML格式可视化报告。
 - 🔥 **[2026.03.02]** 支持Anthropic Claude API评测，通过`--eval-type anthropic_api`指定使用Anthropic API服务进行评测。
 - 🔥 **[2026.02.03]** 全面更新数据集说明文档，添加数据信息统计、数据样例、使用方法等部分，参考[支持的数据集](https://evalscope.readthedocs.io/zh-cn/latest/get_started/supported_dataset/llm.html)
 - 🔥 **[2026.01.13]** 支持Embedding和Rerank模型服务压测，参考[使用文档](https://evalscope.readthedocs.io/zh-cn/latest/user_guides/stress_test/examples.html#embedding)
@@ -243,15 +254,15 @@ run_task(task_cfg="config.yaml")
 ### 输出结果
 评测完成后，您将在终端看到如下格式的报告：
 ```text
-+-----------------------+----------------+-----------------+-----------------+---------------+-------+---------+
-| Model Name            | Dataset Name   | Metric Name     | Category Name   | Subset Name   |   Num |   Score |
-+=======================+================+=================+=================+===============+=======+=========+
-| Qwen2.5-0.5B-Instruct | gsm8k          | AverageAccuracy | default         | main          |     5 |     0.4 |
-+-----------------------+----------------+-----------------+-----------------+---------------+-------+---------+
-| Qwen2.5-0.5B-Instruct | ai2_arc        | AverageAccuracy | default         | ARC-Easy      |     5 |     0.8 |
-+-----------------------+----------------+-----------------+-----------------+---------------+-------+---------+
-| Qwen2.5-0.5B-Instruct | ai2_arc        | AverageAccuracy | default         | ARC-Challenge |     5 |     0.4 |
-+-----------------------+----------------+-----------------+-----------------+---------------+-------+---------+
+┌───────────────────────┬───────────┬────────────┬───────────────┬───────┬─────────┐
+│ Model                 │ Dataset   │ Metric     │ Subset        │   Num │ Score   │
+├───────────────────────┼───────────┼────────────┼───────────────┼───────┼─────────┤
+│ Qwen2.5-0.5B-Instruct │ gsm8k     │ Accuracy ↑ │ main          │     5 │ 40%     │
+├───────────────────────┼───────────┼────────────┼───────────────┼───────┼─────────┤
+│ Qwen2.5-0.5B-Instruct │ arc       │ Accuracy ↑ │ ARC-Easy      │     5 │ 80%     │
+├───────────────────────┼───────────┼────────────┼───────────────┼───────┼─────────┤
+│ Qwen2.5-0.5B-Instruct │ arc       │ Accuracy ↑ │ ARC-Challenge │     5 │ 40%     │
+└───────────────────────┴───────────┴────────────┴───────────────┴───────┴─────────┘
 ```
 
 **启动可视化面板**：
@@ -337,7 +348,7 @@ EvalScope 支持通过第三方评测框架（我们称之为"后端"）发起�
 
 2.  **核心功能**
     - **多后端评估**: 原生后端、OpenCompass、MTEB、VLMEvalKit、RAGAS
-    - **性能监控**: 支持多种模型服务 API 和数据格式，追踪 TTFT/TPOP 等指标
+    - **性能监控**: 支持多种模型服务 API 和数据格式，追踪 TTFT/TPOT 等指标
     - **工具扩展**: 集成 Tool-Bench, Needle-in-a-Haystack 等
 
 3.  **输出层**
@@ -353,7 +364,7 @@ EvalScope 支持通过第三方评测框架（我们称之为"后端"）发起�
 
 [Discord Group](https://discord.gg/xc66bMxc4h)              |  微信群 | 钉钉群
 :-------------------------:|:-------------------------:|:-------------------------:
-<img src="docs/asset/discord_qr.png" width="160" height="160">  |  <img src="docs/asset/wechat.png" width="160" height="160"> | <img src="docs/asset/dingding.png" width="160" height="160">
+<img src="docs/asset/discord_qr.png" width="160" height="160">  |  <img src="https://raw.githubusercontent.com/modelscope/ms-swift/main/asset/wechat.png" width="160" height="160"> | <img src="docs/asset/dingding.png" width="160" height="160">
 
 ## 👷‍♂️ 贡献
 
@@ -382,7 +393,3 @@ EvalScope 支持通过第三方评测框架（我们称之为"后端"）发起�
     url={https://github.com/modelscope/evalscope}
 }
 ```
-
-## ⭐ Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=modelscope/evalscope&type=Date)](https://star-history.com/#modelscope/evalscope&Date)

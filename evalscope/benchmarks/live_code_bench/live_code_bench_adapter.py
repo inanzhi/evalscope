@@ -6,10 +6,14 @@ from evalscope.api.dataset import Sample
 from evalscope.api.evaluator import TaskState
 from evalscope.api.messages.chat_message import ChatMessageUser
 from evalscope.api.metric import Score
+from evalscope.api.metric.semantics import MetricSelector
+from evalscope.api.mixin import CodeExecutionSandboxMixin
 from evalscope.api.registry import register_benchmark
 from evalscope.constants import Tags
 from evalscope.utils.io_utils import convert_normal_types
 from evalscope.utils.logger import get_logger
+
+from .prompts import CodeGenerationPromptConstants
 
 logger = get_logger()
 
@@ -42,6 +46,7 @@ LiveCodeBench is a contamination-free benchmark for evaluating code generation m
 ## Evaluation Notes
 
 - Default configuration uses **0-shot** evaluation
+- Prompts follow the official LiveCodeBench runner: a generic "expert Python programmer" system message plus the `### Question` / `### Format` user message
 - **Security Warning**: By default, code is executed in the local environment. We recommend using sandbox execution. See the [sandbox documentation](https://evalscope.readthedocs.io/en/latest/user_guides/sandbox.html) for details.
 - Use `start_date` and `end_date` parameters to filter problems by date
 - Default timeout is 6 seconds per test case
@@ -80,37 +85,32 @@ LiveCodeBench is a contamination-free benchmark for evaluating code generation m
         ],
         metric_list=['acc'],
         aggregation='mean_and_pass_at_k',
+        primary_metric=MetricSelector(name='accuracy', aggregation='pass_at_k', dimensions={'k': 1}),
         eval_split='test',
-        prompt_template=
-        '### Question:\n{question_content}\n\n{format_prompt} ### Answer: (use the provided format with backticks)\n\n',
+        system_prompt=CodeGenerationPromptConstants.SYSTEM_MESSAGE_GENERIC,
+        prompt_template='### Question:\n{question_content}\n\n{format_prompt} ### Answer: (use the provided format with backticks)\n\n',
         review_timeout=6,
         extra_params={
             'start_date': {
                 'type': 'str | null',
                 'description': 'Filter problems starting from this date (YYYY-MM-DD). Null keeps all.',
-                'value': None
+                'value': None,
             },
             'end_date': {
                 'type': 'str | null',
                 'description': 'Filter problems up to this date (YYYY-MM-DD). Null keeps all.',
-                'value': None
+                'value': None,
             },
             'debug': {
                 'type': 'bool',
                 'description': 'Enable verbose debug logging and bypass certain safety checks.',
-                'value': False
-            }
+                'value': False,
+            },
         },
-        sandbox_config={
-            'image': 'python:3.11-slim',
-            'tools_config': {
-                'shell_executor': {},
-                'python_executor': {}
-            }
-        },
+        sandbox_config={'image': 'python:3.11-slim', 'tools_config': {'shell_executor': {}, 'python_executor': {}}},
     )
 )
-class LiveCodeBenchAdapter(DefaultDataAdapter):
+class LiveCodeBenchAdapter(CodeExecutionSandboxMixin, DefaultDataAdapter):
     """
     Live Code Bench adapter using the new data processing framework.
     """
@@ -137,10 +137,7 @@ class LiveCodeBenchAdapter(DefaultDataAdapter):
         return Sample(
             input=[ChatMessageUser(content=full_prompt)],
             target='',
-            metadata={
-                'evaluation_sample': record['evaluation_sample'],
-                'contest_date': record['contest_date']
-            }
+            metadata={'evaluation_sample': record['evaluation_sample'], 'contest_date': record['contest_date']},
         )
 
     def sample_filter(self, sample):
@@ -151,6 +148,7 @@ class LiveCodeBenchAdapter(DefaultDataAdapter):
     def extract_answer(self, prediction: str, task_state: TaskState) -> str:
         """Extract code from the prediction."""
         from .extract_utils import extract_code_generation
+
         return extract_code_generation(prediction)
 
     def match_score(
@@ -180,7 +178,7 @@ class LiveCodeBenchAdapter(DefaultDataAdapter):
                 pass_rate = metrics['pass@1'] / 100  # convert to point scale
 
                 score.value = {'acc': float(pass_rate > 0)}
-                score.explanation = f"Pass@1: {metrics['pass@1']}%"
+                score.explanation = f'Pass@1: {metrics["pass@1"]}%'
 
                 # Convert numpy types to native Python types for JSON serialization
                 serializable_eval_results = convert_normal_types(eval_results)
@@ -191,7 +189,7 @@ class LiveCodeBenchAdapter(DefaultDataAdapter):
                     'timeout': self.review_timeout,
                     'debug': self.debug,
                     'eval_results': serializable_eval_results,
-                    'final_metadata': serializable_final_metadata
+                    'final_metadata': serializable_final_metadata,
                 }
             except Exception as e:
                 score.value = {'acc': False}
@@ -208,12 +206,12 @@ class LiveCodeBenchAdapter(DefaultDataAdapter):
                 )
 
                 score.value = {'acc': passed}
-                score.explanation = f"Sandbox execution: {'Passed' if passed else 'Failed'}"
+                score.explanation = f'Sandbox execution: {"Passed" if passed else "Failed"}'
                 score.metadata = {
                     'timeout': self.review_timeout,
                     'debug': self.debug,
                     'execution_method': 'sandbox',
-                    'detailed_results': detailed_results
+                    'detailed_results': detailed_results,
                 }
             except Exception as e:
                 score.value = {'acc': False}

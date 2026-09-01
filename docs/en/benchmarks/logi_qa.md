@@ -34,7 +34,7 @@ LogiQA is a benchmark for evaluating logical reasoning abilities, sourced from e
 | **Dataset ID** | [extraordinarylab/logiqa](https://modelscope.cn/datasets/extraordinarylab/logiqa/summary) |
 | **Paper** | N/A |
 | **Tags** | `MCQ`, `Reasoning` |
-| **Metrics** | `acc` |
+| **Metrics** | `accuracy` |
 | **Default Shots** | 0-shot |
 | **Evaluation Split** | `test` |
 | **Train Split** | `validation` |
@@ -115,5 +115,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

@@ -73,6 +73,9 @@ _FORMAT_ERROR_TEMPLATE = (
     'submit your solution (you will not be able to continue working on this task after that).'
 )
 
+_CONTAINER_NOT_RUNNING_RE = re.compile(r'container[^\n"]{0,160}is not running', re.IGNORECASE)
+_NO_SUCH_CONTAINER_RE = re.compile(r'No such container', re.IGNORECASE)
+
 
 def parse_exec_metadata(observation: str) -> Tuple[int, bool, str]:
     """Reverse-engineer ``(returncode, timed_out, body)`` from bash output.
@@ -94,11 +97,22 @@ def parse_exec_metadata(observation: str) -> Tuple[int, bool, str]:
         return 0, False, ''
     timeout_match = _TIMEOUT_TAIL_RE.search(observation)
     if timeout_match:
-        return 124, True, observation[:timeout_match.start()].rstrip('\n')
+        return 124, True, observation[: timeout_match.start()].rstrip('\n')
     exit_match = _EXIT_TAIL_RE.search(observation)
     if exit_match:
-        return int(exit_match.group(1)), False, observation[:exit_match.start()].rstrip('\n')
+        return int(exit_match.group(1)), False, observation[: exit_match.start()].rstrip('\n')
     return 0, False, observation
+
+
+def is_terminal_sandbox_error(observation: Optional[str], error_message: Optional[str] = None) -> bool:
+    """Return True for sandbox failures that make further SWE-bench work impossible."""
+    text = '\n'.join(part for part in (observation or '', error_message or '') if part)
+    if not text:
+        return False
+    if _CONTAINER_NOT_RUNNING_RE.search(text) or _NO_SUCH_CONTAINER_RE.search(text):
+        return True
+    text_lower = text.lower()
+    return 'exec format error' in text_lower or 'cannot connect to the docker daemon' in text_lower
 
 
 def check_sentinel(observation: str) -> Optional[str]:
@@ -180,13 +194,11 @@ def format_exec_observation(
     rc, timed_out, body = parse_exec_metadata(observation or '')
 
     if timed_out:
-        return (f'<returncode>{rc}</returncode>\n'
-                f'<exception>Command timed out.</exception>')
+        return f'<returncode>{rc}</returncode>\n<exception>Command timed out.</exception>'
 
     body_text = body or ''
     if len(body_text) < max_chars:
-        return (f'<returncode>{rc}</returncode>\n'
-                f'<output>\n{body_text.rstrip()}\n</output>')
+        return f'<returncode>{rc}</returncode>\n<output>\n{body_text.rstrip()}\n</output>'
 
     elided = len(body_text) - max_chars
     return (
@@ -202,6 +214,7 @@ __all__ = [
     'SUBMIT_SENTINEL',
     'check_sentinel',
     'format_exec_observation',
+    'is_terminal_sandbox_error',
     'parse_exec_metadata',
     'truncate_middle',
 ]

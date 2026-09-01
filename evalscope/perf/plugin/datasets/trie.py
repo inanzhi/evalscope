@@ -34,9 +34,10 @@ path and is not a bug.
 """
 
 import json
-import numpy as np
 import os
 from typing import Any, Dict, Iterator
+
+import numpy as np
 
 from evalscope.perf.arguments import Arguments
 from evalscope.perf.plugin.datasets.base import Conversation, Turn
@@ -75,11 +76,9 @@ class TrieReplayBase(RandomDatasetPlugin):
             )
 
     def _resolve_dataset_path(self) -> str:
-        if self.query_parameters.dataset_path:
+        if self.query_parameters.dataset_path and os.path.isfile(self.query_parameters.dataset_path):
             return self.query_parameters.dataset_path
-        from modelscope import dataset_snapshot_download
-        local_path = dataset_snapshot_download(_HUB_REPO, allow_patterns=[self.FILE_NAME])
-        path = os.path.join(local_path, self.FILE_NAME)
+        path = self.download_hub_file(dataset_id=_HUB_REPO, file_name=self.FILE_NAME)
         self.query_parameters.dataset_path = path
         return path
 
@@ -118,7 +117,8 @@ class TrieReplayBase(RandomDatasetPlugin):
         final_response_length = int(trace['final_assistant_response_length'])
 
         if not (
-            len(assistant_response_length) == num_turns and len(tool_call_output_length) == num_turns
+            len(assistant_response_length) == num_turns
+            and len(tool_call_output_length) == num_turns
             and len(tool_call_latency) == num_turns
         ):
             raise ValueError(
@@ -132,10 +132,7 @@ class TrieReplayBase(RandomDatasetPlugin):
         # Turn 0: initial user prompt
         turns.append(
             Turn(
-                messages=[{
-                    'role': 'user',
-                    'content': self._synth_prompt(input_prompt_length)
-                }],
+                messages=[{'role': 'user', 'content': self._synth_prompt(input_prompt_length)}],
                 max_tokens=int(assistant_response_length[0]) if num_turns > 0 else final_response_length,
                 tool_call_latency=None,
                 is_final=(num_turns == 0),
@@ -144,14 +141,16 @@ class TrieReplayBase(RandomDatasetPlugin):
 
         # Turns 1..num_turns: tool output + assistant response cap
         for i in range(num_turns):
-            is_last = (i == num_turns - 1)
-            next_max_tokens = (final_response_length if is_last else int(assistant_response_length[i + 1]))
+            is_last = i == num_turns - 1
+            next_max_tokens = final_response_length if is_last else int(assistant_response_length[i + 1])
             turns.append(
                 Turn(
-                    messages=[{
-                        'role': 'user',
-                        'content': self._synth_prompt(int(tool_call_output_length[i])),
-                    }],
+                    messages=[
+                        {
+                            'role': 'user',
+                            'content': self._synth_prompt(int(tool_call_output_length[i])),
+                        }
+                    ],
                     max_tokens=next_max_tokens,
                     tool_call_latency=float(tool_call_latency[i]),
                     is_final=is_last,
@@ -178,16 +177,19 @@ class TrieReplayBase(RandomDatasetPlugin):
 @register_dataset('trie_agentic_coding')
 class TrieAgenticCodingPlugin(TrieReplayBase):
     """Coding-agent traces (~8k context). Source: applied-compute/trie."""
+
     FILE_NAME = 'agentic_coding_8k.jsonl'
 
 
 @register_dataset('trie_code_qa')
 class TrieCodeQaPlugin(TrieReplayBase):
     """Code Q&A traces (~8k context). Source: applied-compute/trie."""
+
     FILE_NAME = 'code_qa_8k.jsonl'
 
 
 @register_dataset('trie_office_work')
 class TrieOfficeWorkPlugin(TrieReplayBase):
     """Office-work agent traces (~8k context). Source: applied-compute/trie."""
+
     FILE_NAME = 'office_work_8k.jsonl'

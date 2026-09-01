@@ -9,19 +9,20 @@ from evalscope.api.dataset import DatasetDict, Sample
 from evalscope.api.evaluator import TaskState
 from evalscope.api.filter import FilterEnsemble, build_filter_ensemble
 from evalscope.api.metric import AggScore, SampleScore
-from evalscope.api.mixin import LLMJudgeMixin, SandboxMixin
+from evalscope.api.mixin import LLMJudgeMixin
 from evalscope.api.model import Model
 from evalscope.report import Report
 from evalscope.utils.logger import get_logger
 
 if TYPE_CHECKING:
     from evalscope.api.benchmark import BenchmarkMeta
+    from evalscope.api.metric.semantics import MetricSelector
     from evalscope.config import TaskConfig
 
 logger = get_logger()
 
 
-class DataAdapter(LLMJudgeMixin, SandboxMixin, ABC):
+class DataAdapter(LLMJudgeMixin, ABC):
     """
     Data Adapter for the benchmark.
     """
@@ -38,17 +39,11 @@ class DataAdapter(LLMJudgeMixin, SandboxMixin, ABC):
         self.split_as_subset = False
         """Whether to use the split name as the dataset subsets"""
 
-        self.shuffle_choices = False
-        """Whether to shuffle the choices in the dataset"""
-
         self.use_batch_scoring = False
         """Whether to use batch scoring for metrics that support it, need to be enabled in the benchmark as well"""
 
         self.save_metadata = True
         """Whether to save metadata in the review result"""
-
-        self.add_aggregation_name = True
-        """Whether to add aggregation name in the report"""
 
         self.add_overall_metric = True
         """Whether to add overall metric in the report"""
@@ -73,6 +68,11 @@ class DataAdapter(LLMJudgeMixin, SandboxMixin, ABC):
         """Convert the benchmark metadata to a dictionary."""
         return self._benchmark_meta.to_string_dict()
 
+    @property
+    def benchmark_meta(self) -> 'BenchmarkMeta':
+        """Return the resolved benchmark metadata used by this adapter."""
+        return self._benchmark_meta
+
     @abstractmethod
     def load_dataset(self) -> DatasetDict:
         pass
@@ -86,8 +86,9 @@ class DataAdapter(LLMJudgeMixin, SandboxMixin, ABC):
         pass
 
     @abstractmethod
-    def batch_calculate_metrics(self, task_states: List[TaskState],
-                                sample_scores: List[SampleScore]) -> List[SampleScore]:
+    def batch_calculate_metrics(
+        self, task_states: List[TaskState], sample_scores: List[SampleScore]
+    ) -> List[SampleScore]:
         """Batch calculate metrics for a list of task states. Need to update sample_scores in place."""
         pass
 
@@ -157,6 +158,11 @@ class DataAdapter(LLMJudgeMixin, SandboxMixin, ABC):
         self._task_config.dataset_hub = value
 
     @property
+    def dataset_revision(self) -> Optional[str]:
+        """Return the resolved revision of the remote dataset source."""
+        return self._benchmark_meta.dataset_revision
+
+    @property
     def eval_type(self) -> str:
         """
         Return the evaluation type for the benchmark.
@@ -183,6 +189,15 @@ class DataAdapter(LLMJudgeMixin, SandboxMixin, ABC):
         Return the metric list of the benchmark.
         """
         return self._benchmark_meta.metric_list
+
+    @property
+    def primary_metric(self) -> Optional['MetricSelector']:
+        """
+        Return the structured selector declared as this benchmark's primary metric.
+
+        ``None`` for single-metric benchmarks, whose only metric is implicitly primary.
+        """
+        return self._benchmark_meta.primary_metric
 
     @property
     def default_subset(self) -> str:

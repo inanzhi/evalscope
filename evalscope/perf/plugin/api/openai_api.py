@@ -2,7 +2,7 @@ import json
 import math
 import os
 from collections import defaultdict
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, List, Union
 
 from evalscope.perf.arguments import Arguments
 from evalscope.perf.multi_turn_args import _sample_int_or_range
@@ -43,43 +43,48 @@ class OpenaiPlugin(DefaultApiPlugin):
             param (QueryParameters): The query parameters.
 
         Raises:
-            Exception: NotImplemented
+            ValueError: If the messages cannot be tokenized on the --tokenize-prompt path.
+            FileNotFoundError: If the `--query-template` file does not exist.
+            json.JSONDecodeError: If `--query-template` is not valid JSON.
 
         Returns:
-            Dict: The request body. None if prompt format is error.
+            Dict: The request body.
         """
         param = param or self.param
-        try:
-            # --tokenize-prompt path: convert messages/text/token-IDs to a token-ID list
-            # and send as a /v1/completions request with `prompt=[int, ...]`.
-            if param.tokenize_prompt and not isinstance(messages, dict):
-                token_ids = self._messages_to_token_ids(messages, param)
-                query = {'prompt': token_ids}
-                return self.__compose_query_from_parameter(query, param)
+        # Failures below are configuration errors (unusable tokenizer, malformed
+        # --query-template) that are identical for every request, so they are left
+        # to propagate and abort the run instead of degrading into a None request.
 
-            if param.query_template is not None:
-                if param.query_template.startswith('@'):
-                    file_path = param.query_template[1:]
-                    if os.path.exists(file_path):
-                        with open(file_path, 'r') as file:
-                            query = json.load(file)
-                    else:
-                        raise FileNotFoundError(f'{file_path}')
-                else:
-                    query = json.loads(param.query_template)
-
-                # replace template messages with input messages.
-                query['messages'] = messages
-            elif isinstance(messages, dict):
-                query = messages
-            elif isinstance(messages, str):
-                query = {'prompt': messages}
-            else:
-                query = {'messages': messages}
+        # --tokenize-prompt path: convert messages/text/token-IDs to a token-ID list
+        # and send as a /v1/completions request with `prompt=[int, ...]`.
+        if param.tokenize_prompt and not isinstance(messages, dict):
+            token_ids = self._messages_to_token_ids(messages, param)
+            query = {'prompt': token_ids}
             return self.__compose_query_from_parameter(query, param)
-        except Exception as e:
-            logger.exception(e)
-            return None
+
+        if param.query_template is not None:
+            if param.query_template.startswith('@'):
+                file_path = param.query_template[1:]
+                if os.path.exists(file_path):
+                    with open(file_path, 'r', encoding='utf-8') as file:
+                        query = json.load(file)
+                else:
+                    raise FileNotFoundError(f'{file_path}')
+            else:
+                query = json.loads(param.query_template)
+
+            # replace template messages with input messages.
+            query['messages'] = messages
+        elif isinstance(messages, dict):
+            # A complete request body (e.g. a line_by_line JSON object). Honor the
+            # user-provided fields and only fill in generation params that are
+            # missing, so CLI-level defaults do not silently overwrite the body.
+            return self.__compose_query_from_parameter(dict(messages), param, preserve_existing=True)
+        elif isinstance(messages, str):
+            query = {'prompt': messages}
+        else:
+            query = {'messages': messages}
+        return self.__compose_query_from_parameter(query, param)
 
     def _messages_to_token_ids(self, messages: Union[List[Dict], str, List[int]], param: Arguments) -> List[int]:
         """Convert messages / plain text / existing token IDs to a flat token-ID list.
@@ -97,8 +102,7 @@ class OpenaiPlugin(DefaultApiPlugin):
             List[int]: Flat list of token IDs ready to be sent as `prompt`.
         """
         if self.tokenizer is None:
-            raise ValueError('A tokenizer is required for --tokenize-prompt. '
-                             'Please specify --tokenizer-path.')
+            raise ValueError('A tokenizer is required for --tokenize-prompt. Please specify --tokenizer-path.')
         # Already token IDs (random dataset fast path)
         if isinstance(messages, list) and messages and isinstance(messages[0], int):
             return messages
@@ -112,39 +116,55 @@ class OpenaiPlugin(DefaultApiPlugin):
         logger.warning(f'_messages_to_token_ids: unexpected messages type {type(messages)}, returning []')
         return []
 
-    def __compose_query_from_parameter(self, payload: Dict, param: Arguments):
-        payload['model'] = param.model
+    def __compose_query_from_parameter(self, payload: Dict, param: Arguments, preserve_existing: bool = False):
+
+        def _set(key: str, value: Any) -> None:
+            if preserve_existing:
+                payload.setdefault(key, value)
+            else:
+                payload[key] = value
+
+        if param.model is not None:
+            _set('model', param.model)
         if param.max_completion_tokens is not None:
-            payload['max_completion_tokens'] = _sample_int_or_range(param.max_completion_tokens)
+            _set('max_completion_tokens', _sample_int_or_range(param.max_completion_tokens))
         elif param.max_tokens is not None:
-            payload['max_tokens'] = _sample_int_or_range(param.max_tokens)
+            _set('max_tokens', _sample_int_or_range(param.max_tokens))
         if param.min_tokens is not None:
-            payload['min_tokens'] = param.min_tokens
+            _set('min_tokens', param.min_tokens)
         if param.frequency_penalty is not None:
-            payload['frequency_penalty'] = param.frequency_penalty
+            _set('frequency_penalty', param.frequency_penalty)
         if param.repetition_penalty is not None:
-            payload['repetition_penalty'] = param.repetition_penalty
+            _set('repetition_penalty', param.repetition_penalty)
         if param.logprobs is not None:
-            payload['logprobs'] = param.logprobs
+            _set('logprobs', param.logprobs)
         if param.n_choices is not None:
-            payload['n'] = param.n_choices
+            _set('n', param.n_choices)
         if param.seed is not None:
-            payload['seed'] = param.seed
+            _set('seed', param.seed)
         if param.stop is not None:
-            payload['stop'] = param.stop
-        if param.stream is not None and param.stream:
-            payload['stream'] = param.stream
-            payload['stream_options'] = {'include_usage': True}
+            _set('stop', param.stop)
+        if param.stream is not None:
+            _set('stream', param.stream)
+        if payload.get('stream') is True:
+            if not preserve_existing or 'stream_options' not in payload:
+                payload['stream_options'] = {'include_usage': True}
+        else:
+            payload.pop('stream_options', None)
         if param.stop_token_ids is not None:
-            payload['stop_token_ids'] = param.stop_token_ids
+            _set('stop_token_ids', param.stop_token_ids)
         if param.temperature is not None:
-            payload['temperature'] = param.temperature
+            _set('temperature', param.temperature)
         if param.top_p is not None:
-            payload['top_p'] = param.top_p
+            _set('top_p', param.top_p)
         if param.top_k is not None:
-            payload['top_k'] = param.top_k
+            _set('top_k', param.top_k)
         if param.extra_args is not None:
-            payload.update(param.extra_args)
+            if preserve_existing:
+                for k, v in param.extra_args.items():
+                    payload.setdefault(k, v)
+            else:
+                payload.update(param.extra_args)
         return payload
 
     def parse_responses(self, responses: List[Dict], request: str = None, **kwargs) -> tuple[int, int]:
@@ -167,9 +187,19 @@ class OpenaiPlugin(DefaultApiPlugin):
             # when stream, the last response is the full usage
             # when non-stream, the last response is the first response
             last_response_js = responses[-1]
-            if 'usage' in last_response_js and last_response_js['usage']:
-                input_tokens = last_response_js['usage']['prompt_tokens']
-                output_tokens = last_response_js['usage']['completion_tokens']
+            usage = last_response_js.get('usage') if isinstance(last_response_js, dict) else None
+            if isinstance(usage, dict) and ('prompt_tokens' in usage or 'completion_tokens' in usage):
+                # Use .get() with safe defaults so a missing or null
+                # `completion_tokens` does not erase a valid `prompt_tokens`,
+                # and vice versa. Some OpenAI-compatible endpoints (e.g.
+                # Vertex AI's Gemini 2.5 reasoning mode) omit
+                # `completion_tokens` from the usage block when `max_tokens`
+                # is reached with only reasoning tokens emitted and no
+                # surface text. Bracket access used to raise KeyError, which
+                # the broad except caught and turned into (0, 0), silently
+                # discarding the valid `prompt_tokens`.
+                input_tokens = usage.get('prompt_tokens') or 0
+                output_tokens = usage.get('completion_tokens') or 0
                 return input_tokens, output_tokens
         except Exception as e:
             logger.error(f'Failed to parse usage from response: {e}. Response: {responses}')
@@ -191,18 +221,18 @@ class OpenaiPlugin(DefaultApiPlugin):
             return
         if response['object'] == 'chat.completion':
             for choice in response['choices']:
-                delta_contents[choice['index']] = [choice['message']['content']]
+                delta_contents[choice['index']] = [choice['message'].get('content') or '']
         elif response['object'] == 'text_completion':
             for choice in response['choices']:
                 if 'text' in choice and 'index' in choice:
-                    delta_contents[choice['index']].append(choice['text'])
+                    delta_contents[choice['index']].append(choice.get('text') or '')
         elif response['object'] == 'chat.completion.chunk':
             for choice in response['choices']:
                 if 'delta' in choice and 'index' in choice:
                     delta = choice['delta']
                     idx = choice['index']
                     if 'content' in delta:
-                        delta_contents[idx].append(delta['content'])
+                        delta_contents[idx].append(delta.get('content') or '')
 
     def __process_no_object(self, response, delta_contents):
         #  assume the response is a single choice
@@ -213,9 +243,9 @@ class OpenaiPlugin(DefaultApiPlugin):
                 delta = choice['delta']
                 idx = choice['index']
                 if 'content' in delta:
-                    delta_contents[idx].append(delta['content'])
+                    delta_contents[idx].append(delta.get('content') or '')
             else:
-                delta_contents[choice['index']] = [choice['message']['content']]
+                delta_contents[choice['index']] = [choice['message'].get('content') or '']
 
     def __calculate_tokens_from_content(self, request, content):
         input_tokens = output_tokens = 0
@@ -273,9 +303,8 @@ class OpenaiPlugin(DefaultApiPlugin):
                             image = base64_to_PIL(image_base64)
                             # Use math.ceil for more accurate token count when image dimensions
                             # aren't perfectly divisible by patch size
-                            n_patches = (
-                                math.ceil(image.height / self.param.image_patch_size)
-                                * math.ceil(image.width / self.param.image_patch_size)
+                            n_patches = math.ceil(image.height / self.param.image_patch_size) * math.ceil(
+                                image.width / self.param.image_patch_size
                             )
                             input_tokens += n_patches
                         except Exception as e:

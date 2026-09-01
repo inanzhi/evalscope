@@ -30,12 +30,14 @@ Example (share_gpt_*_multi_turn):
 """
 
 import json
-import numpy as np
 import os
 from typing import Any, Dict, Iterator, List
 
+import numpy as np
+
 from evalscope.perf.arguments import Arguments
 from evalscope.perf.plugin.datasets.base import Conversation, Turn
+from evalscope.perf.plugin.datasets.dataset_args import MultiTurnDatasetArgs
 from evalscope.perf.plugin.datasets.random_dataset import RandomDatasetPlugin
 from evalscope.perf.plugin.datasets.share_gpt import ShareGPTDatasetPluginBase
 from evalscope.perf.plugin.registry import register_dataset
@@ -60,6 +62,8 @@ class RandomMultiTurnDatasetPlugin(RandomDatasetPlugin):
     guarantees enough turn budget for the benchmark runner).
     """
 
+    args_schema = MultiTurnDatasetArgs
+
     def __init__(self, query_parameters: Arguments):
         super().__init__(query_parameters)
 
@@ -74,8 +78,7 @@ class RandomMultiTurnDatasetPlugin(RandomDatasetPlugin):
             )
         if self.max_turns_per_conv < self.min_turns_per_conv:
             raise ValueError(
-                f'--max-turns ({self.max_turns_per_conv}) must be >= '
-                f'--min-turns ({self.min_turns_per_conv}).'
+                f'--max-turns ({self.max_turns_per_conv}) must be >= --min-turns ({self.min_turns_per_conv}).'
             )
 
     def build_messages(self) -> Iterator[Conversation]:
@@ -122,8 +125,9 @@ class RandomMultiTurnDatasetPlugin(RandomDatasetPlugin):
         # Pre-sample all input lengths and offsets at once for efficiency
         input_lens = np.random.randint(min_prompt_length, max_prompt_length + 1, size=total_turns)
         global_offset = self.query_parameters.dataset_offset
-        offsets = (np.random.randint(0, len(self.allowed_tokens), size=total_turns)
-                   + global_offset) % len(self.allowed_tokens)
+        offsets = (np.random.randint(0, len(self.allowed_tokens), size=total_turns) + global_offset) % len(
+            self.allowed_tokens
+        )
 
         turn_slot = 0
         for conv_idx in range(n_convs):
@@ -149,6 +153,8 @@ class RandomMultiTurnDatasetPlugin(RandomDatasetPlugin):
 
 class ShareGPTMultiTurnBase(ShareGPTDatasetPluginBase):
     """ShareGPT plugin that preserves the full user+assistant alternation."""
+
+    args_schema = MultiTurnDatasetArgs
 
     def _convert_to_openai_messages_full(self, conversation: List[Dict]) -> Conversation:
         """Convert swift/sharegpt format to a ``Conversation`` (``List[Turn]``).
@@ -176,19 +182,16 @@ class ShareGPTMultiTurnBase(ShareGPTDatasetPluginBase):
             humans.append(human)
 
         return [
-            Turn(messages=[{
-                'role': 'user',
-                'content': h
-            }], is_final=(i == len(humans) - 1)) for i, h in enumerate(humans)
+            Turn(messages=[{'role': 'user', 'content': h}], is_final=(i == len(humans) - 1))
+            for i, h in enumerate(humans)
         ]
 
     def build_messages(self) -> Iterator[Conversation]:
         """Yield full conversations as ``Conversation`` (one ``Turn`` per user turn)."""
-        if not self.query_parameters.dataset_path:
-            from modelscope import dataset_snapshot_download
-
-            local_path = dataset_snapshot_download('swift/sharegpt', allow_patterns=[self.FILE_NAME])
-            self.query_parameters.dataset_path = os.path.join(local_path, self.FILE_NAME)
+        if not self.query_parameters.dataset_path or os.path.isdir(self.query_parameters.dataset_path):
+            self.query_parameters.dataset_path = self.download_hub_file(
+                dataset_id='swift/sharegpt', file_name=self.FILE_NAME
+            )
 
         for item in self.dataset_line_by_line(self.query_parameters.dataset_path):
             item = json.loads(item)

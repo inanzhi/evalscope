@@ -30,6 +30,8 @@ class Metrics:
     TOTAL_REQUESTS = 'Total Requests'
     SUCCEED_REQUESTS = 'Success Requests'
     FAILED_REQUESTS = 'Failed Requests'
+    STREAM_REQUESTS = 'Stream Requests'
+    NON_STREAM_REQUESTS = 'Non-Stream Requests'
     REQUEST_THROUGHPUT = 'Req Throughput (req/s)'
     AVERAGE_LATENCY = 'Avg Latency (s)'
     AVERAGE_INPUT_TOKENS_PER_REQUEST = 'Avg Input Tokens'
@@ -37,9 +39,9 @@ class Metrics:
     # LLM-specific
     OUTPUT_TOKEN_THROUGHPUT = 'Output Throughput (tok/s)'
     TOTAL_TOKEN_THROUGHPUT = 'Total Throughput (tok/s)'
-    AVERAGE_TIME_TO_FIRST_TOKEN = 'TTFT (ms)'
-    AVERAGE_TIME_PER_OUTPUT_TOKEN = 'TPOT (ms)'
-    AVERAGE_INTER_TOKEN_LATENCY = 'ITL (ms)'
+    AVERAGE_TIME_TO_FIRST_TOKEN = 'Avg TTFT (ms)'
+    AVERAGE_TIME_PER_OUTPUT_TOKEN = 'Avg TPOT (ms)'
+    AVERAGE_INTER_TOKEN_LATENCY = 'Avg ITL (ms)'
     AVERAGE_OUTPUT_TOKENS_PER_REQUEST = 'Avg Output Tokens'
 
     # Embedding / Rerank-specific
@@ -48,11 +50,11 @@ class Metrics:
     # Multi-turn specific
     AVERAGE_INPUT_TURNS_PER_REQUEST = 'Avg Turns/Request'
     AVERAGE_CACHED_PERCENT = 'KV Cache Hit Rate (%)'
-    AVERAGE_FIRST_TURN_TTFT = 'First-Turn TTFT (ms)'
-    AVERAGE_SUBSEQUENT_TURN_TTFT = 'Subsequent-Turn TTFT (ms)'
+    AVERAGE_FIRST_TURN_TTFT = 'Avg First-Turn TTFT (ms)'
+    AVERAGE_SUBSEQUENT_TURN_TTFT = 'Avg Subsequent-Turn TTFT (ms)'
 
     # Speculative decoding specific
-    AVERAGE_DECODED_TOKENS_PER_ITER = 'Decoded Tok/Iter'
+    AVERAGE_DECODED_TOKENS_PER_ITER = 'Avg Decoded Tok/Iter'
     APPROX_SPECULATIVE_ACCEPTANCE_RATE = 'Spec. Accept Rate'
 
     @staticmethod

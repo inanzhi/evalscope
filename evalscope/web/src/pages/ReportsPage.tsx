@@ -1,24 +1,41 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Eye, FolderOpen, GitCompareArrows, Loader2, ScanSearch } from 'lucide-react'
 import { useLocale } from '@/contexts/LocaleContext'
-import { useReports } from '@/contexts/ReportsContext'
+import { datasetLabel } from '@/domain/report/primaryMetrics'
+import { formatReportRef, parseReportRef, reportRefFromSummary } from '@/domain/report/reportRef'
+import { useCompareSelection, useScan } from '@/contexts/ReportsContext'
+import { useAsyncResource } from '@/hooks/useAsyncResource'
+import { useBatchDelete } from '@/hooks/useBatchDelete'
 import * as reportsApi from '@/api/reports'
 import type { ListReportsResponse, ReportSummary } from '@/api/types'
-import Breadcrumb from '@/components/ui/Breadcrumb'
-import Button from '@/components/ui/Button'
 import Skeleton from '@/components/ui/Skeleton'
+import SelectionCheckbox from '@/components/ui/SelectionCheckbox'
+import Pagination from '@/components/ui/Pagination'
+import ErrorAlert from '@/components/ui/ErrorAlert'
+import EmptyStateSystem, {
+  type EmptyReason,
+  type ResolvedEmptyStateAction,
+} from '@/components/common/EmptyStateSystem'
 import ReportFiltersBar, { type ReportFilters } from '@/components/reports/ReportFilters'
 import ReportCard from '@/components/reports/ReportCard'
+import ReportsTable from '@/components/reports/ReportsTable'
+import SelectionTray from '@/components/reports/SelectionTray'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
+import {
+  addToSelection,
+  preserveSelectionAcrossReorder,
+} from '@/domain/compare/selection'
 
 const PAGE_SIZE = 20
+
+/** Stable placeholders so an unresolved listing keeps a single identity. */
+const EMPTY_REPORTS: ReportSummary[] = []
+const EMPTY_FACETS: string[] = []
 
 const defaultFilters: ReportFilters = {
   search: '',
   models: [],
   datasets: [],
-  scoreMin: 0,
-  scoreMax: 1,
   sortBy: 'time',
   sortOrder: 'desc',
 }
@@ -28,25 +45,12 @@ export default function ReportsPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
 
-  const {
-    rootPath,
-    setRootPath,
-    selectedForCompare,
-    toggleSelectForCompare,
-    setCompareSelection,
-    clearCompareSelection,
-  } = useReports()
+  const { rootPath, scanToken, setRootPath } = useScan()
+  const { selectedForCompare, setCompareSelection, clearCompareSelection } = useCompareSelection()
 
   // ---- Local state ----
   const [filters, setFilters] = useState<ReportFilters>(defaultFilters)
   const [page, setPage] = useState(1)
-  const [reports, setReports] = useState<ReportSummary[]>([])
-  const [total, setTotal] = useState(0)
-  const [availableModels, setAvailableModels] = useState<string[]>([])
-  const [availableDatasets, setAvailableDatasets] = useState<string[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [hasScanned, setHasScanned] = useState(false)
 
   // Debounce search
   const [debouncedSearch, setDebouncedSearch] = useState('')
@@ -57,116 +61,115 @@ export default function ReportsPage() {
     return () => clearTimeout(searchTimer.current)
   }, [filters.search])
 
-  // Fetch reports when filters/page change
-  const fetchReports = useCallback(async () => {
-    if (!hasScanned) return
-    setLoading(true)
-    setError(null)
-    try {
-      const res: ListReportsResponse = await reportsApi.listReports({
-        rootPath,
-        search: debouncedSearch || undefined,
-        models: filters.models.length ? filters.models : undefined,
-        datasets: filters.datasets.length ? filters.datasets : undefined,
-        scoreMin: filters.scoreMin > 0 ? filters.scoreMin : undefined,
-        scoreMax: filters.scoreMax < 1 ? filters.scoreMax : undefined,
-        sortBy: filters.sortBy,
-        sortOrder: filters.sortOrder,
-        page,
-        pageSize: PAGE_SIZE,
-      })
-      setReports(res.reports)
-      setTotal(res.total)
-      setAvailableModels(res.filters.available_models)
-      setAvailableDatasets(res.filters.available_datasets)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load reports')
-    } finally {
-      setLoading(false)
-    }
-  }, [rootPath, debouncedSearch, filters.models, filters.datasets, filters.scoreMin, filters.scoreMax, filters.sortBy, filters.sortOrder, page, hasScanned])
-
-  useEffect(() => {
-    fetchReports()
-  }, [fetchReports])
-
-  // Reset page on filter change
-  useEffect(() => {
-    setPage(1)
-  }, [debouncedSearch, filters.models, filters.datasets, filters.scoreMin, filters.scoreMax, filters.sortBy, filters.sortOrder])
-
-  const handleScan = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    setHasScanned(true)
-    try {
-      const res = await reportsApi.listReports({
-        rootPath,
-        page: 1,
-        pageSize: PAGE_SIZE,
-        sortBy: filters.sortBy,
-        sortOrder: filters.sortOrder,
-      })
-      setReports(res.reports)
-      setTotal(res.total)
-      setAvailableModels(res.filters.available_models)
-      setAvailableDatasets(res.filters.available_datasets)
-      setPage(1)
-      setFilters(defaultFilters)
-      clearCompareSelection()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Scan failed')
-    } finally {
-      setLoading(false)
-    }
-  }, [rootPath, filters.sortBy, filters.sortOrder, clearCompareSelection])
-
   // Sync root_path from URL on mount (e.g. when navigating back from detail page)
   useEffect(() => {
     const urlRoot = searchParams.get('root_path')
-    if (urlRoot) {
-      setRootPath(urlRoot)
-    }
+    if (urlRoot) setRootPath(urlRoot)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-scan on mount if rootPath is available
-  const hasAutoScanned = useRef(false)
+  // A new global scan (or root change) resets filters/pagination/compare.
   useEffect(() => {
-    const urlRoot = searchParams.get('root_path')
-    const effectiveRoot = urlRoot || rootPath
-    if (effectiveRoot && !hasScanned && !hasAutoScanned.current) {
-      hasAutoScanned.current = true
-      handleScan()
+    const reset = () => {
+      setPage(1)
+      setFilters(defaultFilters)
+      clearCompareSelection()
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    reset()
+  }, [rootPath, scanToken]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset to the first page whenever the user changes a filter.
+  const handleFiltersChange = useCallback((next: ReportFilters) => {
+    setFilters(next)
+    setPage(1)
+  }, [])
+
+  // Fetch reports on root/scan/filter/page change. When any dependency changes
+  // the previous in-flight request is aborted; its late/aborted response is
+  // dropped so only the newest request updates the UI.
+  const listing = useAsyncResource(
+    (signal): Promise<ListReportsResponse> => reportsApi.listReports({
+      rootPath,
+      search: debouncedSearch || undefined,
+      models: filters.models.length ? filters.models : undefined,
+      datasets: filters.datasets.length ? filters.datasets : undefined,
+      sortBy: filters.sortBy,
+      sortOrder: filters.sortOrder,
+      page,
+      pageSize: PAGE_SIZE,
+      signal,
+    }),
+    [
+      rootPath,
+      scanToken,
+      debouncedSearch,
+      filters.models,
+      filters.datasets,
+      filters.sortBy,
+      filters.sortOrder,
+      page,
+    ],
+    { enabled: Boolean(rootPath), fallbackMessage: t('common.loadError') },
+  )
+
+  const reports = listing.data?.reports ?? EMPTY_REPORTS
+  const total = listing.data?.total ?? 0
+  const availableModels = listing.data?.filters.available_models ?? EMPTY_FACETS
+  const availableDatasets = listing.data?.filters.available_datasets ?? EMPTY_FACETS
+  const loading = listing.loading
+  const hasLoaded = listing.data !== undefined || Boolean(listing.error)
 
   // ---- Selection helpers ----
-  const currentPageNames = useMemo(() => reports.map((r) => r.name), [reports])
-
+  const currentPageNames = useMemo(
+    () => reports.map((r) => formatReportRef(reportRefFromSummary(r))),
+    [reports],
+  )
   const allSelected = currentPageNames.length > 0 && currentPageNames.every((n) => selectedForCompare.includes(n))
+
+  // Selection is stored by run name in context, so it is naturally independent
+  // of the current sort/filter order. Reconcile it against the freshly ordered
+  // list so the tray follows the on-screen order while never dropping a run
+  // that was filtered off the current page.
+  const orderedSelection = useMemo(
+    () => preserveSelectionAcrossReorder(selectedForCompare, currentPageNames),
+    [selectedForCompare, currentPageNames],
+  )
+
+  // Selection is unbounded: score comparison uses the full set, while the
+  // prediction tab derives its own three-report subset.
+  const handleToggleSelect = useCallback(
+    (name: string) => {
+      if (selectedForCompare.includes(name)) {
+        setCompareSelection(selectedForCompare.filter((n) => n !== name))
+        return
+      }
+      setCompareSelection(addToSelection(selectedForCompare, name))
+    },
+    [selectedForCompare, setCompareSelection],
+  )
 
   const handleSelectAll = useCallback(() => {
     if (allSelected) {
-      // Deselect current page
       setCompareSelection(selectedForCompare.filter((n) => !currentPageNames.includes(n)))
-    } else {
-      // Select current page (merge with existing)
-      const merged = new Set([...selectedForCompare, ...currentPageNames])
-      setCompareSelection(Array.from(merged))
+      return
     }
+    setCompareSelection(currentPageNames.reduce(addToSelection, selectedForCompare))
   }, [allSelected, selectedForCompare, currentPageNames, setCompareSelection])
 
   const handleCardClick = useCallback(
-    (name: string) => {
-      // Navigate to detail — use the report load route or a detail page
-      navigate(`/reports/${encodeURIComponent(name)}?root_path=${encodeURIComponent(rootPath)}`)
+    (ref: string) => {
+      const { runId, modelId } = parseReportRef(ref)
+      navigate(
+        `/reports/${encodeURIComponent(runId)}/${encodeURIComponent(modelId)}?root_path=${encodeURIComponent(rootPath)}`,
+      )
     },
     [navigate, rootPath],
   )
 
   const handleCompare = useCallback(() => {
     if (selectedForCompare.length >= 2) {
-      navigate(`/compare?reports=${selectedForCompare.slice(0, 3).join(';')}&root_path=${encodeURIComponent(rootPath)}`)
+      const params = new URLSearchParams({ root_path: rootPath })
+      for (const ref of selectedForCompare) params.append('report', ref)
+      navigate(`/compare?${params.toString()}`)
     }
   }, [selectedForCompare, navigate, rootPath])
 
@@ -177,215 +180,156 @@ export default function ReportsPage() {
     }
   }, [selectedForCompare, rootPath])
 
-  // Pagination
+  const reloadListing = listing.reload
+  const deletion = useBatchDelete<string>({
+    items: selectedForCompare,
+    deleteItem: (ref) => reportsApi.deleteReport(rootPath, ref),
+    onSettled: setCompareSelection,
+    reload: reloadListing,
+    formatError: (msg) => t('reports.deleteFailed', { msg }),
+  })
+
+  // Deleting reports its own failure; a load failure comes from the resource.
+  const error = deletion.error ?? (listing.error || null)
+
+  const pendingDeleteItems = useMemo(
+    () =>
+      selectedForCompare.map((ref) => {
+        const report = reports.find((r) => formatReportRef(reportRefFromSummary(r)) === ref)
+        if (!report) return ref
+        return `${report.model_name} · ${datasetLabel(report)}`
+      }),
+    [selectedForCompare, reports],
+  )
+
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
+  // Distinguish the three empty-state reasons: a load failure, an
+  // active-filter miss, or a genuinely empty directory.
+  const hasActiveFilters = useMemo(
+    () =>
+      filters.search.trim() !== '' ||
+      filters.models.length > 0 ||
+      filters.datasets.length > 0,
+    [filters],
+  )
+  const emptyReason: EmptyReason = error ? 'load-error' : hasActiveFilters ? 'no-match' : 'no-data'
+
+  // In-view recovery for retry / clear-filters (routed via sentinel targets);
+  // other actions fall through to real navigation.
+  const handleEmptyAction = useCallback((action: ResolvedEmptyStateAction) => {
+    if (action.navigateTo === '#retry') {
+      reloadListing()
+      return true
+    }
+    if (action.navigateTo === '#clear-filters') {
+      setFilters(defaultFilters)
+      setPage(1)
+      return true
+    }
+    return false
+  }, [reloadListing])
+
   return (
-    <div className="page-enter flex flex-col gap-5">
-      {/* Breadcrumb */}
-      <Breadcrumb items={[{ label: t('reports.title') }]} />
-
-      {/* Path bar */}
-      <div className="flex items-center gap-2">
-        <FolderOpen size={16} className="text-[var(--text-muted)] shrink-0" />
-        <input
-          type="text"
-          value={rootPath}
-          onChange={(e) => setRootPath(e.target.value)}
-          className="flex-1 px-3 py-2 text-sm rounded-[var(--radius-sm)] bg-[var(--bg-deep)] border border-[var(--border)] text-[var(--text)] placeholder:text-[var(--text-dim)] focus:outline-none focus:border-[var(--accent)] transition-all duration-[var(--transition)]"
-          placeholder={t('reports.pathLabel')}
-        />
-        <Button onClick={handleScan} disabled={loading} size="md">
-          {loading ? (
-            <>
-              <Loader2 size={14} className="animate-spin" />
-              {t('reports.scanning')}
-            </>
-          ) : (
-            <>
-              <ScanSearch size={14} />
-              {t('reports.scan')}
-            </>
-          )}
-        </Button>
-      </div>
-
+    <div className="page-enter mx-auto flex w-full max-w-7xl flex-col gap-5">
       {/* Filters */}
-      {hasScanned && (
-        <ReportFiltersBar
-          filters={filters}
-          availableModels={availableModels}
-          availableDatasets={availableDatasets}
-          onChange={setFilters}
-        />
-      )}
-
-      {/* Action bar */}
-      {hasScanned && reports.length > 0 && (
-        <div className="flex items-center gap-3 flex-wrap">
-          {/* Select-all checkbox */}
-          <button
-            type="button"
-            onClick={handleSelectAll}
-            className="flex items-center gap-2 text-sm text-[var(--text-muted)] cursor-pointer hover:text-[var(--text)] transition-colors"
-          >
-            <span
-              role="checkbox"
-              aria-checked={allSelected}
-              className="w-4.5 h-4.5 rounded-[var(--radius-xs)] border-2 flex items-center justify-center transition-all duration-150 shrink-0"
-              style={{
-                borderColor: allSelected ? 'var(--accent)' : 'var(--border-strong)',
-                background: allSelected ? 'var(--accent)' : 'transparent',
-              }}
-            >
-              {allSelected && (
-                <svg
-                  width="10"
-                  height="10"
-                  viewBox="0 0 12 12"
-                  fill="none"
-                  stroke="white"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <polyline points="2,6 5,9 10,3" />
-                </svg>
-              )}
-            </span>
-            {t('reports.selectAll')}
-          </button>
-
-          {selectedForCompare.length > 0 && (
-            <span className="text-xs text-[var(--text-muted)]">
-              {selectedForCompare.length} {t('reports.selected')}
-              {selectedForCompare.length > 3 && (
-                <span className="ml-1 text-[var(--warning-color)]">{t('compare.maxThreeSelected')}</span>
-              )}
-            </span>
-          )}
-
-          <div className="flex items-center gap-2 ml-auto">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={selectedForCompare.length < 2}
-              onClick={handleCompare}
-            >
-              <GitCompareArrows size={14} />
-              {t('reports.compare')}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={selectedForCompare.length !== 1}
-              onClick={handleViewHtml}
-            >
-              <Eye size={14} />
-              {t('reports.viewHtml')}
-            </Button>
-          </div>
-        </div>
-      )}
+      <ReportFiltersBar
+        filters={filters}
+        availableModels={availableModels}
+        availableDatasets={availableDatasets}
+        onChange={handleFiltersChange}
+      />
 
       {/* Error */}
       {error && (
-        <div className="px-4 py-3 rounded-[var(--radius)] bg-[var(--danger-bg)] border border-[var(--danger-border)] text-sm text-[var(--danger)]">
-          {error}
-        </div>
+        <ErrorAlert>{error}</ErrorAlert>
       )}
 
       {/* Content */}
-      {loading && !hasScanned ? null : loading ? (
+      {loading ? (
         <div className="flex flex-col gap-2">
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} height={64} className="rounded-[var(--radius)]" />
           ))}
         </div>
-      ) : !hasScanned ? (
-        <EmptyState icon={<ScanSearch size={40} />} title={t('reports.noReports')} subtitle={t('reports.scanFirst')} />
       ) : reports.length === 0 ? (
-        <EmptyState icon={<ScanSearch size={40} />} title={t('reports.noReports')} subtitle={t('reports.scanFirst')} />
-      ) : (
-        <div className="flex flex-col gap-2">
-          {reports.map((report) => (
-            <ReportCard
-              key={report.name}
-              report={report}
-              selected={selectedForCompare.includes(report.name)}
-              onSelect={toggleSelectForCompare}
-              onClick={handleCardClick}
-            />
-          ))}
+        <div className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--bg-card)]">
+          <EmptyStateSystem
+            reason={emptyReason}
+            context={{
+              view: 'evaluations',
+              retryTo: '#retry',
+              clearFiltersTo: '#clear-filters',
+            }}
+            hint={emptyReason === 'no-data' && hasLoaded ? t('reports.scanFirst') : undefined}
+            onAction={handleEmptyAction}
+          />
         </div>
+      ) : (
+        <>
+          {/* Desktop (>=1024px): tabular view with fixed, ordered columns. */}
+          <div className="hidden lg:block">
+            <ReportsTable
+              reports={reports}
+              selected={selectedForCompare}
+              allSelected={allSelected}
+              onToggleSelectAll={handleSelectAll}
+              onToggleSelect={handleToggleSelect}
+              onRowClick={handleCardClick}
+            />
+          </div>
+
+          {/* Narrow (<1024px): card view with fields consistent with the table. */}
+          <div className="flex flex-col gap-2 lg:hidden">
+            <SelectionCheckbox
+              checked={allSelected}
+              label={t('reports.selectAll')}
+              onClick={handleSelectAll}
+              className="w-fit text-sm text-[var(--text-muted)] transition-colors hover:text-[var(--text)]"
+            >
+              {t('reports.selectAll')}
+            </SelectionCheckbox>
+            {reports.map((report) => {
+              const ref = formatReportRef(reportRefFromSummary(report))
+              return (
+                <ReportCard
+                  key={ref}
+                  report={report}
+                  selected={selectedForCompare.includes(ref)}
+                  onSelect={handleToggleSelect}
+                  onClick={handleCardClick}
+                />
+              )
+            })}
+          </div>
+        </>
       )}
 
       {/* Pagination */}
-      {hasScanned && totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2 pt-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={page <= 1}
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-          >
-            ←
-          </Button>
-          {Array.from({ length: totalPages }, (_, i) => i + 1)
-            .filter((p) => p === 1 || p === totalPages || Math.abs(p - page) <= 2)
-            .reduce<(number | 'ellipsis')[]>((acc, p, idx, arr) => {
-              if (idx > 0 && p - (arr[idx - 1] as number) > 1) acc.push('ellipsis')
-              acc.push(p)
-              return acc
-            }, [])
-            .map((item, idx) =>
-              item === 'ellipsis' ? (
-                // text-dim allowed: decorative pagination ellipsis (DESIGN.md §Text)
-                <span key={`e${idx}`} className="px-1 text-[var(--text-dim)]">
-                  ...
-                </span>
-              ) : (
-                <Button
-                  key={item}
-                  variant={item === page ? 'primary' : 'ghost'}
-                  size="sm"
-                  onClick={() => setPage(item as number)}
-                  className="!min-w-[32px]"
-                >
-                  {item}
-                </Button>
-              ),
-            )}
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={page >= totalPages}
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-          >
-            →
-          </Button>
-        </div>
-      )}
-    </div>
-  )
-}
+      <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
 
-// ---- Internal EmptyState component ----
-function EmptyState({
-  icon,
-  title,
-  subtitle,
-}: {
-  icon: ReactNode
-  title: string
-  subtitle: string
-}) {
-  return (
-    <div className="flex flex-col items-center justify-center py-16 gap-3">
-      {/* text-dim allowed: empty-state icon (DESIGN.md §Text) */}
-      <div className="text-[var(--text-dim)]">{icon}</div>
-      <h3 className="text-lg font-semibold text-[var(--text)]">{title}</h3>
-      <p className="text-sm text-[var(--text-muted)]">{subtitle}</p>
+      <SelectionTray
+        count={orderedSelection.length}
+        canViewHtml={orderedSelection.length === 1}
+        onViewHtml={handleViewHtml}
+        onCompare={handleCompare}
+        onClear={clearCompareSelection}
+        onDelete={deletion.request}
+        deleting={deletion.deleting}
+      />
+
+      <ConfirmDialog
+        open={deletion.confirmOpen}
+        danger
+        busy={deletion.deleting}
+        title={t('reports.deleteConfirmTitle')}
+        message={t('reports.deleteConfirm', { n: selectedForCompare.length })}
+        items={pendingDeleteItems}
+        confirmLabel={t('reports.delete')}
+        cancelLabel={t('common.cancel')}
+        onConfirm={deletion.confirm}
+        onCancel={deletion.cancel}
+      />
     </div>
   )
 }

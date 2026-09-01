@@ -1,100 +1,133 @@
-import { api } from './client'
+import { apiDeleteValidated, apiValidated } from './client'
 import type {
   AnalysisResponse,
   DataFrameResponse,
+  DeleteReportResponse,
   ListReportsResponse,
   LoadReportResponse,
   PredictionsResponse,
-  ScanResponse,
 } from './types'
+import { parseReportRef } from '@/domain/report/reportRef'
 
 const BASE = '/api/v1/reports'
+
+/** Path to one model report resource: `/api/v1/reports/runs/{runId}/models/{modelId}`. */
+function reportPath(ref: string): string {
+  const { runId, modelId } = parseReportRef(ref)
+  return `${BASE}/runs/${encodeURIComponent(runId)}/models/${encodeURIComponent(modelId)}`
+}
 
 export async function listReports(params: {
   rootPath: string
   search?: string
   models?: string[]
   datasets?: string[]
-  scoreMin?: number
-  scoreMax?: number
-  sortBy?: 'score' | 'model' | 'dataset' | 'time'
+  sortBy?: 'model' | 'dataset' | 'time'
   sortOrder?: 'asc' | 'desc'
   page?: number
   pageSize?: number
+  /** Optional signal to cancel a superseded list/search request. */
+  signal?: AbortSignal
 }): Promise<ListReportsResponse> {
-  return api<ListReportsResponse>(`${BASE}/list`, {
-    root_path: params.rootPath,
-    search: params.search,
-    models: params.models?.join(';'),
-    datasets: params.datasets?.join(';'),
-    score_min: params.scoreMin,
-    score_max: params.scoreMax,
-    sort_by: params.sortBy,
-    sort_order: params.sortOrder,
-    page: params.page,
-    page_size: params.pageSize,
+  return apiValidated<ListReportsResponse>(BASE, {
+    params: {
+      root_path: params.rootPath,
+      search: params.search,
+      models: params.models?.join(';'),
+      datasets: params.datasets?.join(';'),
+      sort_by: params.sortBy,
+      sort_order: params.sortOrder,
+      page: params.page,
+      page_size: params.pageSize,
+    },
+    signal: params.signal,
   })
 }
 
-export async function scanReports(rootPath: string): Promise<string[]> {
-  const res = await api<ScanResponse>(`${BASE}/scan`, { root_path: rootPath })
-  return res.reports
+export async function deleteReport(
+  rootPath: string,
+  ref: string,
+  signal?: AbortSignal,
+): Promise<DeleteReportResponse> {
+  return apiDeleteValidated<DeleteReportResponse>(reportPath(ref), {
+    params: { root_path: rootPath },
+    signal,
+  })
 }
 
-export async function loadReport(rootPath: string, reportName: string): Promise<LoadReportResponse> {
-  return api<LoadReportResponse>(`${BASE}/load`, { root_path: rootPath, report_name: reportName })
+export async function loadReport(
+  rootPath: string,
+  ref: string,
+  signal?: AbortSignal,
+): Promise<LoadReportResponse> {
+  return apiValidated<LoadReportResponse>(reportPath(ref), {
+    params: { root_path: rootPath },
+    signal,
+  })
 }
 
 export async function getDataFrame(
   rootPath: string,
-  reportName: string,
-  type: 'acc' | 'compare' | 'dataset' = 'acc',
+  ref: string,
+  view: 'acc' | 'compare' | 'dataset' = 'acc',
   datasetName?: string,
+  signal?: AbortSignal,
 ): Promise<DataFrameResponse> {
-  return api<DataFrameResponse>(`${BASE}/dataframe`, {
-    root_path: rootPath,
-    report_name: reportName,
-    type,
-    dataset_name: datasetName,
+  return apiValidated<DataFrameResponse>(`${reportPath(ref)}/table`, {
+    params: {
+      root_path: rootPath,
+      view,
+      dataset_name: datasetName,
+    },
+    signal,
   })
 }
 
 export async function getPredictions(
   rootPath: string,
-  reportName: string,
+  ref: string,
   datasetName: string,
   subsetName: string,
+  signal?: AbortSignal,
 ): Promise<PredictionsResponse> {
-  return api<PredictionsResponse>(`${BASE}/predictions`, {
-    root_path: rootPath,
-    report_name: reportName,
-    dataset_name: datasetName,
-    subset_name: subsetName,
+  return apiValidated<PredictionsResponse>(`${reportPath(ref)}/predictions`, {
+    params: {
+      root_path: rootPath,
+      dataset_name: datasetName,
+      subset_name: subsetName,
+    },
+    signal,
   })
 }
 
-export async function getAnalysis(rootPath: string, reportName: string, datasetName: string): Promise<string> {
-  const res = await api<AnalysisResponse>(`${BASE}/analysis`, {
-    root_path: rootPath,
-    report_name: reportName,
-    dataset_name: datasetName,
+export async function getAnalysis(
+  rootPath: string,
+  ref: string,
+  datasetName: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const res = await apiValidated<AnalysisResponse>(`${reportPath(ref)}/analysis`, {
+    params: {
+      root_path: rootPath,
+      dataset_name: datasetName,
+    },
+    signal,
   })
   return res.analysis
 }
 
-export function getHtmlReportUrl(rootPath: string, reportName: string): string {
-  return `${BASE}/html?root_path=${encodeURIComponent(rootPath)}&report_name=${encodeURIComponent(reportName)}`
+export function getHtmlReportUrl(rootPath: string, ref: string): string {
+  const { runId } = parseReportRef(ref)
+  return `${BASE}/runs/${encodeURIComponent(runId)}/html?root_path=${encodeURIComponent(rootPath)}`
 }
 
-export function getChartUrl(
+/** URL of a multi-report comparison chart (`radar` | `grouped_bar`), one `report=` per reference. */
+export function getCompareChartUrl(
   rootPath: string,
-  chartType: 'scores' | 'sunburst' | 'dataset_scores' | 'radar' | 'histogram' | 'grouped_bar',
-  opts: { reportName?: string; reportNames?: string[]; datasetName?: string; subsetName?: string } = {},
+  refs: string[],
+  chartType: 'radar' | 'grouped_bar',
 ): string {
-  const params = new URLSearchParams({ root_path: rootPath, chart_type: chartType })
-  if (opts.reportName) params.set('report_name', opts.reportName)
-  if (opts.reportNames?.length) params.set('report_names', opts.reportNames.join(';'))
-  if (opts.datasetName) params.set('dataset_name', opts.datasetName)
-  if (opts.subsetName) params.set('subset_name', opts.subsetName)
-  return `${BASE}/chart?${params.toString()}`
+  const params = new URLSearchParams({ root_path: rootPath })
+  for (const ref of refs) params.append('report', ref)
+  return `${BASE}/charts/${chartType}?${params.toString()}`
 }

@@ -42,6 +42,7 @@ GeniaNER is a large-scale biomedical NER dataset consisting of 2,000 MEDLINE abs
         train_split='train',
         eval_split='test',
         metric_list=['precision', 'recall', 'f1_score', 'accuracy'],
+        primary_metric='f1',
         prompt_template=PROMPT_TEMPLATE,
         few_shot_prompt_template=FEWSHOT_TEMPLATE,
     )
@@ -64,22 +65,21 @@ class GeniaNERAdapter(NERAdapter):
             'CELL_TYPE': 'cell_type',
             'DNA': 'dna',
             'PROTEIN': 'protein',
-            'RNA': 'rna'
+            'RNA': 'rna',
         }
 
         # Add descriptions for each entity type
         self.entity_descriptions = {
             'CELL_LINE': 'A population of cells derived from a single cell and grown in a culture.',
             'CELL_TYPE': (
-                'A category of cells that are part of a larger organism and share a specific '
-                'structure and function.'
+                'A category of cells that are part of a larger organism and share a specific structure and function.'
             ),
             'DNA': 'Deoxyribonucleic acid. This includes specific genes, domains, and regions of a DNA molecule.',
             'PROTEIN': (
                 'Molecules composed of amino acids that perform a vast array of functions within '
                 'organisms. This includes enzymes, receptors, and signaling molecules.'
             ),
-            'RNA': 'Ribonucleic acid. This refers to RNA molecules, including messenger RNA (mRNA) and other types.'
+            'RNA': 'Ribonucleic acid. This refers to RNA molecules, including messenger RNA (mRNA) and other types.',
         }
 
         # Setup entity mappings based on the defined entity types

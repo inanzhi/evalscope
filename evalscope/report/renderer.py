@@ -1,9 +1,13 @@
 import os
-import pandas as pd
 import re
 from typing import Dict, List, Optional
 
+import pandas as pd
+
+from evalscope.api.metric.semantics import MetricKind
 from evalscope.constants import DEFAULT_LANGUAGE, PLOTLY_CDN_URL
+from evalscope.metrics.semantics import format_metric_labels, format_metric_value
+from evalscope.metrics.semantics.ranking import bounded_quality_ratio
 from evalscope.report.combinator import get_report_list
 from evalscope.report.report import Report, ReportKey
 from evalscope.report.visualization import (
@@ -82,6 +86,7 @@ def _md_to_html(text: str) -> str:
         return ''
 
     import markdown as md_lib
+
     return md_lib.markdown(text, extensions=['extra'])
 
 
@@ -124,14 +129,11 @@ def _sunburst_chart_div(report_list: List) -> str:
     return fig.to_html(full_html=False, include_plotlyjs=False, config=_PLOTLY_CDN_CONFIG)
 
 
-def _overview_chart_div(labels: List[str], scores: List[float]) -> str:
+def _overview_chart_div(rows: List[dict]) -> str:
     """Return a Plotly HTML div for the overview bar chart, or empty string."""
-    if not labels:
+    if not rows:
         return ''
-    overview_df = pd.DataFrame({
-        ReportKey.dataset_name: labels,
-        ReportKey.score: scores,
-    })
+    overview_df = pd.DataFrame.from_records(rows)
     fig = plot_single_report_scores(overview_df)
     if fig is None:
         return ''
@@ -141,20 +143,23 @@ def _overview_chart_div(labels: List[str], scores: List[float]) -> str:
 def _subset_chart_div(
     ds: str,
     model: str,
-    pretty: str,
-    metric_name: str,
-    subset_labels: List[str],
-    subset_scores: List[float],
-    multi_model: bool,
+    subset_rows: List[dict],
 ) -> str:
     """Return a Plotly HTML div for a per-dataset subset bar chart, or empty string."""
-    if not subset_labels:
+    if not subset_rows:
         return ''
-    subset_df = pd.DataFrame({
-        ReportKey.subset_name: subset_labels,
-        ReportKey.metric_name: [metric_name] * len(subset_labels),
-        ReportKey.score: subset_scores,
-    })
+    chart_rows = [row for row in subset_rows if row['quality_score'] is not None]
+    if not chart_rows:
+        return ''
+    subset_df = pd.DataFrame(
+        {
+            ReportKey.subset_name: [row['subset'] for row in chart_rows],
+            ReportKey.metric_name: [row['metric'] for row in chart_rows],
+            ReportKey.score: [row['quality_score'] for row in chart_rows],
+            ReportKey.raw_score: [row['score'] for row in chart_rows],
+            ReportKey.display_score: [row['score_display'] for row in chart_rows],
+        }
+    )
     fig = plot_single_dataset_scores(subset_df)
     if fig is None:
         return ''
@@ -217,8 +222,7 @@ def gen_html_report_file(
     # Overview data
     # ------------------------------------------------------------------
     summary_rows: List[dict] = []
-    overview_labels: List[str] = []
-    overview_scores: List[float] = []
+    overview_chart_rows: List[dict] = []
 
     for ds in all_datasets:
         info = dataset_info[ds]
@@ -227,15 +231,38 @@ def gen_html_report_file(
             rpt: Optional[Report] = info['model_reports'].get(model)
             if rpt is None:
                 continue
-            main_metric_name = rpt.metrics[0].name if rpt.metrics else 'N/A'
-            num = sum(cat.num for cat in rpt.metrics[0].categories) if rpt.metrics else 0
-            summary_rows.append(dict(dataset=pretty, model=model, metric=main_metric_name, score=rpt.score, num=num))
+            primary_metric = rpt.primary_metric
+            metric_labels = format_metric_labels((metric.identity, metric.semantics) for metric in rpt.metrics)
+            semantics = primary_metric.semantics if primary_metric else None
+            score = primary_metric.score if primary_metric else None
+            summary_rows.append(
+                dict(
+                    dataset=pretty,
+                    model=model,
+                    metric=metric_labels.get(primary_metric.name, primary_metric.name) if primary_metric else 'N/A',
+                    metric_raw=primary_metric.name if primary_metric else 'N/A',
+                    score=score,
+                    score_display=format_metric_value(score, semantics),
+                    num=primary_metric.num if primary_metric else 0,
+                )
+            )
         first: Optional[Report] = next(iter(info['model_reports'].values()), None)
-        if first is not None:
-            overview_labels.append(pretty)
-            overview_scores.append(first.score)
+        if first is not None and first.primary_metric is not None:
+            metric = first.primary_metric
+            metric_labels = format_metric_labels((item.identity, item.semantics) for item in first.metrics)
+            quality_score = bounded_quality_ratio(metric.score, metric.semantics)
+            if quality_score is not None:
+                overview_chart_rows.append(
+                    {
+                        ReportKey.dataset_name: pretty,
+                        ReportKey.metric_name: metric_labels.get(metric.name, metric.name),
+                        ReportKey.score: quality_score,
+                        ReportKey.raw_score: metric.score,
+                        ReportKey.display_score: format_metric_value(metric.score, metric.semantics),
+                    }
+                )
 
-    overview_chart_div = _overview_chart_div(overview_labels, overview_scores)
+    overview_chart_div = _overview_chart_div(overview_chart_rows)
     sunburst_chart_div = _sunburst_chart_div(report_list)
 
     # ------------------------------------------------------------------
@@ -247,53 +274,65 @@ def gen_html_report_file(
         info = dataset_info[ds]
         pretty = info['pretty_name']
         model_sections: List[dict] = []
-        overall_score = 0.0
+        overall_score: Optional[float] = None
+        overall_score_display = format_metric_value(overall_score, None)
 
         for model in all_models:
             rpt = info['model_reports'].get(model)
             if rpt is None:
                 continue
-            overall_score = rpt.score
+            primary_metric = rpt.primary_metric
+            overall_score = primary_metric.score if primary_metric else None
+            overall_score_display = format_metric_value(
+                primary_metric.score if primary_metric else None,
+                primary_metric.semantics if primary_metric else None,
+            )
 
             if not rpt.metrics:
                 model_sections.append(
-                    dict(model_name=model, subset_rows=[], show_category=False, chart_div='', analysis_html='')
+                    dict(
+                        model_name=model,
+                        subset_rows=[],
+                        diagnostic_rows=[],
+                        show_category=False,
+                        chart_div='',
+                        analysis_html='',
+                    )
                 )
                 continue
 
-            main_metric = rpt.metrics[0]
             subset_rows: List[dict] = []
-            subset_labels: List[str] = []
-            subset_scores: List[float] = []
+            diagnostic_rows: List[dict] = []
+            metric_labels = format_metric_labels((metric.identity, metric.semantics) for metric in rpt.metrics)
 
-            for cat in main_metric.categories:
-                # Category name is stored as a tuple; join for display
-                cat_display = ' / '.join(cat.name) if cat.name else ''
-                for sub in cat.subsets:
-                    if sub.name == ReportKey.overall_score:
-                        continue
-                    subset_rows.append(
-                        dict(
+            for metric in rpt.metrics:
+                semantics = metric.semantics
+                is_diagnostic = semantics is not None and semantics.kind is MetricKind.DIAGNOSTIC
+                for cat in metric.categories:
+                    # Category name is stored as a tuple; join for display
+                    cat_display = ' / '.join(cat.name) if cat.name else ''
+                    for sub in cat.subsets:
+                        if sub.name == ReportKey.overall_score:
+                            continue
+                        row = dict(
                             subset=sub.name,
                             category=cat_display,
-                            metric=main_metric.name,
+                            metric=metric_labels.get(metric.name, metric.name),
+                            metric_raw=metric.name,
                             score=sub.score,
+                            quality_score=bounded_quality_ratio(sub.score, semantics),
+                            score_display=format_metric_value(sub.score, semantics),
                             num=sub.num,
                         )
-                    )
-                    subset_labels.append(sub.name)
-                    subset_scores.append(sub.score)
+                        # Diagnostics are shown without a verdict, in their own collapsed panel.
+                        (diagnostic_rows if is_diagnostic else subset_rows).append(row)
 
             show_category = True
 
             chart_div = _subset_chart_div(
                 ds=ds,
                 model=model,
-                pretty=pretty,
-                metric_name=main_metric.name,
-                subset_labels=subset_labels,
-                subset_scores=subset_scores,
-                multi_model=multi_model,
+                subset_rows=subset_rows,
             )
             analysis_raw = rpt.analysis if rpt.analysis and rpt.analysis.strip() not in ('', 'N/A') else ''
             analysis_html = _md_to_html(analysis_raw) if analysis_raw else ''
@@ -301,6 +340,7 @@ def gen_html_report_file(
                 dict(
                     model_name=model,
                     subset_rows=subset_rows,
+                    diagnostic_rows=diagnostic_rows,
                     show_category=show_category,
                     chart_div=chart_div,
                     analysis_html=analysis_html,
@@ -313,6 +353,7 @@ def gen_html_report_file(
                 description_en=info['description_en'],
                 description_zh=info['description_zh'],
                 overall_score=overall_score,
+                overall_score_display=overall_score_display,
                 model_sections=model_sections,
                 multi_model=multi_model,
             )

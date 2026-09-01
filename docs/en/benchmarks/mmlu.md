@@ -35,7 +35,7 @@ MMLU (Massive Multitask Language Understanding) is a comprehensive evaluation be
 | **Dataset ID** | [cais/mmlu](https://modelscope.cn/datasets/cais/mmlu/summary) |
 | **Paper** | N/A |
 | **Tags** | `Knowledge`, `MCQ` |
-| **Metrics** | `acc` |
+| **Metrics** | `accuracy` |
 | **Default Shots** | 5-shot |
 | **Evaluation Split** | `test` |
 | **Train Split** | `dev` |
@@ -186,5 +186,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

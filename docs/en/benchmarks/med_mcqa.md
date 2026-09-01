@@ -34,7 +34,7 @@ MedMCQA is a large-scale multiple-choice question answering dataset designed to 
 | **Dataset ID** | [extraordinarylab/medmcqa](https://modelscope.cn/datasets/extraordinarylab/medmcqa/summary) |
 | **Paper** | N/A |
 | **Tags** | `Knowledge`, `MCQ` |
-| **Metrics** | `acc` |
+| **Metrics** | `accuracy` |
 | **Default Shots** | 0-shot |
 | **Evaluation Split** | `validation` |
 | **Train Split** | `train` |
@@ -115,5 +115,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

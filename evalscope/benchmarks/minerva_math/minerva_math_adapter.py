@@ -3,7 +3,7 @@ from typing import Any, Dict
 from evalscope.api.benchmark import BenchmarkMeta, DefaultDataAdapter
 from evalscope.api.dataset import Sample
 from evalscope.api.registry import register_benchmark
-from evalscope.constants import Tags
+from evalscope.constants import ScoringPolicy, Tags
 from evalscope.utils.logger import get_logger
 
 logger = get_logger()
@@ -44,21 +44,16 @@ Minerva-Math is a benchmark designed to evaluate advanced mathematical and quant
 """,
         dataset_id='knoveleng/Minerva-Math',
         subset_list=['default'],
-        metric_list=[{
-            'acc': {
-                'numeric': True
-            }
-        }],
+        metric_list=[{'acc': {'numeric': True}}],
         eval_split='train',
         prompt_template='{question}\nPlease reason step by step, and put your final answer within \\boxed{{}}.',
     )
 )
 class MinervaMathAdapter(DefaultDataAdapter):
+    scoring_policy = ScoringPolicy.JUDGE_DEFAULT
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-
-        self._use_llm_judge = True
 
     def record_to_sample(self, record: Dict[str, Any]) -> Sample:
         return Sample(
@@ -71,6 +66,6 @@ class MinervaMathAdapter(DefaultDataAdapter):
         )
 
     def extract_answer(self, prediction: str, task_state):
-        from evalscope.metrics.math_parser import extract_answer
+        from evalscope.metrics.math.parser import extract_answer
 
         return extract_answer(prediction)

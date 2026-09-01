@@ -1,4 +1,5 @@
 """OpenAI/Cohere-style Rerank API plugin for evalscope perf."""
+
 import json
 import sys
 import time
@@ -96,8 +97,9 @@ class OpenaiRerankPlugin(ApiPluginBase):
             payload = {
                 'query': query,
                 'documents': documents,
-                'model': param.model,
             }
+            if param.model is not None:
+                payload['model'] = param.model
 
             # Add optional top_n parameter
             if param.extra_args:

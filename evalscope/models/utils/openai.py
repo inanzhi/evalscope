@@ -4,6 +4,8 @@ import re
 import time
 from collections import defaultdict
 from copy import copy
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union, cast
+
 from openai import APIStatusError, OpenAIError
 from openai.types.chat import (
     ChatCompletion,
@@ -31,7 +33,6 @@ from openai.types.chat.chat_completion_message_tool_call import Function
 from openai.types.completion_usage import CompletionUsage
 from openai.types.shared_params.function_definition import FunctionDefinition
 from pydantic import JsonValue
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 from evalscope.api.messages import (
     ChatMessage,
@@ -57,20 +58,18 @@ from evalscope.api.model import (
     as_stop_reason,
 )
 from evalscope.api.tool import ToolCall, ToolChoice, ToolFunction, ToolInfo, parse_tool_call
-from evalscope.utils.url_utils import (
-    data_uri_to_base64,
-    file_as_data_uri,
-    guess_video_format,
-    is_data_uri,
-    is_http_url,
-    video_as_data_uri,
-)
+from evalscope.utils import get_logger, get_secret_value
+from evalscope.utils.media_utils import guess_video_format, video_as_data_uri
+from evalscope.utils.uri_utils import data_uri_to_base64, file_as_data_uri, is_data_uri, is_http_url
+
+logger = get_logger()
+
+ReasoningFormat = Literal['think_tag', 'reasoning_field', 'none']
 
 BASE_64_DATA_REMOVED = '<base64-data-removed>'
 
 
 class OpenAIResponseError(OpenAIError):
-
     def __init__(self, code: str, message: str) -> None:
         self.code = code
         self.message = message
@@ -95,7 +94,15 @@ def openai_chat_tool_call_param(tool_call: ToolCall) -> ChatCompletionMessageToo
     )
 
 
-def openai_chat_completion_part(content: Content) -> Union[ChatCompletionContentPartParam, Dict[str, Any]]:
+def _is_dashscope_endpoint(base_url: Optional[str]) -> bool:
+    """Check if the base_url points to a DashScope endpoint."""
+    return base_url is not None and 'dashscope' in base_url
+
+
+def openai_chat_completion_part(
+    content: Content,
+    base_url: Optional[str] = None,
+) -> Union[ChatCompletionContentPartParam, Dict[str, Any]]:
     if content.type == 'text':
         return ChatCompletionContentPartTextParam(type='text', text=content.text)
     elif content.type == 'image':
@@ -112,24 +119,43 @@ def openai_chat_completion_part(content: Content) -> Union[ChatCompletionContent
             image_url=dict(url=image_url, detail=detail),
         )
     elif content.type == 'audio':
-
-        # remove prefix
-        audio_uri = data_uri_to_base64(file_as_data_uri(content.audio))
+        # Standard OpenAI / vllm: raw base64 (no data URI prefix)
+        # DashScope: requires data URI prefix (data:<mime>;base64,...)
+        audio_mime = 'audio/wav' if content.format == 'wav' else 'audio/mpeg'
+        audio_data = file_as_data_uri(content.audio, default_mime_type=audio_mime)
+        if not _is_dashscope_endpoint(base_url):
+            audio_data = data_uri_to_base64(audio_data)
         return ChatCompletionContentPartInputAudioParam(
-            type='input_audio', input_audio=dict(data=audio_uri, format=content.format)
+            type='input_audio', input_audio=dict(data=audio_data, format=content.format)
         )
     elif content.type == 'video':
         video_url = content.video
         if not is_http_url(video_url) and not is_data_uri(video_url):
             video_url = video_as_data_uri(video_url, content.format)
-        return {'type': 'video_url', 'video_url': {'url': video_url}}
+        part: Dict[str, Any] = {'type': 'video_url', 'video_url': {'url': video_url}}
+        # DashScope extension: fps hint for video frame sampling
+        if content.fps is not None:
+            part['fps'] = content.fps
+        return part
     else:
         raise RuntimeError(f'Content type {content.type} is not currently supported by OpenAI chat models.')
 
 
 def openai_chat_message(
-    message: ChatMessage, system_role: Literal['user', 'system', 'developer'] = 'system'
+    message: ChatMessage,
+    system_role: Literal['user', 'system', 'developer'] = 'system',
+    reasoning_format: ReasoningFormat = 'think_tag',
+    base_url: Optional[str] = None,
 ) -> ChatCompletionMessageParam:
+    """Serialize a :class:`ChatMessage` into an OpenAI chat-completions message param.
+
+    ``reasoning_format`` controls how prior-turn ``ContentReasoning`` parts on
+    assistant messages are encoded for the wire — see
+    :func:`openai_assistant_content` for the per-mode behavior. When
+    ``'reasoning_field'`` is selected, the last ``ContentReasoning`` is also
+    promoted to a top-level ``reasoning_content`` key on the assistant dict
+    (required by DeepSeek V4 thinking and recommended for Qwen3 thinking).
+    """
     if message.role == 'system':
         if system_role == 'user':
             return ChatCompletionUserMessageParam(role='user', content=message.text)
@@ -141,19 +167,13 @@ def openai_chat_message(
         return ChatCompletionUserMessageParam(
             role=message.role,
             content=(
-                message.content if isinstance(message.content, str) else
-                [openai_chat_completion_part(content) for content in message.content]
+                message.content
+                if isinstance(message.content, str)
+                else [openai_chat_completion_part(content, base_url=base_url) for content in message.content]
             ),
         )
     elif message.role == 'assistant':
-        if message.tool_calls:
-            return ChatCompletionAssistantMessageParam(
-                role=message.role,
-                content=openai_assistant_content(message),
-                tool_calls=[openai_chat_tool_call_param(call) for call in message.tool_calls],
-            )
-        else:
-            return ChatCompletionAssistantMessageParam(role=message.role, content=openai_assistant_content(message))
+        return _openai_assistant_message_param(message, reasoning_format)
     elif message.role == 'tool':
         return ChatCompletionToolMessageParam(
             role=message.role,
@@ -164,11 +184,61 @@ def openai_chat_message(
         raise ValueError(f'Unexpected message role {message.role}')
 
 
+def _openai_assistant_message_param(
+    message: ChatMessageAssistant,
+    reasoning_format: ReasoningFormat,
+) -> ChatCompletionAssistantMessageParam:
+    """Build the assistant-role message dict, optionally with a top-level
+    ``reasoning_content`` field when ``reasoning_format='reasoning_field'``.
+
+    The OpenAI Python SDK's ``ChatCompletionAssistantMessageParam`` is a
+    ``TypedDict(total=False)``; extra keys are not stripped at runtime and the
+    SDK forwards them verbatim to the server. We build a plain dict so the
+    extra ``reasoning_content`` key survives, then cast it back to the
+    TypedDict for the caller's signature.
+    """
+    payload: Dict[str, Any] = {'role': message.role, 'content': openai_assistant_content(message, reasoning_format)}
+    if message.tool_calls:
+        payload['tool_calls'] = [openai_chat_tool_call_param(call) for call in message.tool_calls]
+    if reasoning_format == 'reasoning_field':
+        reasoning_text = _extract_last_reasoning(message)
+        if reasoning_text is not None:
+            if not reasoning_text.strip():
+                logger.debug(
+                    'reasoning_field mode: extracted reasoning is blank; '
+                    'injecting single-space placeholder to satisfy strict server validation '
+                    '(e.g. DeepSeek V4 thinking mode rejects empty reasoning_content).'
+                )
+                reasoning_text = ' '
+            payload['reasoning_content'] = reasoning_text
+    return cast(ChatCompletionAssistantMessageParam, payload)
+
+
+def _extract_last_reasoning(message: ChatMessageAssistant) -> Optional[str]:
+    """Return the last ``ContentReasoning.reasoning`` from a multi-part assistant
+    message, or ``None`` if the message has no reasoning parts (e.g. content is
+    a plain string, or all parts are text/other).
+
+    Multiple ``ContentReasoning`` parts are deduplicated to the last one to
+    match litellm's behavior in
+    ``litellm/llms/deepseek/chat/transformation.py``.
+    """
+    if isinstance(message.content, str):
+        return None
+    last_reasoning: Optional[str] = None
+    for c in message.content:
+        if c.type == 'reasoning':
+            last_reasoning = c.reasoning
+    return last_reasoning
+
+
 def openai_chat_messages(
     messages: List[ChatMessage],
     system_role: Literal['user', 'system', 'developer'] = 'system',
+    reasoning_format: ReasoningFormat = 'think_tag',
+    base_url: Optional[str] = None,
 ) -> List[ChatCompletionMessageParam]:
-    return [openai_chat_message(message, system_role) for message in messages]
+    return [openai_chat_message(message, system_role, reasoning_format, base_url=base_url) for message in messages]
 
 
 def openai_completion_params(model: str, config: GenerateConfig, tools: bool) -> Dict[str, Any]:
@@ -225,47 +295,71 @@ def openai_completion_params(model: str, config: GenerateConfig, tools: bool) ->
     if config.extra_query:
         params['extra_query'] = config.extra_query
     if config.extra_headers:
-        params['extra_headers'] = config.extra_headers
+        params['extra_headers'] = get_secret_value(config.extra_headers)
 
     return params
 
 
-def openai_assistant_content(message: ChatMessageAssistant, include_reasoning=True) -> str:
-    # In agent bridge scenarios, we could encounter concepts such as reasoning and
-    # .internal use in the ChatMessageAssistant that are not supported by the OpenAI
-    # choices API. This code smuggles that data into the plain text so that it
-    # survives multi-turn round trips.
+def openai_assistant_content(
+    message: ChatMessageAssistant,
+    reasoning_format: ReasoningFormat = 'think_tag',
+) -> str:
+    """Render the assistant message's ``content`` field for an OpenAI-compatible payload.
 
+    In agent bridge scenarios, ``ChatMessageAssistant`` can carry concepts
+    (``ContentReasoning``, ``.internal``) that are not part of the OpenAI
+    choices API. ``reasoning_format`` controls how ``ContentReasoning`` parts
+    are handled:
+
+    - ``'think_tag'`` (default): smuggle reasoning into the plain text as
+      ``<think>...</think>`` so it survives multi-turn round-trips on
+      providers that accept inline <think> blocks (e.g. OpenAI, Together, Groq).
+    - ``'reasoning_field'``: drop reasoning from the content string; the
+      caller is expected to write it as a top-level ``reasoning_content``
+      field on the assistant message dict.
+    - ``'none'``: drop reasoning entirely; the wire payload carries no trace
+      of the prior-turn CoT. Required for DeepSeek R1 (legacy), which
+      forbids ``reasoning_content`` in request messages.
+
+    ``.internal`` smuggling via ``<internal>...</internal>`` is preserved
+    across all modes (agent-bridge invariant).
+    """
     if isinstance(message.content, str):
         content = message.content
     else:
         content = ''
         for c in message.content:
-            if c.type == 'reasoning' and include_reasoning:
-                attribs = ''
-                if c.signature is not None:
-                    attribs = f'{attribs} signature="{c.signature}"'
-                if c.redacted:
-                    attribs = f'{attribs} redacted="true"'
-                content = f'{content}\n<think{attribs}>\n{c.reasoning}\n</think>\n'
+            if c.type == 'reasoning':
+                if reasoning_format == 'think_tag':
+                    attribs = ''
+                    if c.signature is not None:
+                        attribs = f'{attribs} signature="{c.signature}"'
+                    if c.redacted:
+                        attribs = f'{attribs} redacted="true"'
+                    content = f'{content}\n<think{attribs}>\n{c.reasoning}\n</think>\n'
+                # 'reasoning_field' and 'none' both drop reasoning from content
             elif c.type == 'text':
                 content = f'{content}\n{c.text}'
 
     if message.internal:
         content = f"""{content}\n<internal>{
-            base64.b64encode(json.dumps(message.internal).encode("utf-8")).decode(
-                "utf-8"
-            )
+            base64.b64encode(json.dumps(message.internal).encode('utf-8')).decode('utf-8')
         }</internal>\n"""
     return content
 
 
 def openai_chat_choices(choices: List[ChatCompletionChoice], include_reasoning: bool = True) -> List[Choice]:
     oai_choices: List[Choice] = []
+    # Translate the legacy ``include_reasoning`` toggle into the new
+    # ``reasoning_format`` axis. ``False`` historically meant "strip reasoning
+    # from the assistant content before handing it back to tau/terminal_bench",
+    # which is exactly the ``'none'`` mode; ``True`` preserves the prior
+    # ``<think>``-tag inlining.
+    reasoning_format: ReasoningFormat = 'think_tag' if include_reasoning else 'none'
 
     for index, choice in enumerate(choices):
         # Handle content
-        content = openai_assistant_content(choice.message, include_reasoning=include_reasoning)
+        content = openai_assistant_content(choice.message, reasoning_format=reasoning_format)
 
         # Handle tool calls
         if choice.message.tool_calls:
@@ -294,7 +388,7 @@ def openai_completion_usage(usage: ModelUsage) -> CompletionUsage:
 
 
 def openai_finish_reason(
-    stop_reason: StopReason
+    stop_reason: StopReason,
 ) -> Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']:
     if stop_reason in ('stop', 'tool_calls', 'content_filter'):
         return stop_reason
@@ -317,7 +411,9 @@ def openai_chat_tools(tools: List[ToolInfo]) -> List[ChatCompletionToolParam]:
     return [openai_chat_tool_param(tool) for tool in tools]
 
 
-def openai_chat_tool_choice(tool_choice: ToolChoice, ) -> ChatCompletionToolChoiceOptionParam:
+def openai_chat_tool_choice(
+    tool_choice: ToolChoice,
+) -> ChatCompletionToolChoiceOptionParam:
     if isinstance(tool_choice, ToolFunction):
         return ChatCompletionNamedToolChoiceParam(type='function', function=dict(name=tool_choice.name))
     # openai supports 'any' via the 'required' keyword
@@ -459,9 +555,13 @@ def tool_call_from_openai(tool_call: ChatCompletionMessageToolCallParam) -> Tool
 
 
 def content_from_openai(
-    content: Union[ChatCompletionContentPartParam, ChatCompletionContentPartRefusalParam],
+    content: Union[ChatCompletionContentPartParam, ChatCompletionContentPartRefusalParam, Content],
     parse_reasoning: bool = False,
 ) -> List[Content]:
+    # already-parsed shortcut
+    if isinstance(content, Content):
+        return [content]
+
     # Some providers omit the type tag and use "object-with-a-single-field" encoding
     if 'type' not in content and len(content) == 1:
         content['type'] = list(content.keys())[0]  # type: ignore[arg-type]
@@ -483,10 +583,12 @@ def content_from_openai(
     elif content['type'] == 'image_url':
         return [ContentImage(image=content['image_url']['url'], detail=content['image_url'].get('detail', 'auto'))]
     elif content['type'] == 'input_audio':
-        return [ContentAudio(
-            audio=content['input_audio']['data'],
-            format=content['input_audio']['format'],
-        )]
+        return [
+            ContentAudio(
+                audio=content['input_audio']['data'],
+                format=content['input_audio']['format'],
+            )
+        ]
     elif content['type'] == 'video_url':  # type: ignore[comparison-overlap]
         video_url = content['video_url']
         if isinstance(video_url, str):
@@ -550,15 +652,19 @@ def model_output_from_openai(
                 input_tokens=completion.usage.prompt_tokens,
                 output_tokens=completion.usage.completion_tokens,
                 input_tokens_cache_read=(
-                    completion.usage.prompt_tokens_details.cached_tokens if completion.usage.prompt_tokens_details
-                    is not None else None  # openai only have cache read stats/pricing.
+                    completion.usage.prompt_tokens_details.cached_tokens
+                    if completion.usage.prompt_tokens_details is not None
+                    else None  # openai only have cache read stats/pricing.
                 ),
                 reasoning_tokens=(
                     completion.usage.completion_tokens_details.reasoning_tokens
-                    if completion.usage.completion_tokens_details is not None else None
+                    if completion.usage.completion_tokens_details is not None
+                    else None
                 ),
                 total_tokens=completion.usage.total_tokens,
-            ) if completion.usage else None
+            )
+            if completion.usage
+            else None
         ),
     )
 
@@ -589,9 +695,11 @@ def chat_choices_from_openai(response: ChatCompletion, tools: List[ToolInfo]) ->
             stop_reason=as_stop_reason(choice.finish_reason),
             logprobs=(
                 Logprobs(**choice.logprobs.model_dump())
-                if choice.logprobs and choice.logprobs.content is not None else None
+                if choice.logprobs and choice.logprobs.content is not None
+                else None
             ),
-        ) for choice in choices
+        )
+        for choice in choices
     ]
 
 
@@ -618,12 +726,15 @@ def openai_handle_bad_request(model_name: str, e: APIStatusError) -> Union[Model
     # uses code='invalid_parameter_error' with "Range of input length ...").
     if stop_reason is None:
         msg = (content or '').lower()
-        if any(p in msg for p in (
-            'input length',
-            'maximum context length',
-            'context window',
-            'too many tokens',
-        )):
+        if any(
+            p in msg
+            for p in (
+                'input length',
+                'maximum context length',
+                'context window',
+                'too many tokens',
+            )
+        ):
             stop_reason = 'model_length'
 
     if stop_reason:
@@ -653,7 +764,9 @@ def openai_media_filter(key: Optional[JsonValue], value: JsonValue) -> JsonValue
     return value
 
 
-def _parse_content_with_internal(content: str, ) -> Tuple[str, Optional[JsonValue]]:
+def _parse_content_with_internal(
+    content: str,
+) -> Tuple[str, Optional[JsonValue]]:
     """
     Extracts and removes a smuggled <internal>...</internal> tag from the content string, if present.
 
@@ -678,10 +791,14 @@ def _parse_content_with_internal(content: str, ) -> Tuple[str, Optional[JsonValu
     internal_pattern = r'<internal>(.*?)</internal>'
     internal_match = re.search(r'<internal>(.*?)</internal>', content, re.DOTALL)
 
-    return ((
-        re.sub(internal_pattern, '', content, flags=re.DOTALL).strip(),
-        json.loads(base64.b64decode(internal_match.group(1)).decode('utf-8')),
-    ) if internal_match else (content, None))
+    return (
+        (
+            re.sub(internal_pattern, '', content, flags=re.DOTALL).strip(),
+            json.loads(base64.b64decode(internal_match.group(1)).decode('utf-8')),
+        )
+        if internal_match
+        else (content, None)
+    )
 
 
 def collect_stream_response(
@@ -714,20 +831,30 @@ def collect_stream_response(
     t_start = request_start if request_start is not None else time.monotonic()
     ttft: Optional[float] = None
 
+    usage = None
     for chunk in response_stream:
+        if getattr(chunk, 'usage', None) is not None:
+            usage = chunk.usage
+        if not getattr(chunk, 'choices', None):
+            continue
         collected_chunks.append(chunk)
         for choice in chunk.choices:
+            reasoning_content = getattr(choice.delta, 'reasoning_content', None)
+            if reasoning_content is None or reasoning_content == '':
+                reasoning_content = getattr(choice.delta, 'reasoning', None)
+
             # Detect first meaningful content chunk for TTFT
-            has_content = ((choice.delta.content is not None and choice.delta.content != '') or (
-                hasattr(choice.delta, 'reasoning_content') and choice.delta.reasoning_content is not None
-                and choice.delta.reasoning_content != ''
-            ) or (hasattr(choice.delta, 'tool_calls') and choice.delta.tool_calls))
+            has_content = (
+                (choice.delta.content is not None and choice.delta.content != '')
+                or (reasoning_content is not None and reasoning_content != '')
+                or (hasattr(choice.delta, 'tool_calls') and choice.delta.tool_calls)
+            )
             if ttft is None and has_content:
                 ttft = time.monotonic() - t_start
 
             # Handle reasoning content
-            if hasattr(choice.delta, 'reasoning_content') and choice.delta.reasoning_content is not None:
-                collected_reasoning[choice.index].append(choice.delta.reasoning_content)
+            if reasoning_content is not None:
+                collected_reasoning[choice.index].append(str(reasoning_content))
 
             # Handle regular content
             if choice.delta.content is not None:
@@ -743,10 +870,7 @@ def collect_stream_response(
                         collected_tool_calls[choice.index][tool_id] = {
                             'id': tool_call.id if hasattr(tool_call, 'id') and tool_call.id else None,
                             'type': tool_call.type if hasattr(tool_call, 'type') and tool_call.type else None,
-                            'function': {
-                                'name': '',
-                                'arguments': ''
-                            }
+                            'function': {'name': '', 'arguments': ''},
                         }
 
                     # Update tool call with new chunks
@@ -755,8 +879,9 @@ def collect_stream_response(
                             collected_tool_calls[choice.index][tool_id]['function']['name'] = tool_call.function.name
 
                         if hasattr(tool_call.function, 'arguments') and tool_call.function.arguments:
-                            collected_tool_calls[choice.index
-                                                 ][tool_id]['function']['arguments'] += tool_call.function.arguments
+                            collected_tool_calls[choice.index][tool_id]['function']['arguments'] += (
+                                tool_call.function.arguments
+                            )
 
                     # Update ID if it was received later
                     if hasattr(tool_call, 'id') and tool_call.id:
@@ -780,8 +905,10 @@ def collect_stream_response(
         # use the finish_reason from the last chunk that generated this choice
         finish_reason = None
         for chunk in reversed(collected_chunks):
-            if chunk.choices and chunk.choices[0].index == index:
-                finish_reason = chunk.choices[0].finish_reason
+            # a single chunk may pack several choices (n > 1); match by index
+            matched = next((c for c in chunk.choices if c.index == index), None)
+            if matched is not None:
+                finish_reason = matched.finish_reason
                 break
 
         message_kwargs = {'role': 'assistant', 'content': full_reply_content}
@@ -797,6 +924,9 @@ def collect_stream_response(
         )
         choices.append(choice)
 
+    if not collected_chunks:
+        raise RuntimeError('No valid chat completion chunks received from stream')
+
     # build the final completion object
     return ChatCompletion(
         id=collected_chunks[0].id,
@@ -804,7 +934,7 @@ def collect_stream_response(
         created=collected_chunks[0].created,
         model=collected_chunks[0].model,
         object='chat.completion',
-        usage=collected_chunks[-1].usage  # use the usage from the last chunk
+        usage=usage if usage is not None else getattr(collected_chunks[-1], 'usage', None),
     ), ttft
 
 
@@ -834,20 +964,30 @@ async def async_collect_stream_response(
     t_start = request_start if request_start is not None else time.monotonic()
     ttft: Optional[float] = None
 
+    usage = None
     async for chunk in response_stream:
+        if getattr(chunk, 'usage', None) is not None:
+            usage = chunk.usage
+        if not getattr(chunk, 'choices', None):
+            continue
         collected_chunks.append(chunk)
         for choice in chunk.choices:
+            reasoning_content = getattr(choice.delta, 'reasoning_content', None)
+            if reasoning_content is None or reasoning_content == '':
+                reasoning_content = getattr(choice.delta, 'reasoning', None)
+
             # Detect first meaningful content chunk for TTFT
-            has_content = ((choice.delta.content is not None and choice.delta.content != '') or (
-                hasattr(choice.delta, 'reasoning_content') and choice.delta.reasoning_content is not None
-                and choice.delta.reasoning_content != ''
-            ) or (hasattr(choice.delta, 'tool_calls') and choice.delta.tool_calls))
+            has_content = (
+                (choice.delta.content is not None and choice.delta.content != '')
+                or (reasoning_content is not None and reasoning_content != '')
+                or (hasattr(choice.delta, 'tool_calls') and choice.delta.tool_calls)
+            )
             if ttft is None and has_content:
                 ttft = time.monotonic() - t_start
 
             # Handle reasoning content
-            if hasattr(choice.delta, 'reasoning_content') and choice.delta.reasoning_content is not None:
-                collected_reasoning[choice.index].append(choice.delta.reasoning_content)
+            if reasoning_content is not None:
+                collected_reasoning[choice.index].append(str(reasoning_content))
 
             # Handle regular content
             if choice.delta.content is not None:
@@ -863,10 +1003,7 @@ async def async_collect_stream_response(
                         collected_tool_calls[choice.index][tool_id] = {
                             'id': tool_call.id if hasattr(tool_call, 'id') and tool_call.id else None,
                             'type': tool_call.type if hasattr(tool_call, 'type') and tool_call.type else None,
-                            'function': {
-                                'name': '',
-                                'arguments': ''
-                            }
+                            'function': {'name': '', 'arguments': ''},
                         }
 
                     # Update tool call with new chunks
@@ -875,8 +1012,9 @@ async def async_collect_stream_response(
                             collected_tool_calls[choice.index][tool_id]['function']['name'] = tool_call.function.name
 
                         if hasattr(tool_call.function, 'arguments') and tool_call.function.arguments:
-                            collected_tool_calls[choice.index
-                                                 ][tool_id]['function']['arguments'] += tool_call.function.arguments
+                            collected_tool_calls[choice.index][tool_id]['function']['arguments'] += (
+                                tool_call.function.arguments
+                            )
 
                     # Update ID if it was received later
                     if hasattr(tool_call, 'id') and tool_call.id:
@@ -900,8 +1038,10 @@ async def async_collect_stream_response(
         # use the finish_reason from the last chunk that generated this choice
         finish_reason = None
         for chunk in reversed(collected_chunks):
-            if chunk.choices and chunk.choices[0].index == index:
-                finish_reason = chunk.choices[0].finish_reason
+            # a single chunk may pack several choices (n > 1); match by index
+            matched = next((c for c in chunk.choices if c.index == index), None)
+            if matched is not None:
+                finish_reason = matched.finish_reason
                 break
 
         message_kwargs = {'role': 'assistant', 'content': full_reply_content}
@@ -917,6 +1057,9 @@ async def async_collect_stream_response(
         )
         choices.append(choice)
 
+    if not collected_chunks:
+        raise RuntimeError('No valid chat completion chunks received from stream')
+
     # build the final completion object
     return ChatCompletion(
         id=collected_chunks[0].id,
@@ -924,5 +1067,5 @@ async def async_collect_stream_response(
         created=collected_chunks[0].created,
         model=collected_chunks[0].model,
         object='chat.completion',
-        usage=collected_chunks[-1].usage  # use the usage from the last chunk
+        usage=usage if usage is not None else getattr(collected_chunks[-1], 'usage', None),
     ), ttft

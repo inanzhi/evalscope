@@ -17,20 +17,24 @@ This plugin supports two data-source modes:
    then shuffled.  For each candidate ``num_turns`` is sampled uniformly from
    ``[min_turns, max_turns]`` (``--min-turns`` / ``--max-turns``).  All work
    items are dispatched to a ``multiprocessing.Pool``
-   (size ``multi_turn_args.num_workers``); results are collected until
+   (size controlled by top-level ``--num-workers``); results are collected until
    ``number`` valid conversations have been built.
 """
 
 import json
 import multiprocessing
-import numpy as np
-from tqdm import tqdm
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
+import numpy as np
+from tqdm import tqdm
+
 from evalscope.perf.arguments import Arguments
+from evalscope.perf.multi_turn_args import _get_range_upper
 from evalscope.perf.plugin.datasets.base import Conversation, DatasetPluginBase, Message, Messages, Turn
-from evalscope.perf.plugin.datasets.utils import tokenize_chat_messages
+from evalscope.perf.plugin.datasets.dataset_args import MultiTurnDatasetArgs
+from evalscope.perf.plugin.datasets.utils import tokenize_chat_messages, truncate_text_to_token_len
 from evalscope.perf.plugin.registry import register_dataset
+from evalscope.perf.utils.worker_util import resolve_dataset_generation_workers
 from evalscope.utils.logger import get_logger
 
 logger = get_logger()
@@ -77,14 +81,9 @@ def _count_tokens_for_messages(messages: List[Dict[str, str]], tokenizer) -> int
     return len(tokenize_chat_messages(tokenizer, messages))
 
 
-def _bare_encode(text: str, tokenizer) -> List[int]:
-    """Encode text to token ids without special tokens."""
-    return tokenizer.encode(text, add_special_tokens=False)
-
-
 def _encode_len(text: str, tokenizer) -> int:
-    """Fast bare-text token count (no chat template overhead)."""
-    return len(_bare_encode(text, tokenizer))
+    """Fast bare-text token count (no chat template overhead, no special tokens)."""
+    return len(tokenizer.encode(text, add_special_tokens=False))
 
 
 def _truncate_message_content(
@@ -93,8 +92,7 @@ def _truncate_message_content(
     tokenizer,
 ) -> Dict[str, str]:
     """Truncate a message's content so it occupies at most tokens_needed bare tokens."""
-    content_tokens = _bare_encode(message['content'], tokenizer)
-    truncated_content = tokenizer.decode(content_tokens[:tokens_needed], skip_special_tokens=True)
+    truncated_content = truncate_text_to_token_len(message['content'], tokens_needed, tokenizer)
     return {'role': message['role'], 'content': truncated_content}
 
 
@@ -218,6 +216,18 @@ def _build_conversation(
     return turns
 
 
+def _to_turns(conversation: List[Dict]) -> Optional[Conversation]:
+    """Convert a list of turn dicts (each carrying a ``messages`` delta) into a
+    :data:`Conversation`, marking the last turn as final.
+
+    Returns ``None`` when the conversation has no turns.
+    """
+    messages_per_turn: List[Messages] = [turn.get('messages', []) for turn in conversation]
+    if not messages_per_turn:
+        return None
+    return [Turn(messages=m, is_final=(i == len(messages_per_turn) - 1)) for i, m in enumerate(messages_per_turn)]
+
+
 # ---------------------------------------------------------------------------
 # Dataset plugin
 # ---------------------------------------------------------------------------
@@ -260,8 +270,10 @@ class SweSmithDatasetPlugin(DatasetPluginBase):
     * ``first_turn_length``      – target tokens for turn 1
     * ``subsequent_turn_length`` – token growth per subsequent turn
     * ``chars_per_token``        – pre-filter estimate
-    * ``num_workers``            – multiprocessing pool size
+    * Top-level ``--num-workers`` – multiprocessing pool size
     """
+
+    args_schema = MultiTurnDatasetArgs
 
     def __init__(self, query_parameters: Arguments):
         super().__init__(query_parameters)
@@ -307,13 +319,9 @@ class SweSmithDatasetPlugin(DatasetPluginBase):
 
         for conversation in conversations:
             # Each turn's "messages" list is already the delta (non-assistant).
-            messages_per_turn: List[Messages] = [turn.get('messages', []) for turn in conversation]
-            if not messages_per_turn:
-                continue
-
-            yield [
-                Turn(messages=m, is_final=(i == len(messages_per_turn) - 1)) for i, m in enumerate(messages_per_turn)
-            ]
+            turns = _to_turns(conversation)
+            if turns is not None:
+                yield turns
 
     # ------------------------------------------------------------------
     # Live construction mode
@@ -328,37 +336,31 @@ class SweSmithDatasetPlugin(DatasetPluginBase):
                 '--dataset-path.'
             )
 
-        mt_args = self.query_parameters.multi_turn_args
-        chars_per_token = mt_args.chars_per_token if mt_args else 3.0
+        mt_args = self._get_multi_turn_args()
+        chars_per_token = mt_args.chars_per_token
         offset = self.query_parameters.dataset_offset
         min_turns = self.query_parameters.min_turns
         max_turns = self.query_parameters.max_turns if self.query_parameters.max_turns is not None else min_turns
         if max_turns < min_turns:
             raise ValueError(f'--max-turns ({max_turns}) must be >= --min-turns ({min_turns})')
-        num_workers = mt_args.num_workers if mt_args else 1
+        target_count = max(1, self.query_parameters.total_count)
 
         # For pre-filtering, use the upper-bound of first_turn_length as the minimum
         # char threshold (conservative: trajectories need at least that many tokens).
-        if mt_args is not None:
-            from evalscope.perf.multi_turn_args import _get_range_upper
-            first_upper = _get_range_upper(mt_args.first_turn_length)
-            subsequent_upper = _get_range_upper(mt_args.subsequent_turn_length)
-        else:
-            first_upper = 65000
-            subsequent_upper = 500
+        # ``args_schema`` guarantees ``dataset_args`` is a MultiTurnDatasetArgs, so
+        # ``mt_args`` (with schema defaults) is always available here.
+        first_upper = _get_range_upper(mt_args.first_turn_length)
+        subsequent_upper = _get_range_upper(mt_args.subsequent_turn_length)
 
         min_tokens_estimate = first_upper + subsequent_upper * (max_turns - 1)
         min_chars = int(min_tokens_estimate * chars_per_token)
 
         logger.info(
             f'Live construction: offset={offset}, min_turns={min_turns}, max_turns={max_turns}, '
-            f'num_workers={num_workers}, min_chars={min_chars}'
+            f'target_count={target_count}, min_chars={min_chars}'
         )
 
-        from modelscope import MsDataset
-        dataset = MsDataset.load(_DEFAULT_DATASET_NAME, split=_DEFAULT_SPLIT)
-
-        target_count = max(1, self.query_parameters.number)
+        dataset = self.load_hub_dataset(dataset_id=_DEFAULT_DATASET_NAME, split=_DEFAULT_SPLIT)
 
         candidates = []
         skipped_short = 0
@@ -381,8 +383,7 @@ class SweSmithDatasetPlugin(DatasetPluginBase):
             candidates.append(messages)
 
         logger.info(
-            f'Pre-filter: {len(candidates)} candidates '
-            f'({skipped_short} too short, {skipped_parse} parse error)'
+            f'Pre-filter: {len(candidates)} candidates ({skipped_short} too short, {skipped_parse} parse error)'
         )
 
         np.random.shuffle(candidates)
@@ -397,14 +398,21 @@ class SweSmithDatasetPlugin(DatasetPluginBase):
         for messages in candidates:
             sampled = self.get_sampled_multi_turn_params()
             num_turns = int(np.random.randint(min_turns, max_turns + 1))
-            work_items.append((
-                messages,
-                self.tokenizer,
-                sampled.get('first_turn_length', 65000),
-                sampled.get('subsequent_turn_length', 500),
-                num_turns,
-            ))
+            work_items.append(
+                (
+                    messages,
+                    self.tokenizer,
+                    sampled.get('first_turn_length', 65000),
+                    sampled.get('subsequent_turn_length', 500),
+                    num_turns,
+                )
+            )
 
+        num_workers = resolve_dataset_generation_workers(
+            args=self.query_parameters,
+            total_count=min(len(work_items), target_count),
+            supports_parallel_generation=True,
+        )
         logger.info(
             f'Building up to {target_count} conversations from {len(work_items)} candidates '
             f'using {num_workers} worker(s)...'
@@ -418,7 +426,7 @@ class SweSmithDatasetPlugin(DatasetPluginBase):
         # possibly pre-warmed HF tokenizer (Rust Rayon threads). fork would inherit
         # these threads' lock states and deadlock on Pool cleanup.
         mp_ctx = multiprocessing.get_context('spawn')
-        pool_ctx = (mp_ctx.Pool(num_workers) if num_workers > 1 else None)
+        pool_ctx = mp_ctx.Pool(num_workers) if num_workers > 1 else None
 
         ctx = pool_ctx if pool_ctx is not None else _NullContext()
         with ctx as pool:
@@ -435,8 +443,7 @@ class SweSmithDatasetPlugin(DatasetPluginBase):
                             pool.terminate()
                         break
 
-        logger.info(f'Built {len(conversations)} conversations '
-                    f'({skipped_build} skipped during build)')
+        logger.info(f'Built {len(conversations)} conversations ({skipped_build} skipped during build)')
 
         if conversations:
             all_turns = [len(conv) for conv in conversations]
@@ -444,21 +451,18 @@ class SweSmithDatasetPlugin(DatasetPluginBase):
             all_last_pt = [conv[-1]['prompt_tokens'] for conv in conversations]
             logger.info(
                 f'  Turns per conversation : min={min(all_turns)}, '
-                f'max={max(all_turns)}, avg={sum(all_turns)/len(all_turns):.1f}'
+                f'max={max(all_turns)}, avg={sum(all_turns) / len(all_turns):.1f}'
             )
             logger.info(
                 f'  First turn prompt tokens: min={min(all_first_pt)}, '
-                f'max={max(all_first_pt)}, avg={sum(all_first_pt)/len(all_first_pt):.0f}'
+                f'max={max(all_first_pt)}, avg={sum(all_first_pt) / len(all_first_pt):.0f}'
             )
             logger.info(
                 f'  Last  turn prompt tokens: min={min(all_last_pt)}, '
-                f'max={max(all_last_pt)}, avg={sum(all_last_pt)/len(all_last_pt):.0f}'
+                f'max={max(all_last_pt)}, avg={sum(all_last_pt) / len(all_last_pt):.0f}'
             )
 
         for conversation in conversations:
-            messages_per_turn: List[Messages] = [turn.get('messages', []) for turn in conversation]
-            if not messages_per_turn:
-                continue
-            yield [
-                Turn(messages=m, is_final=(i == len(messages_per_turn) - 1)) for i, m in enumerate(messages_per_turn)
-            ]
+            turns = _to_turns(conversation)
+            if turns is not None:
+                yield turns

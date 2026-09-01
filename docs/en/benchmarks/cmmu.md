@@ -36,7 +36,7 @@ CMMU is a novel Chinese multi-modal benchmark designed to evaluate domain-specif
 | **Dataset ID** | [evalscope/CMMU](https://modelscope.cn/datasets/evalscope/CMMU/summary) |
 | **Paper** | N/A |
 | **Tags** | `Knowledge`, `MCQ`, `MultiModal`, `QA` |
-| **Metrics** | `acc` |
+| **Metrics** | `accuracy` |
 | **Default Shots** | 0-shot |
 | **Evaluation Split** | `val` |
 
@@ -161,5 +161,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

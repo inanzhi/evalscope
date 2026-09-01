@@ -5,7 +5,7 @@ from evalscope.api.benchmark import BenchmarkMeta, VisionLanguageAdapter
 from evalscope.api.dataset import Sample
 from evalscope.api.messages import ChatMessageUser, Content, ContentImage, ContentText
 from evalscope.api.registry import register_benchmark
-from evalscope.constants import Tags
+from evalscope.constants import ScoringPolicy, Tags
 from evalscope.utils.io_utils import bytes_to_base64, compress_image_to_limit
 from evalscope.utils.logger import get_logger
 
@@ -62,11 +62,10 @@ ZeroBench is a challenging visual reasoning benchmark for Large Multimodal Model
     )
 )
 class ZeroBenchAdapter(VisionLanguageAdapter):
+    scoring_policy = ScoringPolicy.JUDGE_ONLY
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
-        self._use_llm_judge = True
 
     def record_to_sample(self, record: Dict[str, Any]) -> Sample:
         question = record['question_text']
@@ -82,7 +81,7 @@ class ZeroBenchAdapter(VisionLanguageAdapter):
         metadata = {
             'question_id': record['question_id'],
             'question_images': record['question_images'],
-            'image_attribution': record['image_attribution']
+            'image_attribution': record['image_attribution'],
         }
 
         return Sample(

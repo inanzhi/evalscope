@@ -35,7 +35,11 @@ task_config = TaskConfig(
         strategy='function_calling',
         tools=['python_exec'],
         environment='docker',
-        environment_extra={'image': 'python:3.11-slim'},
+        environment_extra={
+            'sandbox_config': {
+                'image': 'python:3.11-slim',
+            },
+        },
         max_steps=5,
         kwargs={'system_prompt': 'Use python_exec to verify your calculations.'},
     ),
@@ -53,9 +57,10 @@ Most-used `NativeAgentConfig` fields:
 |-------|-------------|-------------|
 | `strategy` | Interaction protocol | `function_calling` (default); use `react` or `swe_bench_backticks` if the model lacks function-calling |
 | `tools` | Tool whitelist | On demand, e.g. `['python_exec']` / `['bash']` |
-| `environment` | Where tools run | `local` (dev) / `docker` (production) |
-| `environment_extra` | Sandbox constructor kwargs | For `docker`: `{'image': '...', 'timeout': 60}`; see [Sandbox Environment](../sandbox.md) |
+| `environment` | Where tools or an external agent run | `local` (dev) / `docker` (production) |
+| `environment_extra` | Agent environment constructor options | Docker image, timeout, mounts, and other environment-specific settings |
 | `max_steps` | Max iterations per sample | Math/QA `5-10`, code fixes `100+` |
+| `skills_dir` | Optional host Agent Skills directory | EvalScope makes the skills available before the agent loop starts |
 | `kwargs` | Strategy kwargs | Most commonly `{'system_prompt': '...'}` to steer the model |
 
 Available `strategy` values:
@@ -80,6 +85,12 @@ Available tools (`tools`):
 - `agent_config` also accepts a plain dict; `TaskConfig` converts it to `NativeAgentConfig` automatically.
 ```
 
+## Agent Skills
+
+Set `NativeAgentConfig.skills_dir` to a host directory whose immediate children are skill folders containing
+`SKILL.md`. EvalScope makes those skills available before the agent loop starts, and adds a short prompt hint when
+`skill_prompt_nudge=True`.
+
 ## MCP server tools
 
 Beyond the built-in tools, `NativeAgentConfig` accepts arbitrary [MCP (Model Context Protocol)](https://modelcontextprotocol.io) servers via `mcp_servers` — plug in `fetch`, web search, GitHub, and the rest of the MCP ecosystem without writing a custom EvalScope tool.
@@ -91,6 +102,9 @@ pip install evalscope[mcp]
 ```
 
 `evalscope[mcp]` bundles the official `mcp` Python SDK plus `mcp-server-fetch` (universal HTTP fetching, no API key). Other MCP servers can be installed on demand or run via `uvx` / `npx`.
+
+For search-agent benchmark examples that combine search MCP servers with fetch/browser-style tools, see the
+[DeepSearchQA](../../third_party/deepsearchqa.md) and [WideSearch](../../third_party/wide_search.md) guides.
 
 ### Quick start
 
@@ -151,21 +165,26 @@ All config classes share `name` (display name in logs) and `tools` (tool whiteli
 
 ## SWE-bench agentic benchmarks
 
-The `swe_bench_*_agentic` family (`swe_bench_verified_agentic`, `swe_bench_verified_mini_agentic`, `swe_bench_lite_agentic`) ships its own AgentLoop and **ignores** the global `agent_config`. All loop parameters go through `dataset_args.extra_params`.
+The `swe_bench_*_agentic` family (`swe_bench_verified_agentic`, `swe_bench_verified_mini_agentic`, `swe_bench_lite_agentic`) owns the per-sample Docker environment and required `bash` tool. Explicit `NativeAgentConfig` values can still override loop settings such as strategy and step limit. Keep `dataset_args.extra_params` for benchmark-specific image preparation options.
 
 ```python
+from evalscope.api.agent import NativeAgentConfig
+
 task_config = TaskConfig(
     model='qwen-plus',
     api_url='...',
     api_key='...',
     eval_type='openai_api',
     datasets=['swe_bench_verified_mini_agentic'],
+    agent_config=NativeAgentConfig(
+        strategy='swe_bench_toolcall',
+        max_steps=250,
+    ),
     dataset_args={
         'swe_bench_verified_mini_agentic': {
             'extra_params': {
-                'action_protocol': 'toolcall',  # or 'backticks'
-                'max_steps': 250,
-                'command_timeout': 60.0,
+                'build_docker_images': True,
+                'pull_remote_images_if_available': True,
             },
         },
     },
@@ -175,7 +194,7 @@ task_config = TaskConfig(
 run_task(task_config)
 ```
 
-Common `extra_params` keys: `action_protocol`, `max_steps`, `command_timeout`, `working_dir`. Full reference in the [SWE-bench dataset docs](../../third_party/swe_bench.md).
+Use `NativeAgentConfig(strategy='swe_bench_backticks')` for models that do not support function calling. Common `extra_params` keys are `build_docker_images`, `pull_remote_images_if_available`, and `force_arch`. Full reference in the benchmark docs.
 
 ```{important}
 Prerequisites: `pip install evalscope[swe_bench]`, Docker installed locally.

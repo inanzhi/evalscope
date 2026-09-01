@@ -35,7 +35,7 @@ The CoNLL++ dataset is a corrected and cleaner version of the test set from the 
 | **Dataset ID** | [extraordinarylab/conllpp](https://modelscope.cn/datasets/extraordinarylab/conllpp/summary) |
 | **Paper** | N/A |
 | **Tags** | `Knowledge`, `NER` |
-| **Metrics** | `precision`, `recall`, `f1_score`, `accuracy` |
+| **Metrics** | `precision`, `recall`, `f1`, `accuracy` |
 | **Default Shots** | 5-shot |
 | **Evaluation Split** | `test` |
 | **Train Split** | `train` |
@@ -190,5 +190,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

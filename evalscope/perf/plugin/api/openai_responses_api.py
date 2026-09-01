@@ -13,7 +13,7 @@ from evalscope.perf.multi_turn_args import _sample_int_or_range
 from evalscope.perf.plugin.api.default_api import DefaultApiPlugin, StreamedResponseHandler
 from evalscope.perf.plugin.datasets.utils import load_tokenizer
 from evalscope.perf.plugin.registry import register_api
-from evalscope.perf.utils.benchmark_util import BenchmarkData
+from evalscope.perf.utils.benchmark_util import BenchmarkData, is_stream_body
 from evalscope.utils.logger import get_logger
 
 logger = get_logger()
@@ -92,9 +92,13 @@ class OpenAIResponsesPlugin(DefaultApiPlugin):
                     except Exception:
                         output.error = await response.text()
                     output.success = False
+                    # No SSE response; classify from request body.
+                    if not output.is_stream:
+                        output.is_stream = is_stream_body(body)
                     return output
 
                 if 'text/event-stream' in content_type:
+                    output.is_stream = True
                     handler = StreamedResponseHandler()
                     stream_failed = False
                     async for chunk_bytes in response.content.iter_any():
@@ -172,13 +176,16 @@ class OpenAIResponsesPlugin(DefaultApiPlugin):
             output.success = False
             output.error = ''.join(traceback.format_exception(*sys.exc_info()))
             logger.error(output.error)
+            # Response may not have arrived; classify from request body.
+            if not output.is_stream:
+                output.is_stream = is_stream_body(body)
             return output
 
     @staticmethod
     def _load_query_template(query_template: str) -> Dict:
         if query_template.startswith('@'):
             file_path = query_template[1:]
-            with open(file_path, 'r') as file:
+            with open(file_path, 'r', encoding='utf-8') as file:
                 return json.load(file)
         return json.loads(query_template)
 
@@ -191,7 +198,8 @@ class OpenAIResponsesPlugin(DefaultApiPlugin):
                 output.real_cached_tokens = cached
 
     def _compose_query_from_parameter(self, payload: Dict, param: Arguments) -> Dict:
-        payload['model'] = param.model
+        if param.model is not None:
+            payload['model'] = param.model
         if param.max_tokens is not None:
             payload['max_output_tokens'] = _sample_int_or_range(param.max_tokens)
         if param.stream is not None:
@@ -250,7 +258,8 @@ _DELTA_EVENT_TYPES = {
 
 def _extract_sse_data(message: str) -> str:
     data_lines = []
-    for line in message.splitlines():
+    # SSE lines use CR/LF only; preserve other Unicode line separators in JSON.
+    for line in message.split('\n'):
         line = line.strip()
         if not line or line.startswith(':'):
             continue

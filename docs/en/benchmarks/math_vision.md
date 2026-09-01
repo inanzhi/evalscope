@@ -37,7 +37,7 @@ MATH-Vision (MATH-V) is a meticulously curated dataset of 3,040 high-quality mat
 | **Dataset ID** | [evalscope/MathVision](https://modelscope.cn/datasets/evalscope/MathVision/summary) |
 | **Paper** | N/A |
 | **Tags** | `MCQ`, `Math`, `MultiModal`, `Reasoning` |
-| **Metrics** | `acc` |
+| **Metrics** | `accuracy` |
 | **Default Shots** | 0-shot |
 | **Evaluation Split** | `test` |
 
@@ -153,5 +153,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

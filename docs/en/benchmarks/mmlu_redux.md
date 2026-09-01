@@ -39,7 +39,7 @@ MMLU-Redux is an improved version of the MMLU benchmark with corrected answers. 
 | **Dataset ID** | [AI-ModelScope/mmlu-redux-2.0](https://modelscope.cn/datasets/AI-ModelScope/mmlu-redux-2.0/summary) |
 | **Paper** | N/A |
 | **Tags** | `Knowledge`, `MCQ` |
-| **Metrics** | `acc` |
+| **Metrics** | `accuracy` |
 | **Default Shots** | 0-shot |
 | **Evaluation Split** | `test` |
 
@@ -190,5 +190,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

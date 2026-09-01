@@ -6,8 +6,9 @@ The ``mode`` literal serves as the Pydantic discriminator on the
 :attr:`TaskConfig.agent_config` union.
 """
 
-from pydantic import BaseModel, Field, field_validator
 from typing import Literal, Optional
+
+from pydantic import BaseModel, Field, field_validator
 
 from evalscope.api.agent.types import BaseAgentConfig
 
@@ -29,6 +30,15 @@ class ExternalAgentFramework:
 
     CODEX = 'codex'
     """OpenAI's official ``codex exec`` CLI (uses the Responses API)."""
+
+    OPENCODE = 'opencode'
+    """OpenCode agent (uses OpenAI Responses API via openai provider)."""
+
+    GEMINI_CLI = 'gemini-cli'
+    """Google's ``gemini`` CLI (uses the native Gemini generateContent API)."""
+
+    HERMES = 'hermes'
+    """Nous Research's ``hermes`` agent (uses OpenAI Chat Completions API)."""
 
 
 class BridgeConfig(BaseModel):
@@ -73,5 +83,6 @@ class ExternalAgentConfig(BaseAgentConfig):
     @classmethod
     def _validate_framework(cls, v: str) -> str:
         from evalscope.api.registry import get_runner
+
         get_runner(v)  # raises ValueError with available list on typo
         return v

@@ -12,11 +12,12 @@ Sample; ``_on_inference`` makes one chat completion call with a per-sample
 ``extra_body`` and catches BadRequestError as the success signal when a
 reject was expected.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from evalscope.api.benchmark import BenchmarkMeta, VendorVerifierAdapter
+from evalscope.api.benchmark import BenchmarkMeta, FunctionCallAdapter
 from evalscope.api.dataset import DatasetDict, MemoryDataset, Sample
 from evalscope.api.evaluator import TaskState
 from evalscope.api.messages import ChatMessageUser
@@ -26,6 +27,7 @@ from evalscope.api.model.model import Model, ModelOutput
 from evalscope.api.registry import register_benchmark
 from evalscope.constants import Tags
 from evalscope.utils.logger import get_logger
+
 from .param_spec import IMMUTABLE_PARAMS, thinking_extra_body
 
 logger = get_logger()
@@ -69,7 +71,7 @@ Kimi-Vendor-Verifier is a pre-flight compliance check for Kimi K2 / K2-Thinking 
 @register_benchmark(
     BenchmarkMeta(
         name='kimi_verifier',
-        pretty_name='Kimi-Vendor-Verifier (Param Compliance)',
+        pretty_name='Kimi-Vendor-Verifier',
         description=KIMI_VERIFIER_DESCRIPTION,
         tags=[Tags.FUNCTION_CALLING, Tags.AGENT],
         dataset_id='kimi_verifier',  # synthetic; placeholder
@@ -78,16 +80,15 @@ Kimi-Vendor-Verifier is a pre-flight compliance check for Kimi K2 / K2-Thinking 
             'param_default_accept_rate',
             'inference_error_rate',
         ],
+        primary_metric='param_immutable_reject_rate',
         aggregation='mean',
         subset_list=list(_THINK_MODES),
         eval_split='test',
     )
 )
-class KimiVerifierAdapter(VendorVerifierAdapter):
-
+class KimiVerifierAdapter(FunctionCallAdapter):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.add_aggregation_name = False
 
     # --------------------------------------------------------------------
     # Synthetic dataset
@@ -255,7 +256,7 @@ class KimiVerifierAdapter(VendorVerifierAdapter):
                 'passed': 0,
             }
         else:
-            passed = (was_rejected == expected_reject)
+            passed = was_rejected == expected_reject
             score.value = {
                 'inference_error': 0,
                 'expected_reject': int(expected_reject),
@@ -304,6 +305,6 @@ class KimiVerifierAdapter(VendorVerifierAdapter):
                 metric_name='inference_error_rate',
                 score=inference_errors / total if total else 0.0,
                 num=total,
-                metadata={'inference_errors': inference_errors}
+                metadata={'inference_errors': inference_errors},
             ),
         ]

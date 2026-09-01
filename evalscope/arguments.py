@@ -3,11 +3,10 @@ import argparse
 import ast
 import json
 
-from evalscope.constants import EvalBackend, EvalType, JudgeStrategy, ModelTask
+from evalscope.constants import EvalBackend, EvalType, ModelTask
 
 
 class ParseStrArgsAction(argparse.Action):
-
     def __call__(self, parser, namespace, values, option_string=None):
         assert isinstance(values, str), 'args should be a string.'
 
@@ -70,6 +69,7 @@ def add_argument(parser: argparse.ArgumentParser):
                             EvalType.LITELLM,
                             EvalType.MOCK_LLM,
                             EvalType.TEXT2IMAGE,
+                            EvalType.TEXT2SPEECH,
                             EvalType.IMAGE_EDITING,
                             EvalType.CUSTOM,
                         ],
@@ -77,7 +77,12 @@ def add_argument(parser: argparse.ArgumentParser):
     parser.add_argument('--eval-backend', type=str, help='The evaluation backend to use.',
                         choices=[EvalBackend.NATIVE, EvalBackend.OPEN_COMPASS, EvalBackend.VLM_EVAL_KIT, EvalBackend.RAG_EVAL])  # noqa: E501
     parser.add_argument('--eval-config', type=str, required=False, help='The eval task config file path for evaluation backend.')  # noqa: E501
-    parser.add_argument('--eval-batch-size', type=int, default=1, help='The batch size for evaluation.')
+    parser.add_argument(
+        '--eval-batch-size',
+        type=int,
+        default=None,
+        help='The batch size for evaluation. Defaults to 1, or 8 for remote API eval types.'
+    )
     parser.add_argument('--limit', type=float, default=None, help='Max evaluation samples num for each subset.')
     parser.add_argument('--repeats', type=int, default=1, help='Number of times to repeat the dataset items for k-metrics.')  # noqa: E501
 
@@ -97,10 +102,10 @@ def add_argument(parser: argparse.ArgumentParser):
     parser.add_argument('--timeout', type=float, default=None, help='[Deprecated] Use --generation-config timeout=... instead. Will be removed in v2.0.0.')  # noqa: E501
     parser.add_argument('--stream', action='store_true', default=None, help='[Deprecated] Use --generation-config stream=True instead. Will be removed in v2.0.0.')  # noqa: E501
 
-    # LLMJudge arguments
-    parser.add_argument('--judge-strategy', type=str, default=JudgeStrategy.AUTO, help='The judge strategy.')
-    parser.add_argument('--judge-model-args', type=json.loads, default='{}', help='The judge model args, should be a json string.')  # noqa: E501
-    parser.add_argument('--judge-worker-num', type=int, default=1, help='The number of workers for the judge model.')
+    # Native judge arguments
+    parser.add_argument('--judge', type=json.loads, default=None, help='The typed judge configuration as a JSON object.')
+    parser.add_argument('--judge-strategy', type=str, default=None, help='[Deprecated] Use --judge JSON instead.')
+    parser.add_argument('--judge-model-args', type=json.loads, default=None, help='[Deprecated] Use --judge JSON instead.')
     parser.add_argument('--analysis-report', action='store_true', default=False, help='Generate analysis report for the evaluation results using judge model.')  # noqa: E501
     parser.add_argument('--collect-perf', action=argparse.BooleanOptionalAction, default=True, help='Collect per-request performance metrics (latency, TTFT, token usage) during evaluation. TTFT requires streaming (--generation-config stream=True). Use --no-collect-perf to disable.')  # noqa: E501
 
@@ -116,6 +121,7 @@ def add_argument(parser: argparse.ArgumentParser):
     parser.add_argument('--use-sandbox', action='store_true', default=False, help='[Deprecated] Use --sandbox instead. Whether to use sandbox for model evaluation.')  # noqa: E501
     parser.add_argument('--sandbox-type', type=str, default='docker', help='[Deprecated] Use --sandbox instead. The sandbox type to use (e.g., docker, volcengine).')  # noqa: E501
     parser.add_argument('--sandbox-manager-config', type=json.loads, default='{}', help='[Deprecated] Use --sandbox instead. The sandbox manager config, should be a json string.')  # noqa: E501
+
     # yapf: enable
 
 

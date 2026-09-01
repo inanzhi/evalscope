@@ -4,7 +4,7 @@ from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
 from evalscope.api.benchmark import BenchmarkMeta, DataAdapter, DefaultDataAdapter
-from evalscope.api.dataset import DatasetDict, LocalDataLoader, Sample
+from evalscope.api.dataset import DatasetDict, Sample, load_local_file_dataset, resolve_snapshot_or_local_path
 from evalscope.api.evaluator import TaskState
 from evalscope.api.metric.scorer import AggScore, SampleScore
 from evalscope.api.registry import get_benchmark, register_benchmark
@@ -15,6 +15,19 @@ from evalscope.report.report import Report
 from evalscope.utils.logger import get_logger
 
 logger = get_logger()
+
+SAMPLE_COLUMNS = [
+    'task_type',
+    'categories',
+    'dataset_name',
+    'subset_name',
+    'tags',
+    'sample_id',
+    'metric',
+    'score',
+    'sample_weight',
+]
+"""Columns of the per-sample aggregation frame, declared so an all-excluded run still has them."""
 
 
 @register_benchmark(
@@ -56,7 +69,6 @@ Data-Collection is a flexible framework for mixing multiple evaluation datasets 
     )
 )
 class DataCollectionAdapter(DefaultDataAdapter):
-
     def __init__(self, **kwargs):
         """
         Data adapter for collection dataset.
@@ -64,28 +76,17 @@ class DataCollectionAdapter(DefaultDataAdapter):
         super().__init__(**kwargs)
 
     def load(self):
-        # Try to load dataset from local disk
-        dataset_name_or_path = self.dataset_id
-        if os.path.exists(dataset_name_or_path):
-            logger.info(f'Loading dataset from {dataset_name_or_path}')
-            dataset_path = dataset_name_or_path
-        else:
-            from modelscope import dataset_snapshot_download
-
-            # Load dataset from remote
-            logger.info(f'Loading dataset from modelscope: > dataset_name: {dataset_name_or_path}')
-            # download dataset snapshot
-            dataset_path = dataset_snapshot_download(dataset_name_or_path, allow_file_pattern='*.jsonl')
-
-        dataset = LocalDataLoader(
-            data_id_or_path=dataset_path,
+        dataset_path = resolve_snapshot_or_local_path(self, allow_file_pattern='*.jsonl')
+        dataset = load_local_file_dataset(
+            adapter=self,
+            dataset_path=dataset_path,
+            subset='test',  # NOTE: using hardcoded test subset
             split=self.eval_split,
             sample_fields=self.record_to_sample,
-            subset='test',  # NOTE: using hardcoded test subset
             limit=self.limit,
             repeats=self.repeats,
             shuffle=self.shuffle,
-        ).load()
+        )
 
         test_dataset = DatasetDict({self.default_subset: dataset})
 
@@ -160,12 +161,9 @@ class DataCollectionAdapter(DefaultDataAdapter):
         # Compute all reports from sample-level data; macro is hierarchical where applicable
         subset_report_df = self._group_and_compute(df, ['task_type', 'dataset_name', 'subset_name'])
         # Only keep micro_avg. for subset level (drop macro_avg. and weighted_avg.)
-        subset_report_df = [{
-            k: v
-            for k, v in row.items()
-            if k not in ('macro_avg.', 'weighted_avg.')
-        }
-                            for row in subset_report_df]  # noqa
+        subset_report_df = [
+            {k: v for k, v in row.items() if k not in ('macro_avg.', 'weighted_avg.')} for row in subset_report_df
+        ]  # noqa
         dataset_report_df = self._group_and_compute(df, ['task_type', 'dataset_name'], macro_child='subset_name')
         task_report_df = self._group_and_compute(df, ['task_type'], macro_child='subset_name')
         tag_report_df = self._build_tag_level_report(df)
@@ -183,6 +181,7 @@ class DataCollectionAdapter(DefaultDataAdapter):
 
     def generate_report(self, scores, model_name, output_dir, **kwargs) -> Report:
         import json
+
         from tabulate import tabulate
 
         df_dict = scores[self.default_subset]
@@ -217,20 +216,29 @@ class DataCollectionAdapter(DefaultDataAdapter):
             main_metric = sample_score.score.main_score_name
             sample_weight = float(collection_info.get('weight', 1.0))
 
+            # A sample whose judge review was unusable has no value and no main score; it is
+            # excluded from every aggregate rather than counted as 0.
+            if main_score is None:
+                continue
+
             # Each row represents one sample
-            records.append({
-                'task_type': collection_info['task_type'],
-                'categories': tuple(collection_info['categories']),
-                'dataset_name': collection_info['dataset_name'],
-                'subset_name': collection_info['subset_name'],
-                'tags': collection_info['tags'],
-                'sample_id': sample_score.sample_id,
-                'metric': main_metric,
-                'score': main_score,
-                'sample_weight': sample_weight,
-            })
+            records.append(
+                {
+                    'task_type': collection_info['task_type'],
+                    'categories': tuple(collection_info['categories']),
+                    'dataset_name': collection_info['dataset_name'],
+                    'subset_name': collection_info['subset_name'],
+                    'tags': collection_info['tags'],
+                    'sample_id': sample_score.sample_id,
+                    'metric': main_metric,
+                    'score': main_score,
+                    'sample_weight': sample_weight,
+                }
+            )
         # NOTE: All sample weights are assumed (as per new requirement) to sum to ~1 globally.
-        return pd.DataFrame(records)
+        # The columns are declared so that an all-excluded run still yields a frame every groupby
+        # and the report generator can read, rather than a column-less frame that raises KeyError.
+        return pd.DataFrame(records, columns=SAMPLE_COLUMNS)
 
     def _group_and_compute(self, df, group_cols, macro_child: Optional[str] = None):
         """
@@ -246,7 +254,7 @@ class DataCollectionAdapter(DefaultDataAdapter):
         grouped = df.groupby(group_cols)
         for keys, g in grouped:
             if not isinstance(keys, tuple):
-                keys = (keys, )
+                keys = (keys,)
             base = {col: key for col, key in zip(group_cols, keys)}
 
             scores = g['score']
@@ -291,6 +299,9 @@ class DataCollectionAdapter(DefaultDataAdapter):
         Category-level hierarchical aggregation using sample-level weights.
         Macro is the mean of subset-level micro averages.
         """
+        if df.empty:
+            # No sample means no category depth to expand, and grouping on no column raises.
+            return []
         df_categories = df.copy()
         max_depth = df_categories['categories'].apply(len).max()
         for level in range(max_depth):

@@ -38,7 +38,7 @@ CL-bench represents a step towards building LMs with this fundamental capability
 | **Dataset ID** | [tencent-community/CL-bench](https://modelscope.cn/datasets/tencent-community/CL-bench/summary) |
 | **Paper** | N/A |
 | **Tags** | `InstructionFollowing`, `Reasoning` |
-| **Metrics** | `acc` |
+| **Metrics** | `accuracy` |
 | **Default Shots** | 0-shot |
 | **Evaluation Split** | `train` |
 
@@ -125,5 +125,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

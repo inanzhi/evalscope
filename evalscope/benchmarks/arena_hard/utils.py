@@ -1,21 +1,14 @@
 import math
-import numpy as np
-import pandas as pd
 import re
 from collections import defaultdict
+
+import numpy as np
+import pandas as pd
 from tqdm import tqdm
 
 from evalscope.utils.logger import get_logger
 
 logger = get_logger()
-
-
-def post_process_arenahard(completion):
-    result = re.findall(r'\[\[([AB<>=]+)\]\]', completion)
-    if result:
-        return result[0]
-    else:
-        return None
 
 
 def get_judge_score(result, reverse=False):
@@ -80,6 +73,9 @@ def get_battles_from_row(row, first_game_only=False, multiplier=3):
     if first_game_only:
         return pd.DataFrame(results)
 
+    if len(row['games']) == 1:
+        return pd.DataFrame(results)
+
     # game 2
     output = {'model_a': row['model_a'], 'model_b': row['model_b']}
 
@@ -127,7 +123,7 @@ def compute_mle_elo(df, SCALE=400, BASE=10, INIT_RATING=1000):
     # one tie => one A win + one B win
     # find tie + tie (both bad) index
     tie_idx = (df['winner'] == 'tie') | (df['winner'] == 'tie (bothbad)')
-    tie_idx[len(tie_idx) // 2:] = False
+    tie_idx[len(tie_idx) // 2 :] = False
     Y[tie_idx] = 1.0
 
     if len(np.unique(Y)) < 2:
@@ -140,6 +136,7 @@ def compute_mle_elo(df, SCALE=400, BASE=10, INIT_RATING=1000):
         return elo_scores.sort_values(ascending=False)
 
     from sklearn.linear_model import LogisticRegression
+
     lr = LogisticRegression(
         fit_intercept=False, penalty=None, tol=1e-8
     )  # May need to set a small value when not use GPT4 as judge model
@@ -168,7 +165,7 @@ def predict_win_rate(elo_ratings, SCALE=400, BASE=10, INIT_RATING=1000):
     wins = defaultdict(lambda: defaultdict(lambda: 0))
     for a in names:
         for b in names:
-            ea = 1 / (1 + BASE**((elo_ratings[b] - elo_ratings[a]) / SCALE))
+            ea = 1 / (1 + BASE ** ((elo_ratings[b] - elo_ratings[a]) / SCALE))
             wins[a][b] = ea
             wins[b][a] = 1 - ea
 

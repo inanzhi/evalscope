@@ -1,4 +1,4 @@
-"""Unified per-sample sandbox environment backed by ms_enclave.
+"""Unified per-sample agent environment backed by ms_enclave.
 
 ``EnclaveAgentEnvironment`` is the single implementation powering the
 ``enclave`` / ``docker`` / ``volcengine`` registry aliases, supporting any
@@ -19,9 +19,11 @@ shared ``atexit`` hook.
 
 from __future__ import annotations
 
+import re
 import shlex
 import time
-from typing import Any, Dict, List, Optional, Union
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 from evalscope.api.agent import AgentEnvironment
 from evalscope.api.agent.types import ExecResult
@@ -42,6 +44,64 @@ logger = get_logger()
 _DEFAULT_DOCKER_IMAGE = 'python:3.11-slim'
 _DEFAULT_WORKDIR = '/workspace'
 _DEFAULT_TOOLS: List[str] = ['shell_executor', 'python_executor']
+_DEFAULT_INTERPRETER: List[str] = ['bash', '-c']
+_ENV_KEY_PATTERN = r'[A-Za-z_][A-Za-z0-9_]*'
+
+
+def _unwrap_bash_c(cmd: Any) -> Optional[str]:
+    """Return the payload for common bash-tool wrappers."""
+    if not isinstance(cmd, (list, tuple)) or len(cmd) != 3:
+        return None
+    executable, flag, command = cmd
+    if executable not in {'bash', '/bin/bash'} or flag != '-c' or not isinstance(command, str):
+        return None
+    return command
+
+
+def _interpreter_is_bash(interpreter: Sequence[str]) -> bool:
+    executable = interpreter[0]
+    return executable == 'bash' or executable.endswith('/bash')
+
+
+def _render_env_exports(env: Dict[str, str]) -> str:
+    exports = []
+    for raw_key, raw_value in env.items():
+        key = str(raw_key)
+        if not re.fullmatch(_ENV_KEY_PATTERN, key):
+            raise ValueError(f'Invalid environment variable name: {key!r}')
+        exports.append(f'export {key}={shlex.quote(str(raw_value))};')
+    return ' '.join(exports)
+
+
+def _render_command(
+    cmd: List[str],
+    *,
+    interpreter: Sequence[str],
+    cwd: Optional[str],
+    env: Optional[Dict[str, str]],
+) -> str:
+    unwrapped_command = _unwrap_bash_c(cmd) if _interpreter_is_bash(interpreter) else None
+    if unwrapped_command is not None:
+        command = unwrapped_command
+    elif isinstance(cmd, list):
+        command = ' '.join(shlex.quote(c) for c in cmd)
+    else:
+        command = str(cmd)
+    if cwd:
+        command = f'cd {shlex.quote(cwd)} && {command}'
+    if env:
+        prefix = _render_env_exports(env)
+        command = f'{prefix} {command}' if prefix else command
+    return command
+
+
+def _returncode_from_status(status: Any, stderr: str, timed_out: bool, success_status: Any) -> int:
+    if status == success_status:
+        return 0
+    if timed_out:
+        return -1
+    match = re.search(r'exit code (\d+)', stderr)
+    return int(match.group(1)) if match else 1
 
 
 @register_environment(['enclave', 'docker', 'volcengine'])
@@ -63,7 +123,12 @@ class EnclaveAgentEnvironment(AgentEnvironment):
         (e.g. ``base_url`` / ``region`` / credentials).
     timeout:
         Default command timeout (seconds) used when :meth:`exec` is called
-        without an explicit timeout.
+        without an explicit timeout. ``None`` uses the runtime default.
+    interpreter:
+        Command interpreter argv prefix. The rendered command string is
+        appended as the final argument. Defaults to ``['bash', '-c']`` for
+        backward compatibility; benchmark adapters may use ``['bash', '-lc']``
+        when login-shell initialization is required.
     """
 
     name: str = 'enclave'
@@ -74,7 +139,8 @@ class EnclaveAgentEnvironment(AgentEnvironment):
         engine: Union[str, SandboxEngine] = SandboxEngine.DOCKER,
         sandbox_config: Optional[Dict[str, Any]] = None,
         manager_config: Optional[Dict[str, Any]] = None,
-        timeout: float = 60.0,
+        timeout: Optional[float] = None,
+        interpreter: Optional[Sequence[str]] = None,
         **_: Any,
     ) -> None:
         # ms_enclave is mandatory for this environment. Fail fast at construction
@@ -83,7 +149,18 @@ class EnclaveAgentEnvironment(AgentEnvironment):
         check_import('ms_enclave', extra='sandbox', raise_error=True, feature_name='EnclaveAgentEnvironment')
 
         self._engine: SandboxEngine = resolve_engine(engine)
-        self._timeout = float(timeout)
+        self._timeout = 60.0 if timeout is None else float(timeout)
+        if isinstance(interpreter, str):
+            raise TypeError(
+                'EnclaveAgentEnvironment.interpreter must be a non-empty sequence of non-empty strings, '
+                'not a single string.'
+            )
+        self._interpreter: List[str] = list(_DEFAULT_INTERPRETER if interpreter is None else interpreter)
+        invalid_interpreter = not self._interpreter or any(
+            not isinstance(part, str) or not part for part in self._interpreter
+        )
+        if invalid_interpreter:
+            raise ValueError('EnclaveAgentEnvironment.interpreter must be a non-empty sequence of non-empty strings.')
         self._manager_config: Dict[str, Any] = dict(manager_config or {})
         self._sandbox_config_dict: Dict[str, Any] = self._apply_engine_defaults(dict(sandbox_config or {}))
         self._handle: Optional[SandboxHandle] = None
@@ -137,8 +214,7 @@ class EnclaveAgentEnvironment(AgentEnvironment):
                 manager_config=self._manager_config or None,
             )
             logger.debug(
-                f'EnclaveAgentEnvironment: sandbox {self._handle.sandbox_id} ready '
-                f'(engine={self._engine.value}).'
+                f'EnclaveAgentEnvironment: sandbox {self._handle.sandbox_id} ready (engine={self._engine.value}).'
             )
         return self._handle
 
@@ -156,24 +232,12 @@ class EnclaveAgentEnvironment(AgentEnvironment):
         env: Optional[Dict[str, str]] = None,
     ) -> ExecResult:
         handle = await self._ensure_sandbox()
-
-        if isinstance(cmd, list):
-            command = ' '.join(shlex.quote(c) for c in cmd)
-        else:
-            command = str(cmd)
-        if env:
-            # Prepend ``KEY=VAL`` pairs so the agent CLI inherits them.
-            # Using ``env -- ... <cmd>`` would be cleaner but is not always
-            # available inside minimal images; inline assignment works in any
-            # POSIX shell.
-            prefix = ' '.join(f'{k}={shlex.quote(v)}' for k, v in env.items())
-            command = f'{prefix} {command}' if prefix else command
-        if cwd:
-            command = f'cd {shlex.quote(cwd)} && {command}'
+        command = _render_command(cmd, interpreter=self._interpreter, cwd=cwd, env=env)
 
         # ms_enclave's shell_executor splits a bare string with no shell
-        # wrapping; wrap as ``bash -c`` so cd/&&/env-prefix/quoting survive.
-        shell_argv = ['bash', '-c', command]
+        # wrapping; use an explicit interpreter so cd/&&/env-prefix/quoting
+        # survive, while allowing benchmarks to request login-shell setup.
+        shell_argv = [*self._interpreter, command]
 
         timeout_s = float(timeout or self._timeout)
 
@@ -195,15 +259,7 @@ class EnclaveAgentEnvironment(AgentEnvironment):
         stdout = str(result.output or '')
         stderr = str(result.error or '')
         timed_out = result.status == ExecutionStatus.TIMEOUT
-
-        if result.status == ExecutionStatus.SUCCESS:
-            returncode = 0
-        elif timed_out:
-            returncode = -1
-        else:
-            import re as _re
-            _m = _re.search(r'exit code (\d+)', stderr)
-            returncode = int(_m.group(1)) if _m else 1
+        returncode = _returncode_from_status(result.status, stderr, timed_out, ExecutionStatus.SUCCESS)
 
         # Prefer upstream-reported time when it's a positive number;
         # otherwise fall back to our locally measured wall-clock.
@@ -217,6 +273,13 @@ class EnclaveAgentEnvironment(AgentEnvironment):
             timed_out=timed_out,
             duration=duration,
         )
+
+    async def put_dir(self, source_dir: str | Path, target_dir: str) -> None:
+        """Copy a host directory into the sandbox."""
+        handle = await self._ensure_sandbox()
+        ok = await handle.put_dir(source_dir, target_dir)
+        if not ok:
+            raise RuntimeError(f'EnclaveAgentEnvironment.put_dir failed to copy {source_dir} into {target_dir}')
 
     async def close(self) -> None:
         """Release the per-sample sandbox (idempotent)."""

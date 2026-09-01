@@ -7,6 +7,7 @@ files for benchmark datasets, including metadata, statistics, examples,
 and usage instructions.
 """
 
+import json
 import os
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
@@ -15,7 +16,7 @@ from evalscope.utils.logger import get_logger
 logger = get_logger()
 
 # Standard README template with all sections
-README_TEMPLATE = '''# {pretty_name}
+README_TEMPLATE = """# {pretty_name}
 
 {description}
 
@@ -45,7 +46,7 @@ README_TEMPLATE = '''# {pretty_name}
 {extra_params_section}{sandbox_config_section}
 {usage_section}
 
-'''
+"""
 
 
 def _format_dataset_link(dataset_id: str) -> str:
@@ -197,6 +198,7 @@ def _format_usage_section(
     subsets: Optional[List[str]] = None,
     sandbox_config: Optional[Dict] = None,
     extra_params: Optional[Dict] = None,
+    agent_config: Optional[Dict] = None,
 ) -> str:
     """
     Format the usage section with CLI and Python examples.
@@ -206,6 +208,7 @@ def _format_usage_section(
         subsets: List of subset names (if any)
         sandbox_config: Sandbox configuration (if any)
         extra_params: Extra parameters configuration (if any)
+        agent_config: Built-in AgentLoop defaults (if this is an agent-loop benchmark)
 
     Returns:
         Formatted usage section markdown string
@@ -229,35 +232,55 @@ def _format_usage_section(
         f'    --datasets {name} \\',
     ]
     if sandbox_config:
-        cli_lines.append("    --sandbox '{\"enabled\": true}' \\")
+        cli_lines.append('    --sandbox \'{"enabled": true}\' \\')
+    emit_agent_config = bool(agent_config and agent_config.get('strategy') and agent_config.get('max_steps'))
+    if emit_agent_config:
+        cli_agent_config = json.dumps(
+            {
+                'mode': 'native',
+                'strategy': agent_config.get('strategy'),
+                'max_steps': agent_config.get('max_steps'),
+            },
+            separators=(',', ':'),
+        )
+        cli_lines.append(f"    --agent-config '{cli_agent_config}' \\")
     cli_lines.append('    --limit 10  # Remove this line for formal evaluation')
 
     # Build Python code
     python_dataset_args = ''
     if dataset_args_comments:
-        python_dataset_args = f'''    dataset_args={{
+        python_dataset_args = f"""    dataset_args={{
         '{name}': {{
 {chr(10).join(dataset_args_comments)}
         }}
     }},
-'''
+"""
 
     python_use_sandbox = "    sandbox={'enabled': True},\n" if sandbox_config else ''
+    python_imports = ['from evalscope import run_task', 'from evalscope.config import TaskConfig']
+    python_agent_config = ''
+    if emit_agent_config:
+        python_imports = ['from evalscope import TaskConfig, run_task']
+        python_imports.append('from evalscope.api.agent import NativeAgentConfig')
+        python_agent_config = f"""    agent_config=NativeAgentConfig(
+        strategy='{agent_config.get('strategy')}',
+        max_steps={agent_config.get('max_steps')},
+    ),
+"""
 
-    python_code = f'''from evalscope import run_task
-from evalscope.config import TaskConfig
+    python_code = f"""{chr(10).join(python_imports)}
 
 task_cfg = TaskConfig(
     model='YOUR_MODEL',
     api_url='OPENAI_API_COMPAT_URL',
     api_key='EMPTY_TOKEN',
     datasets=['{name}'],
-{python_use_sandbox}{python_dataset_args}    limit=10,  # Remove this line for formal evaluation
+{python_use_sandbox}{python_agent_config}{python_dataset_args}    limit=10,  # Remove this line for formal evaluation
 )
 
-run_task(task_cfg=task_cfg)'''
+run_task(task_cfg=task_cfg)"""
 
-    return f'''## Usage
+    return f"""## Usage
 
 ### Using CLI
 
@@ -270,7 +293,7 @@ run_task(task_cfg=task_cfg)'''
 ```python
 {python_code}
 ```
-'''
+"""
 
 
 def _format_statistics_section_from_dict(statistics: Optional[Dict]) -> str:
@@ -339,8 +362,7 @@ def _format_multimodal_statistics_from_dict(multimodal: Dict) -> str:
         resolution_range = image_stats.get('resolution_range')
         if resolution_range and (resolution_range.get('min') or resolution_range.get('max')):
             lines.append(
-                f'| Resolution Range | {resolution_range.get("min", "N/A")} - '
-                f'{resolution_range.get("max", "N/A")} |'
+                f'| Resolution Range | {resolution_range.get("min", "N/A")} - {resolution_range.get("max", "N/A")} |'
             )
 
         formats = image_stats.get('formats', [])
@@ -492,6 +514,7 @@ def generate_readme_from_dict(
             subsets=subsets,
             sandbox_config=meta.get('sandbox_config'),
             extra_params=meta.get('extra_params'),
+            agent_config=meta.get('agent_config'),
         ),
     )
 

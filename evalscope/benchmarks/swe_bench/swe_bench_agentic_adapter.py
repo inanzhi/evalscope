@@ -5,12 +5,13 @@ SWE-bench Docker container as the execution sandbox.  Mirrors the original
 ``mini-swe-agent`` ``swebench.yaml`` (toolcall mainline) and
 ``swebench_backticks.yaml`` (textbased fallback) configurations.
 
-Three benchmarks are registered alongside the original oracle adapters
+Benchmarks are registered alongside the original oracle adapters
 (without disrupting them):
 
 - ``swe_bench_verified_agentic``
 - ``swe_bench_verified_mini_agentic``
 - ``swe_bench_lite_agentic``
+- ``swe_bench_multilingual_agentic``
 
 The original ``swe_bench_verified`` / ``swe_bench_verified_mini`` /
 ``swe_bench_lite`` benchmarks remain single-turn oracle-text evaluations
@@ -19,11 +20,12 @@ and are not affected.
 
 from __future__ import annotations
 
+import ast
 import json
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from evalscope.agent.tools.bash import BASH_TOOL_INFO, run_bash
-from evalscope.api.agent import AgentEnvironment, AgentStrategy
+from evalscope.api.agent import AgentEnvironment
 from evalscope.api.benchmark import BenchmarkMeta
 from evalscope.api.benchmark.adapters import AgentLoopAdapter
 from evalscope.api.dataset import FieldSpec, RemoteDataLoader, Sample
@@ -31,14 +33,20 @@ from evalscope.api.evaluator import TaskState
 from evalscope.api.messages import ChatMessageUser
 from evalscope.api.metric import Score
 from evalscope.api.registry import register_benchmark
+from evalscope.api.sandbox import merge_sandbox_config_dicts
 from evalscope.constants import Tags
 from evalscope.utils.import_utils import check_import, is_build_doc
 from evalscope.utils.logger import get_logger
 
 if TYPE_CHECKING:
     from evalscope.agent.external.runners import AgentRunResult
+    from evalscope.api.agent import AgentStrategy
 
 logger = get_logger()
+
+# SWE-bench images activate their per-instance testbed from shell startup files;
+# mini-swe-agent's DockerEnvironment therefore runs commands through bash -lc.
+_SWE_BENCH_INTERPRETER: tuple[str, ...] = ('bash', '-lc')
 
 # ---------------------------------------------------------------------------
 # instance_template — mirrors mini-swe-agent swebench.yaml
@@ -159,27 +167,6 @@ If the command fails (nonzero exit status), it will not submit.
 # ---------------------------------------------------------------------------
 
 _AGENTIC_EXTRA_PARAMS: Dict[str, Any] = {
-    'action_protocol': {
-        'type': 'str',
-        'description': (
-            'Agent action protocol: "toolcall" (mainline OpenAI '
-            'function-calling, mirrors mini-swe-agent swebench.yaml) or '
-            '"backticks" (textbased mswea_bash_command fallback for models '
-            'without function-calling support).'
-        ),
-        'value': 'toolcall',
-        'choices': ['toolcall', 'backticks'],
-    },
-    'max_steps': {
-        'type': 'int',
-        'description': 'Maximum number of agent steps per sample.',
-        'value': 250,
-    },
-    'command_timeout': {
-        'type': 'float',
-        'description': 'Default per-bash-command timeout in seconds.',
-        'value': 60.0,
-    },
     'build_docker_images': {
         'type': 'bool',
         'description': 'Build Docker images locally for each sample.',
@@ -196,6 +183,11 @@ _AGENTIC_EXTRA_PARAMS: Dict[str, Any] = {
         'value': '',
         'choices': ['', 'arm64', 'x86_64'],
     },
+    'dockerhub_username': {
+        'type': 'str',
+        'description': 'DockerHub user/org namespace for remote SWE-bench images.',
+        'value': 'swebench',
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -210,24 +202,40 @@ class _SWEBenchAgenticAdapterBase(AgentLoopAdapter):
     is identical otherwise.
     """
 
+    strategy_name = 'swe_bench_toolcall'
+    max_steps_default = 250
+
+    @staticmethod
+    def _parse_test_list(value: Any) -> List[str]:
+        """Return SWE-bench test lists from either JSON strings or native lists."""
+        if value is None or value == '':
+            return []
+        if isinstance(value, list):
+            return value
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                try:
+                    parsed = ast.literal_eval(value)
+                except (ValueError, SyntaxError) as e:
+                    raise TypeError(f'Unsupported SWE-bench test list value: {value!r}') from e
+            if isinstance(parsed, list):
+                return parsed
+            raise TypeError(f'Unsupported SWE-bench test list value: {value!r}')
+        raise TypeError(f'Unsupported SWE-bench test list type: {type(value).__name__}')
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
 
         check_import('swebench', extra='swe_bench', raise_error=True, feature_name=self.pretty_name)
 
-        self.action_protocol: str = self.extra_params.get('action_protocol', 'toolcall')
-        if self.action_protocol not in {'toolcall', 'backticks'}:
-            raise ValueError(
-                f'Invalid action_protocol={self.action_protocol!r}; '
-                "must be 'toolcall' or 'backticks'."
-            )
-        self.max_steps = int(self.extra_params.get('max_steps', 250))
-        self.command_timeout = float(self.extra_params.get('command_timeout', 60.0))
         # Hardcoded: must match the /testbed path used by swebench harness eval_script.
         self.working_dir: str = '/testbed'
         self.build_docker_images: bool = self.extra_params.get('build_docker_images', True)
         self.pull_remote_images_if_available: bool = self.extra_params.get('pull_remote_images_if_available', True)
         self.force_arch: str = self.extra_params.get('force_arch', '')
+        self.dockerhub_username: str = self.extra_params.get('dockerhub_username') or 'swebench'
 
         # Skip docker image build/pull during documentation generation (BUILD_DOC=1)
         # to avoid slow/unnecessary image pulls when running `make docs-pipeline`.
@@ -250,12 +258,12 @@ class _SWEBenchAgenticAdapterBase(AgentLoopAdapter):
                 'instance_id': record['instance_id'],
                 'base_commit': record['base_commit'],
                 'patch': record['patch'],
-                'PASS_TO_PASS': json.loads(record['PASS_TO_PASS']),
-                'FAIL_TO_PASS': json.loads(record['FAIL_TO_PASS']),
+                'PASS_TO_PASS': self._parse_test_list(record['PASS_TO_PASS']),
+                'FAIL_TO_PASS': self._parse_test_list(record['FAIL_TO_PASS']),
                 'test_patch': record['test_patch'],
                 'version': record['version'],
                 'repo': record['repo'],
-                'environment_setup_commit': record['environment_setup_commit'],
+                'environment_setup_commit': record.get('environment_setup_commit'),
                 'hints_text': record['hints_text'],
                 'created_at': record['created_at'],
             },
@@ -275,12 +283,19 @@ class _SWEBenchAgenticAdapterBase(AgentLoopAdapter):
                 max_workers=4,
                 use_remote_images=self.pull_remote_images_if_available,
                 force_arch=self.force_arch,
+                dockerhub_username=self.dockerhub_username,
             )
 
             def docker_image_from_id(instance_id: str) -> str:
                 return id_to_docker_image_map.get(instance_id, '')
         else:
-            docker_image_from_id = get_remote_docker_image_from_id
+            from functools import partial
+
+            docker_image_from_id = partial(
+                get_remote_docker_image_from_id,
+                dockerhub_username=self.dockerhub_username,
+                force_arch=self.force_arch,
+            )
 
         for sample in samples:
             sample.metadata['docker_image'] = docker_image_from_id(sample.metadata['instance_id'])
@@ -295,16 +310,17 @@ class _SWEBenchAgenticAdapterBase(AgentLoopAdapter):
     # AgentAdapter hooks
     # ------------------------------------------------------------------
 
-    def build_strategy(self, sample: Sample) -> AgentStrategy:
-        if self.action_protocol == 'toolcall':
-            from evalscope.agent.strategies.swe_bench import SweBenchToolcallStrategy
-            return SweBenchToolcallStrategy()
-        from evalscope.agent.strategies.swe_bench import SweBenchBackticksStrategy
-        return SweBenchBackticksStrategy()
-
     def build_tools(self, sample: Sample):
         # Only ``bash`` — sentinel protocol replaces the ``submit`` tool.
         return {'bash': run_bash}
+
+    def _forced_docker_platform(self) -> Optional[str]:
+        """Return the Docker platform matching the forced SWE-bench image arch."""
+        if self.force_arch == 'x86_64':
+            return 'linux/amd64'
+        if self.force_arch == 'arm64':
+            return 'linux/arm64'
+        return None
 
     def build_environment(self, sample: Sample) -> Optional[AgentEnvironment]:
         from evalscope.agent.environments.enclave import EnclaveAgentEnvironment
@@ -312,14 +328,15 @@ class _SWEBenchAgenticAdapterBase(AgentLoopAdapter):
         image = sample.metadata.get('docker_image')
         if not image:
             raise RuntimeError(
-                f"docker_image missing for instance {sample.metadata.get('instance_id')!r}; "
+                f'docker_image missing for instance {sample.metadata.get("instance_id")!r}; '
                 'did _post_process_samples run?'
             )
 
         sandbox_config = {
             'image': image,
+            'command': 'tail -f /dev/null',
             'working_dir': self.working_dir,
-            'environment': {
+            'env_vars': {
                 'PAGER': 'cat',
                 'MANPAGER': 'cat',
                 'LESS': '-R',
@@ -327,15 +344,21 @@ class _SWEBenchAgenticAdapterBase(AgentLoopAdapter):
                 'TQDM_DISABLE': '1',
             },
         }
+        forced_platform = self._forced_docker_platform()
+        if forced_platform is not None:
+            sandbox_config['platform'] = forced_platform
+        sandbox_config = merge_sandbox_config_dicts(self._task_sandbox_config(), sandbox_config)
         return EnclaveAgentEnvironment(
             engine='docker',
             sandbox_config=sandbox_config,
-            timeout=self.command_timeout,
+            timeout=self._native_command_timeout(),
+            interpreter=_SWE_BENCH_INTERPRETER,
         )
 
     def build_initial_messages(self, sample: Sample) -> List[Any]:
-        problem_statement = sample.metadata.get('problem_statement'
-                                                ) or (sample.input if isinstance(sample.input, str) else '')
+        problem_statement = sample.metadata.get('problem_statement') or (
+            sample.input if isinstance(sample.input, str) else ''
+        )
         rendered = INSTANCE_TEMPLATE.format(problem_statement=problem_statement)
         return [ChatMessageUser(content=rendered)]
 
@@ -356,6 +379,7 @@ class _SWEBenchAgenticAdapterBase(AgentLoopAdapter):
         SWE-bench evaluation pipeline.
         """
         from evalscope.agent.external.helpers import extract_patch
+
         return await extract_patch(env, cwd=self.working_dir)
 
     # ------------------------------------------------------------------
@@ -379,7 +403,8 @@ class _SWEBenchAgenticAdapterBase(AgentLoopAdapter):
             last_assistant = ''
             for msg in reversed(result.messages):
                 if msg.role == 'assistant':
-                    last_assistant = str(msg.content or '') or msg.text or ''
+                    # ``str(content)`` on list content yields a Python repr.
+                    last_assistant = msg.text or ''
                     if last_assistant:
                         break
             return extract_diff(last_assistant) or ''
@@ -391,6 +416,7 @@ class _SWEBenchAgenticAdapterBase(AgentLoopAdapter):
         if prediction:
             return prediction
         from swebench.inference.make_datasets.utils import extract_diff
+
         return extract_diff(prediction or '')
 
     # ------------------------------------------------------------------
@@ -416,6 +442,8 @@ class _SWEBenchAgenticAdapterBase(AgentLoopAdapter):
             pred=filtered_prediction,
             timeout=1800,
             log_dir=self._task_config.work_dir,
+            dockerhub_username=self.dockerhub_username,
+            force_arch=self.force_arch,
         )
 
         score.value = {'acc': float(result.get('resolved', 0.0))}
@@ -436,15 +464,14 @@ model issues `bash` commands to explore `/testbed`, edit source files,
 and finally submits its `git diff` patch by printing the sentinel
 `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` followed by the patch contents.
 
-`extra_params.action_protocol` selects between:
-- `toolcall` (default): OpenAI function-calling protocol with a single
-  `bash` tool. Recommended for any model that supports tool calling.
-- `backticks`: text-based fallback expecting one
-  ` ```mswea_bash_command ``` ` block per turn. For models without
-  function-calling support.
+The default `swe_bench_toolcall` strategy uses OpenAI function calling with
+a single `bash` tool. Models without function-calling support can select
+`swe_bench_backticks` through `NativeAgentConfig.strategy`; that strategy
+expects one ` ```mswea_bash_command ``` ` block per turn.
 """
 
-_SWE_BENCH_VERIFIED_AGENTIC_DESCRIPTION = """
+_SWE_BENCH_VERIFIED_AGENTIC_DESCRIPTION = (
+    """
 ## Overview
 
 SWE-bench Verified Agentic is the agentic-mode evaluation of SWE-bench Verified, a human-validated subset of 500 samples from SWE-bench. Unlike the oracle single-turn variant, the model must autonomously explore the repository, run shell commands, edit source files, and submit a patch through a multi-turn agent loop driven inside a per-instance Docker container.
@@ -471,9 +498,12 @@ SWE-bench Verified Agentic is the agentic-mode evaluation of SWE-bench Verified,
 - Timeout of 1800 seconds (30 min) per instance for final patch validation
 - See the [usage documentation](https://evalscope.readthedocs.io/en/latest/third_party/swe_bench.html) for detailed setup instructions
 - Supports both local image building and remote image pulling
-""" + _AGENTIC_MODE_SECTION
+"""
+    + _AGENTIC_MODE_SECTION
+)
 
-_SWE_BENCH_VERIFIED_MINI_AGENTIC_DESCRIPTION = """
+_SWE_BENCH_VERIFIED_MINI_AGENTIC_DESCRIPTION = (
+    """
 ## Overview
 
 SWE-bench Verified Mini Agentic is the agentic-mode evaluation of SWE-bench Verified Mini, a compact 50-sample subset that maintains the same distribution of performance, test pass rates, and difficulty as the full Verified set while requiring only 5GB of storage instead of 130GB. The model must autonomously explore, edit, and submit a patch through a multi-turn agent loop.
@@ -499,9 +529,12 @@ SWE-bench Verified Mini Agentic is the agentic-mode evaluation of SWE-bench Veri
 - Docker images are built/pulled automatically
 - See the [usage documentation](https://evalscope.readthedocs.io/en/latest/third_party/swe_bench.html) for detailed setup
 - Good for rapid prototyping of agent strategies and initial model assessment
-""" + _AGENTIC_MODE_SECTION
+"""
+    + _AGENTIC_MODE_SECTION
+)
 
-_SWE_BENCH_LITE_AGENTIC_DESCRIPTION = """
+_SWE_BENCH_LITE_AGENTIC_DESCRIPTION = (
+    """
 ## Overview
 
 SWE-bench Lite Agentic is the agentic-mode evaluation of SWE-bench Lite, a focused subset of SWE-bench containing 300 Issue-Pull Request pairs from 11 popular Python repositories. The model autonomously drives a multi-turn agent loop inside a per-instance Docker container to resolve real-world GitHub issues.
@@ -527,7 +560,41 @@ SWE-bench Lite Agentic is the agentic-mode evaluation of SWE-bench Lite, a focus
 - Docker images are built/pulled automatically for each repository
 - See the [usage documentation](https://evalscope.readthedocs.io/en/latest/third_party/swe_bench.html) for detailed setup instructions
 - Popular benchmark variant for initial agentic model comparison
-""" + _AGENTIC_MODE_SECTION
+"""
+    + _AGENTIC_MODE_SECTION
+)
+
+_SWE_BENCH_MULTILINGUAL_AGENTIC_DESCRIPTION = (
+    """
+## Overview
+
+SWE-bench Multilingual Agentic is the agentic-mode evaluation of SWE-bench Multilingual, a 300-task SWE-bench-style benchmark spanning 42 repositories and 9 programming languages. The model autonomously explores, edits, and submits a patch through a multi-turn agent loop inside a per-instance Docker container.
+
+## Task Description
+
+- **Task Type**: Automated Software Engineering / Bug Fixing (Agentic, Multilingual)
+- **Input**: GitHub issue description (no oracle file context)
+- **Output**: Code patch (diff format) collected from `git diff` after autonomous editing
+- **Languages**: C, C++, Go, Java, JavaScript/TypeScript, PHP, Ruby, and Rust
+
+## Key Features
+
+- 300 curated Issue-Pull Request tasks
+- 42 real-world repositories across 9 programming languages
+- Multi-turn agent loop with per-instance SWE-bench Docker sandbox
+- SWE-bench-compatible patch evaluation using fail-to-pass and pass-to-pass tests
+
+## Evaluation Notes
+
+- Requires `pip install swebench==4.1.0` before evaluation
+- Uses the official SWE-bench Multilingual x86_64 instance images and sets Docker platform to `linux/amd64` automatically
+- Docker images are built/pulled automatically for each instance
+- Timeout of 1800 seconds (30 min) per instance for final patch validation
+- See the [usage documentation](https://evalscope.readthedocs.io/en/latest/third_party/swe_bench.html) for detailed setup instructions
+- Supports both local image building and remote image pulling
+"""
+    + _AGENTIC_MODE_SECTION
+)
 
 
 @register_benchmark(
@@ -543,8 +610,7 @@ SWE-bench Lite Agentic is the agentic-mode evaluation of SWE-bench Lite, a focus
         extra_params=_AGENTIC_EXTRA_PARAMS,
     )
 )
-class SWEBenchVerifiedAgenticAdapter(_SWEBenchAgenticAdapterBase):
-    ...
+class SWEBenchVerifiedAgenticAdapter(_SWEBenchAgenticAdapterBase): ...
 
 
 @register_benchmark(
@@ -560,8 +626,7 @@ class SWEBenchVerifiedAgenticAdapter(_SWEBenchAgenticAdapterBase):
         extra_params=_AGENTIC_EXTRA_PARAMS,
     )
 )
-class SWEBenchVerifiedMiniAgenticAdapter(_SWEBenchAgenticAdapterBase):
-    ...
+class SWEBenchVerifiedMiniAgenticAdapter(_SWEBenchAgenticAdapterBase): ...
 
 
 @register_benchmark(
@@ -577,5 +642,33 @@ class SWEBenchVerifiedMiniAgenticAdapter(_SWEBenchAgenticAdapterBase):
         extra_params=_AGENTIC_EXTRA_PARAMS,
     )
 )
-class SWEBenchLiteAgenticAdapter(_SWEBenchAgenticAdapterBase):
-    ...
+class SWEBenchLiteAgenticAdapter(_SWEBenchAgenticAdapterBase): ...
+
+
+@register_benchmark(
+    BenchmarkMeta(
+        name='swe_bench_multilingual_agentic',
+        pretty_name='SWE-bench_Multilingual_Agentic',
+        tags=[Tags.CODING],
+        description=_SWE_BENCH_MULTILINGUAL_AGENTIC_DESCRIPTION,
+        dataset_id='SWE-bench/SWE-bench_Multilingual',
+        metric_list=['acc'],
+        eval_split='test',
+        prompt_template='{question}',
+        extra_params=_AGENTIC_EXTRA_PARAMS,
+    )
+)
+class SWEBenchMultilingualAgenticAdapter(_SWEBenchAgenticAdapterBase):
+    """Agentic adapter for SWE-bench Multilingual."""
+
+    fixed_arch = 'x86_64'
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        requested_arch = self.extra_params.get('force_arch', '')
+        if requested_arch and requested_arch != self.fixed_arch:
+            logger.warning(
+                f'SWE-bench Multilingual only provides {self.fixed_arch} images; '
+                f'overriding force_arch={requested_arch!r} to {self.fixed_arch!r}.'
+            )
+        self.force_arch = self.fixed_arch

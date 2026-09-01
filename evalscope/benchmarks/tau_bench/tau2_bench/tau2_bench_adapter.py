@@ -3,12 +3,11 @@ from collections import defaultdict
 from typing import Dict, List
 
 from evalscope.api.benchmark import AgentAdapter, BenchmarkMeta
-from evalscope.api.dataset import Sample
-from evalscope.api.dataset.dataset import DatasetDict
-from evalscope.api.dataset.loader import DictDataLoader
+from evalscope.api.dataset import DatasetDict, Sample, build_dataset_from_records, resolve_snapshot_or_local_path
 from evalscope.api.evaluator import InferenceResult
 from evalscope.api.messages.chat_message import ChatMessageUser
 from evalscope.api.metric import Score
+from evalscope.api.metric.semantics import MetricSelector
 from evalscope.api.model import Model
 from evalscope.api.registry import register_benchmark
 from evalscope.constants import Tags
@@ -49,42 +48,39 @@ logger = get_logger()
 - **User Model Configuration**: Requires setting up a user simulation model
 - Primary metric: **Accuracy** based on task completion reward
 - Supports **airline**, **retail**, and **telecom** domains
-- Uses **pass@k** aggregation for robustness evaluation
+- Uses **pass^k** aggregation (`mean_and_pass_hat_k`) for robustness evaluation: the probability that *all* `k` attempts of a task succeed, as defined by the τ-bench paper. This is stricter than `pass@k`, which only requires at least one of `k` attempts to succeed. Set `repeats=k` to enable it.
 - [Usage Example](https://evalscope.readthedocs.io/en/latest/third_party/tau2_bench.html)
 - A newer release **τ³-bench** (v1.0.0) is available as the `tau3_bench` benchmark, with a new `banking_knowledge` domain and 75+ task fixes. Note: the two versions cannot be installed in the same environment.
 """,  # noqa: E501
         dataset_id='evalscope/tau2-bench-data',
         subset_list=['airline', 'retail', 'telecom'],
+        metric_list=['acc'],
         aggregation='mean_and_pass_hat_k',
+        primary_metric=MetricSelector(name='accuracy', aggregation='pass_hat_k', dimensions={'k': 1}),
         eval_split='test',
         extra_params={
             'user_model': {
                 'type': 'str',
                 'description': 'Model used to simulate the user in the environment.',
-                'value': 'qwen-plus'
+                'value': 'qwen-plus',
             },
-            'api_key': {
-                'type': 'str',
-                'description': 'API key for the user model backend.',
-                'value': 'EMPTY'
-            },
+            'api_key': {'type': 'str', 'description': 'API key for the user model backend.', 'value': 'EMPTY'},
             'api_base': {
                 'type': 'str',
                 'description': 'Base URL for the user model API requests.',
-                'value': 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+                'value': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
             },
             'generation_config': {
                 'type': 'dict',
                 'description': 'Default generation config for user model simulation.',
                 'value': {
                     'temperature': 0.0,
-                }
-            }
-        }
+                },
+            },
+        },
     )
 )
 class Tau2BenchAdapter(AgentAdapter):
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -92,7 +88,7 @@ class Tau2BenchAdapter(AgentAdapter):
             'tau2',
             package='git+https://github.com/sierra-research/tau2-bench@v0.2.0',
             raise_error=True,
-            feature_name=self.pretty_name
+            feature_name=self.pretty_name,
         )
 
         # setup user model args
@@ -108,9 +104,8 @@ class Tau2BenchAdapter(AgentAdapter):
             logger.info(f'Loading dataset from {dataset_name_or_path}')
             dataset_path = dataset_name_or_path
         else:
-            from modelscope import dataset_snapshot_download
             logger.info(f'Loading dataset from modelscope: > dataset_name: {dataset_name_or_path}')
-            dataset_path = dataset_snapshot_download(dataset_name_or_path)
+            dataset_path = resolve_snapshot_or_local_path(self)
 
         # Set Tau2 data dir
         os.environ['TAU2_DATA_DIR'] = dataset_path
@@ -126,14 +121,16 @@ class Tau2BenchAdapter(AgentAdapter):
             tasks = task_loader()
             tasks = [task.model_dump(exclude_unset=True) for task in tasks]
 
-            # load dataset
-            dataset = DictDataLoader(
-                dict_list=tasks,
+            dataset = build_dataset_from_records(
+                records=tasks,
                 sample_fields=self.record_to_sample,
+                name=domain_name,
+                location=dataset_path,
                 limit=self.limit,
                 repeats=self.repeats,
                 shuffle=self.shuffle,
-            ).load()
+                seed=None,
+            )
 
             data_dict[domain_name] = dataset
 
@@ -147,11 +144,12 @@ class Tau2BenchAdapter(AgentAdapter):
             input=[ChatMessageUser(content=record['description']['purpose'] or '')],
             target='',  # Will use the record for evaluation
             subset_key=record['user_scenario']['instructions']['domain'],
-            metadata=record  # Store the full record for evaluation
+            metadata=record,  # Store the full record for evaluation
         )
 
     def _on_inference(self, model: Model, sample: Sample) -> InferenceResult:
         from .generation import predict
+
         return predict(model, sample, adapter_instance=self)
 
     def match_score(self, original_prediction: str, filtered_prediction: str, reference: str, task_state) -> Score:

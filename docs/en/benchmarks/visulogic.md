@@ -39,7 +39,7 @@ VisuLogic is a benchmark for evaluating visual reasoning capabilities of Multimo
 | **Dataset ID** | [evalscope/VisuLogic](https://modelscope.cn/datasets/evalscope/VisuLogic/summary) |
 | **Paper** | N/A |
 | **Tags** | `MCQ`, `Math`, `MultiModal`, `Reasoning` |
-| **Metrics** | `acc` |
+| **Metrics** | `accuracy` |
 | **Default Shots** | 0-shot |
 | **Evaluation Split** | `test` |
 
@@ -153,5 +153,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

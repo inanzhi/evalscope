@@ -4,6 +4,7 @@ import os
 from evalscope.api.benchmark import BenchmarkMeta, Text2ImageAdapter
 from evalscope.api.dataset import Sample
 from evalscope.api.messages import ChatMessageUser
+from evalscope.api.metric import MetricSelector
 from evalscope.api.registry import get_metric, register_benchmark
 from evalscope.constants import Tags
 from evalscope.utils.logger import get_logger
@@ -47,13 +48,13 @@ GenAI-Bench is a comprehensive text-to-image benchmark featuring 1600 prompts de
         tags=[Tags.TEXT_TO_IMAGE],
         subset_list=['GenAI-Bench-1600'],
         metric_list=['VQAScore'],
+        primary_metric=MetricSelector(name='vqa_model_score', aggregation='mean', dimensions={'scope': 'overall'}),
         few_shot_num=0,
         train_split=None,
         eval_split='test',
     )
 )
 class GenAIBenchAdapter(Text2ImageAdapter):
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -76,5 +77,5 @@ class GenAIBenchAdapter(Text2ImageAdapter):
                 'category': 'advanced' if advanced else 'basic',
                 'tags': record.get('tags', []),
                 'image_path': record.get('image_path', ''),  # Optional field for existing image path
-            }
+            },
         )

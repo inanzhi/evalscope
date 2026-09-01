@@ -1,5 +1,6 @@
 @import "tailwindcss";
-@import "katex/dist/katex.min.css";
+/* KaTeX stylesheet is loaded on demand by MarkdownRenderer alongside the math
+   pipeline (Req 16.1); it must not be part of the initial CSS bundle. */
 @plugin "@tailwindcss/typography";
 
 /* ------------------------------------------------------------------ */
@@ -128,12 +129,6 @@
   --chart-tpot: #a78bfa;
   --chart-token: #94a3b8;
 
-  /* KPI card gradients */
-  --kpi-grad-0: linear-gradient(135deg, #6366f1, #8b5cf6);
-  --kpi-grad-1: linear-gradient(135deg, #10b981, #06b6d4);
-  --kpi-grad-2: linear-gradient(135deg, #f59e0b, #f97316);
-  --kpi-grad-3: linear-gradient(135deg, #ec4899, #8b5cf6);
-
   /* Chat bubble tokens */
   --bubble-user-bg: rgba(99, 102, 241, 0.12);
   --bubble-user-bg-hl: rgba(99, 102, 241, 0.22);
@@ -163,6 +158,13 @@
   --bubble-tool-icon-bg: rgba(245, 158, 11, 0.15);
   --bubble-tool-icon-border: rgba(245, 158, 11, 0.30);
   --bubble-tool-color: #fbbf24;
+  --bubble-environment-bg: rgba(14, 165, 233, 0.08);
+  --bubble-environment-bg-hl: rgba(14, 165, 233, 0.16);
+  --bubble-environment-border: rgba(14, 165, 233, 0.28);
+  --bubble-environment-border-hl: rgba(14, 165, 233, 0.55);
+  --bubble-environment-icon-bg: rgba(14, 165, 233, 0.14);
+  --bubble-environment-icon-border: rgba(14, 165, 233, 0.30);
+  --bubble-environment-color: #38bdf8;
   --bubble-system-bg: rgba(148, 163, 184, 0.06);
   --bubble-system-bg-hl: rgba(148, 163, 184, 0.12);
   --bubble-system-border: rgba(148, 163, 184, 0.20);
@@ -277,12 +279,6 @@
   --chart-tpot: #5b48e0;
   --chart-token: #5a6378;
 
-  /* KPI card gradients — saturated enough to work on both themes */
-  --kpi-grad-0: linear-gradient(135deg, #6366f1, #8b5cf6);
-  --kpi-grad-1: linear-gradient(135deg, #10b981, #06b6d4);
-  --kpi-grad-2: linear-gradient(135deg, #f59e0b, #f97316);
-  --kpi-grad-3: linear-gradient(135deg, #ec4899, #8b5cf6);
-
   /* Chat bubble tokens */
   --bubble-user-bg: rgba(108, 87, 232, 0.10);
   --bubble-user-bg-hl: rgba(108, 87, 232, 0.20);
@@ -312,6 +308,13 @@
   --bubble-tool-icon-bg: rgba(180, 100, 0, 0.12);
   --bubble-tool-icon-border: rgba(180, 100, 0, 0.32);
   --bubble-tool-color: #b26200;
+  --bubble-environment-bg: rgba(2, 132, 199, 0.08);
+  --bubble-environment-bg-hl: rgba(2, 132, 199, 0.16);
+  --bubble-environment-border: rgba(2, 132, 199, 0.28);
+  --bubble-environment-border-hl: rgba(2, 132, 199, 0.55);
+  --bubble-environment-icon-bg: rgba(2, 132, 199, 0.12);
+  --bubble-environment-icon-border: rgba(2, 132, 199, 0.30);
+  --bubble-environment-color: #0284c7;
   --bubble-system-bg: rgba(90, 99, 120, 0.08);
   --bubble-system-bg-hl: rgba(90, 99, 120, 0.14);
   --bubble-system-border: rgba(90, 99, 120, 0.22);
@@ -348,6 +351,25 @@ body {
 }
 
 /* ------------------------------------------------------------------ */
+/* Focus indicator — WCAG 2.1 SC 2.4.7 / 1.4.11 (Req 12.6)            */
+/* A single accent ring shown on BOTH themes for every interactive     */
+/* element. `outline` keeps layout intact; `outline-offset` lifts the  */
+/* ring off the control so it also reads on accent-filled buttons —    */
+/* the ring sits on the page canvas where the violet accent scores     */
+/* ≥3:1 non-text contrast against both warm-cream (light) and          */
+/* near-black indigo (dark). `:where()` keeps specificity at 0 so a    */
+/* component can still opt into a bespoke focus treatment.             */
+/* ------------------------------------------------------------------ */
+:where(a, button, input, select, textarea, summary,
+       [tabindex]:not([tabindex="-1"]),
+       [role="button"], [role="tab"], [role="option"],
+       [role="menuitem"], [role="checkbox"], [role="radio"],
+       [role="switch"], [role="link"]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------ */
 /* Typography utility classes — aligned to DESIGN.md §Typography 12-token */
 /* These give us a single source of truth so Tabs / Toolbars / new pages */
 /* don't re-hand-write `text-sm font-medium`, `text-xs ... uppercase`, etc. */
@@ -359,7 +381,12 @@ body {
   .type-body-sm-strong { @apply text-sm font-medium; }
   .type-body-xs        { @apply text-xs; }
   .type-label-xs       { @apply text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]; }
-  .type-table-xs       { @apply text-[10px] font-semibold uppercase tracking-wider text-[var(--text-dim)]; }
+  /* Essential table / section headers. Bumped from 10px→12px so header text
+     clears the 12px floor (Req 12.4) and defaulted to --text-muted (AA on both
+     themes) instead of --text-dim (~3.6:1, below AA Normal) so headers applied
+     to essential content meet AA_Contrast (Req 12.1, 12.3). --text-dim stays
+     reserved for ≥14px non-essential metadata per DESIGN.md §Text. */
+  .type-table-xs       { @apply text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]; }
   .type-caption-mono   { @apply text-xs font-mono tabular-nums; }
   .type-code           { @apply text-[13px] font-mono; }
   .type-button-sm      { @apply text-xs font-medium; }
@@ -442,26 +469,29 @@ body {
 .stagger-children > *:nth-child(5) { animation-delay: 240ms; }
 .stagger-children > *:nth-child(6) { animation-delay: 300ms; }
 
-/* KPI gradient cards */
-.kpi-card {
-  position: relative;
-  overflow: hidden;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow);
-  transition: transform var(--transition), box-shadow var(--transition), border-color var(--transition);
-}
-.kpi-card::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: var(--gradient-surface);
-  pointer-events: none;
-}
-.kpi-card:hover {
-  transform: translateY(-3px);
-  box-shadow: var(--shadow-lg);
-  border-color: var(--border-strong);
+/* ------------------------------------------------------------------ */
+/* Touch targets — DESIGN.md §Touch Targets (Req 7.4, 12.5, 12.7)      */
+/* On coarse pointers, expand a control's tappable region to >=44x44   */
+/* CSS px via a centered ::before overlay WITHOUT changing the visual   */
+/* chrome (icon/label keep their design size, e.g. tablet icon-only    */
+/* nav stays 32x32). The overlay never paints and forwards taps to the  */
+/* host control. Fine-pointer devices are unaffected.                  */
+/* ------------------------------------------------------------------ */
+@media (pointer: coarse) {
+  .coarse-target {
+    position: relative;
+  }
+  .coarse-target::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 100%;
+    height: 100%;
+    min-width: 44px;
+    min-height: 44px;
+  }
 }
 
 /* Skeleton pulse animation */

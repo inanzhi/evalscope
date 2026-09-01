@@ -14,18 +14,18 @@ CMMU（Chinese Massive Multi-discipline Multimodal Understanding，中文大规�
 
 ## 主要特点
 
-- 覆盖6个核心学科的30个科目  
-- 艺术与设计、商业、科学、健康与医学、人文与社会科学、技术与工程  
-- 39种异构图像类型（图表、示意图、地图、表格等）  
-- 大学级别难度  
+- 覆盖6个核心学科的30个科目
+- 艺术与设计、商业、科学、健康与医学、人文与社会科学、技术与工程
+- 39种异构图像类型（图表、示意图、地图、表格等）
+- 大学级别难度
 - 多种题型（单选、多选、判断、简答）
 
 ## 评估说明
 
-- 默认配置使用 **0-shot** 评估  
-- 在验证集（validation split）上进行评估  
-- 使用简单准确率（accuracy）作为指标  
-- 使用中文提示词  
+- 默认配置使用 **0-shot** 评估
+- 在验证集（validation split）上进行评估
+- 使用简单准确率（accuracy）作为指标
+- 使用中文提示词
 
 ## 属性
 
@@ -35,7 +35,7 @@ CMMU（Chinese Massive Multi-discipline Multimodal Understanding，中文大规�
 | **数据集ID** | [lmms-lab/CMMMU](https://modelscope.cn/datasets/lmms-lab/CMMMU/summary) |
 | **论文** | N/A |
 | **标签** | `Chinese`, `Knowledge`, `MultiModal`, `QA` |
-| **指标** | `acc` |
+| **指标** | `accuracy` |
 | **默认Shots数** | 0-shot |
 | **评估划分** | `val` |
 

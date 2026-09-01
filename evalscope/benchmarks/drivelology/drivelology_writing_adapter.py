@@ -1,16 +1,26 @@
-import re
 from typing import Any, Dict, List
+
+from pydantic import BaseModel, Field
 
 from evalscope.api.benchmark import BenchmarkMeta, DefaultDataAdapter
 from evalscope.api.dataset import Sample
 from evalscope.api.evaluator import TaskState
+from evalscope.api.judge import JudgeCase, JudgeContext, JudgeDefinition, JudgeRequest, OutputContract, ReducedVerdict
 from evalscope.api.messages import ChatMessageUser, ContentText
 from evalscope.api.metric.scorer import AggScore, SampleScore, Score
 from evalscope.api.registry import register_benchmark
-from evalscope.constants import Tags
+from evalscope.constants import ScoringPolicy, Tags
 from evalscope.utils.logger import get_logger
 
 logger = get_logger()
+
+
+class NarrativeRating(BaseModel):
+    reasoning: str = ''
+    rating: int = Field(ge=1, le=5)
+
+
+RATING_CONTRACT = OutputContract(schema_model=NarrativeRating)
 
 DESCRIPTION = """
 ## Overview
@@ -62,7 +72,6 @@ After providing your explanation, you must rate the match on a Likert scale from
 4 = Good match
 5 = Excellent match
 
-Please format your rating strictly as: "Rating: [[X]]" where X is a whole number from 1 to 5.
 
 [Candidate Narrative]
 {candidate}
@@ -80,25 +89,22 @@ Please format your rating strictly as: "Rating: [[X]]" where X is a whole number
         description=DESCRIPTION.strip(),
         dataset_id='extraordinarylab/drivel-hub',
         subset_list=['narrative-writing-english'],
-        metric_list=[{
-            'bert_score': {
-                'model_id_or_path': 'AI-ModelScope/roberta-large',
-                'model_type': 'roberta-large'
-            }
-        }, {
-            'gpt_score': {}
-        }],
+        metric_list=[
+            {'bert_score': {'model_id_or_path': 'AI-ModelScope/roberta-large', 'model_type': 'roberta-large'}},
+            {'judge_score': {}},
+        ],
+        primary_metric='judge_score',
         few_shot_num=0,
         train_split=None,
         eval_split='test',
-        prompt_template=NARRATIVE_GENERATION_TEMPLATE
+        prompt_template=NARRATIVE_GENERATION_TEMPLATE,
     )
 )
 class DrivelologyNarrativeWritingAdapter(DefaultDataAdapter):
+    scoring_policy = ScoringPolicy.JUDGE_ONLY
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._use_llm_judge = True  # Use LLM as a judge by default
         self.use_batch_scoring = True  # Enable batch scoring
 
     def record_to_sample(self, record: Dict[str, Any]) -> Sample:
@@ -117,17 +123,14 @@ class DrivelologyNarrativeWritingAdapter(DefaultDataAdapter):
         return Sample(
             input=[ChatMessageUser(content=content_list)],
             target=reference_narrative,
-            metadata={
-                'text': text,
-                'reference_narrative': reference_narrative
-            }
+            metadata={'text': text, 'reference_narrative': reference_narrative},
         )
 
     def batch_match_score(self, original_predictions, filtered_predictions, references, task_states):
         """
         Batch calculate the match scores using BERTScore.
         """
-        from evalscope.metrics.metric import BertScore
+        from evalscope.metrics.nlp.metrics import BertScore
 
         score_args = self.get_metric_args('bert_score')
         bert_scorer = BertScore(**score_args)
@@ -137,105 +140,57 @@ class DrivelologyNarrativeWritingAdapter(DefaultDataAdapter):
             score = Score(
                 extracted_prediction=filtered_predictions[i],
                 prediction=original_predictions[i],
-                value={'bert_score': bert_score_f1[i]}
+                value={'bert_score': bert_score_f1[i]},
             )
             scores.append(score)
         return scores
 
-    def llm_match_score(
-        self,
-        original_prediction: str,
-        filtered_prediction: str,
-        reference: str,
-        task_state: TaskState,
-    ) -> Score:
-        """
-        Calculate the match score using LLM judge and BERTScore.
-        """
-        score = Score(
-            extracted_prediction=filtered_prediction,
-            prediction=original_prediction,
+    def judge_definition(self, context: JudgeContext) -> JudgeDefinition:
+
+        def request(case, placement, completed_cases, judge_context) -> JudgeRequest:
+            prompt = (
+                NARRATIVE_EVALUATION_TEMPLATE.format(
+                    candidate=judge_context.filtered_prediction,
+                    reference=judge_context.reference,
+                )
+                + case.output_contract.instruction()
+            )
+            return JudgeRequest(messages=[ChatMessageUser(content=prompt)])
+
+        def reduce(case_verdicts, judge_context) -> ReducedVerdict:
+            rating = case_verdicts[0].value.rating
+            return ReducedVerdict(value={'judge_score': (rating - 1) / 4.0}, metadata={'rating': rating})
+
+        return JudgeDefinition.workflow(
+            cases=[JudgeCase(case_id='rating', output_contract=RATING_CONTRACT)],
+            request=request,
+            reduce=reduce,
+            main_score_name='judge_score',
         )
-
-        # Initialize score value dictionary
-        score.value = {}
-
-        # Use LLM judge to evaluate narrative quality
-        eval_prompt = NARRATIVE_EVALUATION_TEMPLATE.format(candidate=filtered_prediction, reference=reference)
-
-        judge_response = self.llm_judge.judge(eval_prompt)
-        logger.info(f'LLM judge response received (first 100 chars): {judge_response[:100]}...')
-
-        # Extract rating using regex pattern
-        match = re.search(r'Rating:\s*\[\[([1-5])\]\]', judge_response)
-        if match:
-            rating = int(match.group(1))
-            gpt_score = (rating - 1) / 4.0  # Normalize to 0-1 scale
-            logger.info(f'Rating extracted: {rating}/5 -> {gpt_score}')
-        else:
-            # Try alternative pattern
-            alt_match = re.search(r'(\[\[|\[)([1-5])(\]\]|\])', judge_response)
-            if alt_match:
-                rating = int(alt_match.group(2))
-                gpt_score = (rating - 1) / 4.0
-                logger.info(f'Rating extracted (alt pattern): {rating}/5 -> {gpt_score}')
-            else:
-                # Last resort: standalone digit
-                number_match = re.search(r'(?<!\d)[1-5](?!\d)', judge_response)
-                if number_match:
-                    rating = int(number_match.group(0))
-                    gpt_score = (rating - 1) / 4.0
-                    logger.info(f'Rating extracted (fallback): {rating}/5 -> {gpt_score}')
-                else:
-                    gpt_score = 0.0
-                    logger.warning('No rating found in response, using default 0.0')
-
-        score.value['gpt_score'] = gpt_score
-        score.explanation = f'LLM judge rating: {gpt_score:.2f}'
-
-        score.metadata = {
-            'judge_response': judge_response[:300],
-            'model': getattr(self.llm_judge, 'model_id', 'unknown')
-        }
-
-        score.main_score_name = 'gpt_score'
-        return score
 
     def aggregate_scores(self, sample_scores: List[SampleScore]) -> List[AggScore]:
         """
         Aggregate scores across all samples.
+
+        Each metric is averaged only over the samples that actually carry it: a sample whose judge
+        review was unusable has no ``judge_score`` and is excluded from that mean rather than
+        counted as 0, while its rule-based ``bert_score`` still contributes.
         """
-        if not sample_scores:
-            return [
-                AggScore(metric_name='gpt_score', score=0.0, num=0, metadata={}),
-                AggScore(metric_name='bert_score', score=0.0, num=0, metadata={})
-            ]
-
-        # Extract scores
-        gpt_scores = [ss.score.value.get('gpt_score', 0.0) for ss in sample_scores]
-        bert_scores = [ss.score.value.get('bert_score', 0.0) for ss in sample_scores]
-
-        # Calculate averages
-        avg_gpt_score = sum(gpt_scores) / len(gpt_scores) if gpt_scores else 0.0
-        avg_bert_score = sum(bert_scores) / len(bert_scores) if bert_scores else 0.0
-
-        return [
-            AggScore(
-                metric_name='gpt_score',
-                score=avg_gpt_score,
-                num=len(sample_scores),
-                metadata={
-                    'min_score': min(gpt_scores),
-                    'max_score': max(gpt_scores)
-                }
-            ),
-            AggScore(
-                metric_name='bert_score',
-                score=avg_bert_score,
-                num=len(sample_scores),
-                metadata={
-                    'min_score': min(bert_scores),
-                    'max_score': max(bert_scores)
-                }
+        results: List[AggScore] = []
+        for metric_name in ('judge_score', 'bert_score'):
+            values = [ss.score.value[metric_name] for ss in sample_scores if metric_name in ss.score.value]
+            if not values:
+                results.append(AggScore(metric_name=metric_name, score=0.0, num=0, metadata={}))
+                continue
+            results.append(
+                AggScore(
+                    metric_name=metric_name,
+                    score=sum(values) / len(values),
+                    num=len(values),
+                    metadata={
+                        'min_score': min(values),
+                        'max_score': max(values),
+                    },
+                )
             )
-        ]
+        return results

@@ -9,7 +9,10 @@ from evalscope.api.dataset import Sample
 from evalscope.api.evaluator import TaskState
 from evalscope.api.messages.chat_message import ChatMessageUser
 from evalscope.api.metric import Score
+from evalscope.api.metric.semantics import MetricSelector
+from evalscope.api.mixin import CodeExecutionSandboxMixin
 from evalscope.api.registry import register_benchmark
+from evalscope.api.sandbox import DockerImageSpec
 from evalscope.constants import Tags
 from evalscope.utils.logger import get_logger
 
@@ -55,20 +58,14 @@ HumanEval Plus is a rigorous extension of OpenAI's HumanEval benchmark, designed
         subset_list=['default'],
         metric_list=['acc'],
         aggregation='mean_and_pass_at_k',
+        primary_metric=MetricSelector(name='accuracy', aggregation='pass_at_k', dimensions={'k': 1}),
         eval_split='test',
-        prompt_template=
-        'Read the following function signature and docstring, and fully implement the function described. Your response should only contain the code for this function.\n{question}',  # noqa: E501
+        prompt_template='Read the following function signature and docstring, and fully implement the function described. Your response should only contain the code for this function.\n{question}',  # noqa: E501
         review_timeout=300,
-        sandbox_config={
-            'image': 'python3.11-numpy',
-            'tools_config': {
-                'shell_executor': {},
-                'python_executor': {}
-            }
-        },
+        sandbox_config={'image': 'python3.11-numpy', 'tools_config': {'shell_executor': {}, 'python_executor': {}}},
     )
 )
-class HumanevalplusAdapter(DefaultDataAdapter):
+class HumanevalplusAdapter(CodeExecutionSandboxMixin, DefaultDataAdapter):
     """
     HumanEvalPlus adapter using the new data processing framework.
     """
@@ -76,7 +73,6 @@ class HumanevalplusAdapter(DefaultDataAdapter):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.docker_path = Path(__file__).parent / 'docker'
-        self._use_custom_image = True
 
     def record_to_sample(self, record: Dict[str, Any]) -> Sample:
         """Convert a data record to a Sample object."""
@@ -91,18 +87,21 @@ class HumanevalplusAdapter(DefaultDataAdapter):
                 'entry_point': record['entry_point'],
                 'prompt': record['prompt'],
                 'test': record['test'],
-            }
+            },
         )
 
     def extract_answer(self, prediction: str, task_state: TaskState) -> str:
         """Extract code from the prediction."""
         return self._postprocess(prediction)
 
-    def get_build_context(self):
-        """
-        Get the build context for the docker image.
-        """
-        return self.docker_path.as_posix(), (self.docker_path / 'Dockerfile').as_posix()
+    def get_sandbox_image_spec(self) -> DockerImageSpec:
+        """Return the benchmark-level Docker image used by the sandbox pool."""
+        return DockerImageSpec(
+            name_prefix='python3.11-numpy',
+            context_dir=self.docker_path.as_posix(),
+            dockerfile=(self.docker_path / 'Dockerfile').as_posix(),
+            cache_key_parts=['sandbox', 'python3.11-numpy'],
+        )
 
     @classmethod
     def _postprocess(cls, text: str) -> str:
@@ -124,7 +123,7 @@ class HumanevalplusAdapter(DefaultDataAdapter):
         completion = filtered_prediction
 
         check_program = (
-            problem['prompt'] + completion + '\n' + problem['test'] + '\n' + f"check({problem['entry_point']})"
+            problem['prompt'] + completion + '\n' + problem['test'] + '\n' + f'check({problem["entry_point"]})'
         )
         res = self.execute_code_in_sandbox(code=check_program, timeout=self.review_timeout, language='python')
         passed = res.get('status') == 'success'

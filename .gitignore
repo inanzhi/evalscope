@@ -133,6 +133,7 @@ result.mp4
 
 # personal info
 private/
+outreach/
 
 # others
 *.tokenization
@@ -173,8 +174,16 @@ docs/zh/learn/
 examples/api_test/
 .qoder
 .claude
+.kiro
+.pr-review/
+.scratch_wl/
 
 # Frontend (evalscope/web)
 node_modules/
 evalscope/web/dist/
 evalscope/web/.vite/
+ragas_mini_testset_score.json
+
+# Docker build artifacts (pre-cloned agent sources)
+evalscope/agent/external/dockerfiles/hermes-agent-src/
+evalscope/agent/external/dockerfiles/hermes-install.sh

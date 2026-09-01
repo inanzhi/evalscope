@@ -44,7 +44,7 @@ def litellm_api() -> type[ModelAPI]:
 
 
 @register_model_api(name='server')
-@deprecated(since='1.0.0', remove_in='1.1.0', alternative='openai_api')
+@deprecated(since='1.0.0', remove_in='2.0.0', alternative='openai_api')
 def server() -> type[ModelAPI]:
     from .openai_compatible import OpenAICompatibleAPI
 
@@ -61,7 +61,7 @@ def llm_ckpt() -> type[ModelAPI]:
 
 
 @register_model_api(name='checkpoint')
-@deprecated(since='1.0.0', remove_in='1.1.0', alternative='llm_ckpt')
+@deprecated(since='1.0.0', remove_in='2.0.0', alternative='llm_ckpt')
 def checkpoint() -> type[ModelAPI]:
     check_import('torch', package='torch', raise_error=True, feature_name='llm_ckpt')
 
@@ -72,10 +72,9 @@ def checkpoint() -> type[ModelAPI]:
 
 @register_model_api(name='text2image')
 def text2image() -> type[ModelAPI]:
-    check_import(['torch', 'torchvision', 'diffusers'],
-                 package='evalscope[aigc]',
-                 raise_error=True,
-                 feature_name='text2image')
+    check_import(
+        ['torch', 'torchvision', 'diffusers'], package='evalscope[aigc]', raise_error=True, feature_name='text2image'
+    )
 
     from .text2image_model import Text2ImageAPI
 
@@ -84,11 +83,17 @@ def text2image() -> type[ModelAPI]:
 
 @register_model_api(name='image_editing')
 def image_editing() -> type[ModelAPI]:
-    check_import(['torch', 'torchvision', 'diffusers'],
-                 package='evalscope[aigc]',
-                 raise_error=True,
-                 feature_name='image_editing')
+    check_import(
+        ['torch', 'torchvision', 'diffusers'], package='evalscope[aigc]', raise_error=True, feature_name='image_editing'
+    )
 
     from .image_edit_model import ImageEditAPI
 
     return ImageEditAPI
+
+
+@register_model_api(name='text2speech')
+def text2speech() -> type[ModelAPI]:
+    from .text2speech_model import Text2SpeechAPI
+
+    return Text2SpeechAPI

@@ -107,20 +107,20 @@ logger = get_logger()
         dataset_id='extraordinarylab/drivel-hub',
         subset_list=['binary-classification'],
         metric_list=['accuracy', 'precision', 'recall', 'f1_score', 'yes_ratio'],
+        primary_metric='accuracy',
         aggregation='f1',
         few_shot_num=0,
         eval_split='test',
         prompt_template='{question}',
-        few_shot_prompt_template='{question}'
+        few_shot_prompt_template='{question}',
     )
 )
 class DrivelologyBinaryClassificationAdapter(DefaultDataAdapter):
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.add_overall_metric = False
         if self.few_shot_num not in [0, 4]:
-            logger.warning(f'For DrivelologyBinaryClassification, use 4-shot by default.')
+            logger.warning('For DrivelologyBinaryClassification, use 4-shot by default.')
             self.few_shot_num = 4
 
     def record_to_sample(self, record: Dict[str, Any]) -> Sample:
@@ -130,9 +130,13 @@ class DrivelologyBinaryClassificationAdapter(DefaultDataAdapter):
             prompt = PROMPT_TEMPLATE.format(text=record['text'])
         content_list: List[Content] = [ContentText(text=prompt)]
         answer = 'YES' if str(record['label']) == 'drivelology' else 'NO'  # 'YES' or 'NO'
-        return Sample(input=[ChatMessageUser(content=content_list)], target=answer, metadata={
-            'answer': answer,
-        })
+        return Sample(
+            input=[ChatMessageUser(content=content_list)],
+            target=answer,
+            metadata={
+                'answer': answer,
+            },
+        )
 
     def match_score(self, original_prediction, filtered_prediction, reference, task_state) -> Score:
         score = Score(
@@ -180,7 +184,7 @@ class DrivelologyBinaryClassificationAdapter(DefaultDataAdapter):
                 'precision': precision,
                 'recall': recall,
                 'f1_score': f1_score,
-                'yes_ratio': yes_ratio
+                'yes_ratio': yes_ratio,
             }
 
         overall_metrics = compute_metrics(sample_scores)

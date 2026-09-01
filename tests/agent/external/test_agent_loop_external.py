@@ -8,19 +8,20 @@ This pins the wiring SWE-bench Pro relies on: the adapter's
 can still query the sandbox before close).
 """
 
-import pytest
 from typing import Any
+
+import pytest
 
 from evalscope.agent.environments.local import LocalAgentEnvironment
 from evalscope.agent.external import ExternalAgentConfig
 from evalscope.api.agent import AgentEnvironment, EventType
-from evalscope.api.benchmark.adapters.agent_loop_adapter import AgentLoopAdapter
+from evalscope.api.benchmark.adapters import AgentLoopAdapter
 from evalscope.api.dataset import Sample
 from evalscope.api.evaluator import InferenceResult
 from evalscope.api.model import GenerateConfig, Model, ModelOutput
 from evalscope.config import TaskConfig
 from evalscope.models.mockllm import MockLLM
-from evalscope.utils.function_utils import AsyncioLoopRunner
+from evalscope.utils.asyncio_runtime import AsyncioLoopRunner
 
 
 @pytest.fixture(autouse=True)
@@ -114,9 +115,9 @@ def test_agent_loop_adapter_routes_external_config_through_bridge():
     assert EventType.MODEL_GENERATE in types
 
 
-def test_agent_loop_adapter_ignores_native_agent_config():
+def test_agent_loop_adapter_routes_native_config_to_agent_loop():
     """Sanity check: ``mode='native'`` still falls through to the
-    AgentLoop path; the new branch only fires for ExternalAgentConfig.
+    AgentLoop path; only ExternalAgentConfig uses the external bridge.
     The actual loop is exercised by ``test_agent_integration``; here we
     only assert that the external-bridge dispatch did *not* run.
     """

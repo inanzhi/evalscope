@@ -5,6 +5,7 @@
 | 数据集名称 | 标准名称 | 任务类别 |
 |------------|----------|----------|
 | `aa_lcr` | [AA-LCR](../../benchmarks/aa_lcr.md) | `Knowledge`, `LongContext`, `Reasoning` |
+| `agieval` | [AGIEval](../../benchmarks/agieval.md) | `Knowledge`, `MCQ`, `Math`, `Reasoning` |
 | `aime24` | [AIME-2024](../../benchmarks/aime24.md) | `Math`, `Reasoning` |
 | `aime25` | [AIME-2025](../../benchmarks/aime25.md) | `Math`, `Reasoning` |
 | `aime26` | [AIME-2026](../../benchmarks/aime26.md) | `Math`, `Reasoning` |
@@ -12,18 +13,32 @@
 | `amc` | [AMC](../../benchmarks/amc.md) | `Math`, `Reasoning` |
 | `anat_em` | [AnatEM](../../benchmarks/anat_em.md) | `Knowledge`, `NER` |
 | `arc` | [ARC](../../benchmarks/arc.md) | `MCQ`, `Reasoning` |
+| `arc_agi_2` | [ARC-AGI-2](../../benchmarks/arc_agi_2.md) | `Reasoning` |
+| `arc_indic` | [ARC-Challenge-Indic](../../benchmarks/arc_indic.md) | `MCQ`, `MultiLingual`, `Reasoning` |
 | `arena_hard` | [ArenaHard](../../benchmarks/arena_hard.md) | `Arena`, `InstructionFollowing` |
+| `arxivmath` | [ArXiv-Math](../../benchmarks/arxivmath.md) | `Math`, `Reasoning` |
 | `arxivrollbench` | [ArxivRollBench](../../benchmarks/arxivrollbench.md) | `Knowledge`, `MCQ`, `Reasoning` |
 | `arxivrollbench_full` | [ArxivRollBench-Full](../../benchmarks/arxivrollbench_full.md) | `Knowledge`, `MCQ`, `Reasoning` |
 | `bbh` | [BBH](../../benchmarks/bbh.md) | `Reasoning` |
 | `bc2gm` | [BC2GM](../../benchmarks/bc2gm.md) | `Knowledge`, `NER` |
 | `bc4chemd` | [BC4CHEMD](../../benchmarks/bc4chemd.md) | `Knowledge`, `NER` |
 | `bc5cdr` | [BC5CDR](../../benchmarks/bc5cdr.md) | `Knowledge`, `NER` |
+| `bhasha_bench_multi_ayur` | [BhashaBench-Multi (Ayurveda)](../../benchmarks/bhasha_bench_multi_ayur.md) | `Knowledge`, `MCQ`, `MultiLingual` |
+| `bhasha_bench_multi_finance` | [BhashaBench-Multi (Finance)](../../benchmarks/bhasha_bench_multi_finance.md) | `Knowledge`, `MCQ`, `MultiLingual` |
+| `bhasha_bench_multi_krishi` | [BhashaBench-Multi (Krishi)](../../benchmarks/bhasha_bench_multi_krishi.md) | `Knowledge`, `MCQ`, `MultiLingual` |
+| `bhasha_bench_multi_legal` | [BhashaBench-Multi (Legal)](../../benchmarks/bhasha_bench_multi_legal.md) | `Knowledge`, `MCQ`, `MultiLingual` |
+| `bhashabenchv1_ayur` | [BhashaBench-V1 (Ayurveda)](../../benchmarks/bhashabenchv1_ayur.md) | `Knowledge`, `MCQ`, `MultiLingual` |
+| `bhashabenchv1_finance` | [BhashaBench-V1 (Finance)](../../benchmarks/bhashabenchv1_finance.md) | `Knowledge`, `MCQ`, `MultiLingual` |
+| `bhashabenchv1_krishi` | [BhashaBench-V1 (Krishi)](../../benchmarks/bhashabenchv1_krishi.md) | `Knowledge`, `MCQ`, `MultiLingual` |
+| `bhashabenchv1_legal` | [BhashaBench-V1 (Legal)](../../benchmarks/bhashabenchv1_legal.md) | `Knowledge`, `MCQ`, `MultiLingual` |
+| `bigcodebench` | [BigCodeBench](../../benchmarks/bigcodebench.md) | `Coding` |
+| `bigcodebench_hard` | [BigCodeBench-Hard](../../benchmarks/bigcodebench_hard.md) | `Coding` |
 | `biomix_qa` | [BioMixQA](../../benchmarks/biomix_qa.md) | `Knowledge`, `MCQ`, `Medical` |
 | `broad_twitter_corpus` | [BroadTwitterCorpus](../../benchmarks/broad_twitter_corpus.md) | `Knowledge`, `NER` |
 | `ceval` | [C-Eval](../../benchmarks/ceval.md) | `Chinese`, `Knowledge`, `MCQ` |
 | `chinese_simpleqa` | [Chinese-SimpleQA](../../benchmarks/chinese_simpleqa.md) | `Chinese`, `Knowledge`, `QA` |
 | `cl_bench` | [CL-bench](../../benchmarks/cl_bench.md) | `InstructionFollowing`, `Reasoning` |
+| `cmath` | [CMATH](../../benchmarks/cmath.md) | `Chinese`, `Math`, `Reasoning` |
 | `cmmlu` | [C-MMLU](../../benchmarks/cmmlu.md) | `Chinese`, `Knowledge`, `MCQ` |
 | `coin_flip` | [CoinFlip](../../benchmarks/coin_flip.md) | `Reasoning`, `Yes/No` |
 | `commonsense_qa` | [CommonsenseQA](../../benchmarks/commonsense_qa.md) | `Commonsense`, `MCQ`, `Reasoning` |
@@ -48,22 +63,32 @@
 | `genia_ner` | [GeniaNER](../../benchmarks/genia_ner.md) | `Knowledge`, `NER` |
 | `gpqa_diamond` | [GPQA-Diamond](../../benchmarks/gpqa_diamond.md) | `Knowledge`, `MCQ` |
 | `gsm8k` | [GSM8K](../../benchmarks/gsm8k.md) | `Math`, `Reasoning` |
+| `gsm8k_indic` | [GSM8K-Indic](../../benchmarks/gsm8k_indic.md) | `Math`, `MultiLingual`, `Reasoning` |
 | `halueval` | [HaluEval](../../benchmarks/halueval.md) | `Hallucination`, `Knowledge`, `Yes/No` |
 | `harvey_ner` | [HarveyNER](../../benchmarks/harvey_ner.md) | `Knowledge`, `NER` |
 | `health_bench` | [HealthBench](../../benchmarks/health_bench.md) | `Knowledge`, `Medical`, `QA` |
 | `hellaswag` | [HellaSwag](../../benchmarks/hellaswag.md) | `Commonsense`, `Knowledge`, `MCQ` |
+| `hellaswag_hi` | [HellaSwag-Hindi](../../benchmarks/hellaswag_hi.md) | `MCQ`, `Reasoning` |
 | `hle` | [Humanity's-Last-Exam](../../benchmarks/hle.md) | `Knowledge`, `QA` |
 | `hmmt25` | [HMMT25](../../benchmarks/hmmt25.md) | `Math`, `Reasoning` |
+| `hmmt26` | [HMMT26](../../benchmarks/hmmt26.md) | `Math`, `Reasoning` |
+| `hmmt_nov25` | [HMMT-Nov-2025](../../benchmarks/hmmt_nov25.md) | `Math`, `Reasoning` |
 | `humaneval` | [HumanEval](../../benchmarks/humaneval.md) | `Coding` |
 | `humaneval_plus` | [HumanEvalPlus](../../benchmarks/humaneval_plus.md) | `Coding` |
 | `ifbench` | [IFBench](../../benchmarks/ifbench.md) | `InstructionFollowing` |
 | `ifeval` | [IFEval](../../benchmarks/ifeval.md) | `InstructionFollowing` |
+| `imo_answerbench` | [IMO-AnswerBench](../../benchmarks/imo_answerbench.md) | `Math`, `Reasoning` |
+| `indic_boolq` | [BoolQ-Indic](../../benchmarks/indic_boolq.md) | `MCQ`, `MultiLingual`, `ReadingComprehension` |
+| `indic_param` | [IndicParam](../../benchmarks/indic_param.md) | `Knowledge`, `MCQ`, `MultiLingual` |
 | `iquiz` | [IQuiz](../../benchmarks/iquiz.md) | `Chinese`, `Knowledge`, `MCQ` |
 | `jnlpba` | [JNLPBA](../../benchmarks/jnlpba.md) | `Knowledge`, `NER` |
 | `jnlpba_rare` | [JNLPBA-Rare](../../benchmarks/jnlpba_rare.md) | `Knowledge`, `NER` |
+| `kina` | [KINA](../../benchmarks/kina.md) | `Knowledge`, `MCQ` |
 | `live_code_bench` | [Live-Code-Bench](../../benchmarks/live_code_bench.md) | `Coding` |
+| `locomo` | [LoCoMo](../../benchmarks/locomo.md) | `LongContext`, `MultiTurn`, `QA` |
 | `logi_qa` | [LogiQA](../../benchmarks/logi_qa.md) | `MCQ`, `Reasoning` |
 | `longbench_v2` | [LongBench-v2](../../benchmarks/longbench_v2.md) | `LongContext`, `MCQ`, `ReadingComprehension` |
+| `longmemeval` | [LongMemEval](../../benchmarks/longmemeval.md) | `LongContext`, `MultiTurn`, `QA`, `Retrieval` |
 | `maritime_bench` | [MaritimeBench](../../benchmarks/maritime_bench.md) | `Chinese`, `Knowledge`, `MCQ` |
 | `math_500` | [MATH-500](../../benchmarks/math_500.md) | `Math`, `Reasoning` |
 | `math_qa` | [MathQA](../../benchmarks/math_qa.md) | `MCQ`, `Math`, `Reasoning` |
@@ -71,6 +96,7 @@
 | `mbpp_plus` | [MBPP-Plus](../../benchmarks/mbpp_plus.md) | `Coding` |
 | `med_mcqa` | [Med-MCQA](../../benchmarks/med_mcqa.md) | `Knowledge`, `MCQ` |
 | `mgsm` | [MGSM](../../benchmarks/mgsm.md) | `Math`, `MultiLingual`, `Reasoning` |
+| `milu` | [MILU](../../benchmarks/milu.md) | `Knowledge`, `MCQ`, `MultiLingual` |
 | `minerva_math` | [Minerva-Math](../../benchmarks/minerva_math.md) | `Math`, `Reasoning` |
 | `mit_movie_trivia` | [MIT-Movie-Trivia](../../benchmarks/mit_movie_trivia.md) | `Knowledge`, `NER` |
 | `mit_restaurant` | [MIT-Restaurant](../../benchmarks/mit_restaurant.md) | `Knowledge`, `NER` |
@@ -87,17 +113,24 @@
 | `musr` | [MuSR](../../benchmarks/musr.md) | `MCQ`, `Reasoning` |
 | `ncbi` | [NCBI](../../benchmarks/ncbi.md) | `Knowledge`, `NER` |
 | `needle_haystack` | [Needle-in-a-Haystack](../../benchmarks/needle_haystack.md) | `LongContext`, `Retrieval` |
+| `one_million_bench` | [$OneMillion-Bench](../../benchmarks/one_million_bench.md) | `Agent`, `Knowledge`, `MultiLingual`, `QA`, `Reasoning` |
 | `ontonotes5` | [OntoNotes5](../../benchmarks/ontonotes5.md) | `Knowledge`, `NER` |
 | `openai_mrcr` | [OpenAI MRCR](../../benchmarks/openai_mrcr.md) | `LongContext`, `Retrieval` |
+| `perspective_gap_prompt_writing` | [PerspectiveGap Prompt Writing](../../benchmarks/perspective_gap_prompt_writing.md) | `Agent`, `InstructionFollowing` |
+| `perspective_gap_role_assignment` | [PerspectiveGap Role Assignment](../../benchmarks/perspective_gap_role_assignment.md) | `Agent`, `InstructionFollowing` |
 | `piqa` | [PIQA](../../benchmarks/piqa.md) | `Commonsense`, `MCQ`, `Reasoning` |
+| `plawbench` | [PLawBench](../../benchmarks/plawbench.md) | `Chinese`, `Knowledge`, `QA`, `Reasoning` |
 | `poly_math` | [PolyMath](../../benchmarks/poly_math.md) | `Math`, `MultiLingual`, `Reasoning` |
+| `prbench` | [PRBench](../../benchmarks/prbench.md) | `Knowledge`, `MultiTurn`, `QA`, `Reasoning` |
 | `process_bench` | [ProcessBench](../../benchmarks/process_bench.md) | `Math`, `Reasoning` |
 | `pubmedqa` | [PubMedQA](../../benchmarks/pubmedqa.md) | `Knowledge`, `Yes/No` |
 | `qasc` | [QASC](../../benchmarks/qasc.md) | `Knowledge`, `MCQ` |
 | `race` | [RACE](../../benchmarks/race.md) | `MCQ`, `Reasoning` |
 | `refcoco` | [RefCOCO](../../benchmarks/refcoco.md) | `Grounding`, `ImageCaptioning`, `Knowledge`, `MultiModal` |
+| `sanskriti` | [Sanskriti](../../benchmarks/sanskriti.md) | `Knowledge`, `MCQ` |
 | `scicode` | [SciCode](../../benchmarks/scicode.md) | `Coding` |
 | `sciq` | [SciQ](../../benchmarks/sciq.md) | `Knowledge`, `MCQ`, `ReadingComprehension` |
+| `seed_tts_eval` | [Seed-TTS-Eval](../../benchmarks/seed_tts_eval.md) | `Audio`, `TextToSpeech` |
 | `simple_qa` | [SimpleQA](../../benchmarks/simple_qa.md) | `Knowledge`, `QA` |
 | `siqa` | [SIQA](../../benchmarks/siqa.md) | `Commonsense`, `MCQ`, `Reasoning` |
 | `super_gpqa` | [SuperGPQA](../../benchmarks/super_gpqa.md) | `Knowledge`, `MCQ` |
@@ -106,6 +139,7 @@
 | `swe_bench_verified_mini` | [SWE-bench_Verified_mini](../../benchmarks/swe_bench_verified_mini.md) | `Coding` |
 | `tool_bench` | [ToolBench-Static](../../benchmarks/tool_bench.md) | `FunctionCalling`, `Reasoning` |
 | `trivia_qa` | [TriviaQA](../../benchmarks/trivia_qa.md) | `QA`, `ReadingComprehension` |
+| `triviaqa_indic` | [TriviaQA-Indic-MCQ](../../benchmarks/triviaqa_indic.md) | `Knowledge`, `MCQ`, `MultiLingual` |
 | `truthful_qa` | [TruthfulQA](../../benchmarks/truthful_qa.md) | `Knowledge` |
 | `tweebank_ner` | [TweeBankNER](../../benchmarks/tweebank_ner.md) | `Knowledge`, `NER` |
 | `tweet_ner_7` | [TweetNER7](../../benchmarks/tweet_ner_7.md) | `Knowledge`, `NER` |
@@ -119,6 +153,7 @@
 :maxdepth: 1
 
 ../../benchmarks/aa_lcr.md
+../../benchmarks/agieval.md
 ../../benchmarks/aime24.md
 ../../benchmarks/aime25.md
 ../../benchmarks/aime26.md
@@ -126,18 +161,32 @@
 ../../benchmarks/amc.md
 ../../benchmarks/anat_em.md
 ../../benchmarks/arc.md
+../../benchmarks/arc_agi_2.md
+../../benchmarks/arc_indic.md
 ../../benchmarks/arena_hard.md
+../../benchmarks/arxivmath.md
 ../../benchmarks/arxivrollbench.md
 ../../benchmarks/arxivrollbench_full.md
 ../../benchmarks/bbh.md
 ../../benchmarks/bc2gm.md
 ../../benchmarks/bc4chemd.md
 ../../benchmarks/bc5cdr.md
+../../benchmarks/bhasha_bench_multi_ayur.md
+../../benchmarks/bhasha_bench_multi_finance.md
+../../benchmarks/bhasha_bench_multi_krishi.md
+../../benchmarks/bhasha_bench_multi_legal.md
+../../benchmarks/bhashabenchv1_ayur.md
+../../benchmarks/bhashabenchv1_finance.md
+../../benchmarks/bhashabenchv1_krishi.md
+../../benchmarks/bhashabenchv1_legal.md
+../../benchmarks/bigcodebench.md
+../../benchmarks/bigcodebench_hard.md
 ../../benchmarks/biomix_qa.md
 ../../benchmarks/broad_twitter_corpus.md
 ../../benchmarks/ceval.md
 ../../benchmarks/chinese_simpleqa.md
 ../../benchmarks/cl_bench.md
+../../benchmarks/cmath.md
 ../../benchmarks/cmmlu.md
 ../../benchmarks/coin_flip.md
 ../../benchmarks/commonsense_qa.md
@@ -162,22 +211,32 @@
 ../../benchmarks/genia_ner.md
 ../../benchmarks/gpqa_diamond.md
 ../../benchmarks/gsm8k.md
+../../benchmarks/gsm8k_indic.md
 ../../benchmarks/halueval.md
 ../../benchmarks/harvey_ner.md
 ../../benchmarks/health_bench.md
 ../../benchmarks/hellaswag.md
+../../benchmarks/hellaswag_hi.md
 ../../benchmarks/hle.md
 ../../benchmarks/hmmt25.md
+../../benchmarks/hmmt26.md
+../../benchmarks/hmmt_nov25.md
 ../../benchmarks/humaneval.md
 ../../benchmarks/humaneval_plus.md
 ../../benchmarks/ifbench.md
 ../../benchmarks/ifeval.md
+../../benchmarks/imo_answerbench.md
+../../benchmarks/indic_boolq.md
+../../benchmarks/indic_param.md
 ../../benchmarks/iquiz.md
 ../../benchmarks/jnlpba.md
 ../../benchmarks/jnlpba_rare.md
+../../benchmarks/kina.md
 ../../benchmarks/live_code_bench.md
+../../benchmarks/locomo.md
 ../../benchmarks/logi_qa.md
 ../../benchmarks/longbench_v2.md
+../../benchmarks/longmemeval.md
 ../../benchmarks/maritime_bench.md
 ../../benchmarks/math_500.md
 ../../benchmarks/math_qa.md
@@ -185,6 +244,7 @@
 ../../benchmarks/mbpp_plus.md
 ../../benchmarks/med_mcqa.md
 ../../benchmarks/mgsm.md
+../../benchmarks/milu.md
 ../../benchmarks/minerva_math.md
 ../../benchmarks/mit_movie_trivia.md
 ../../benchmarks/mit_restaurant.md
@@ -201,17 +261,24 @@
 ../../benchmarks/musr.md
 ../../benchmarks/ncbi.md
 ../../benchmarks/needle_haystack.md
+../../benchmarks/one_million_bench.md
 ../../benchmarks/ontonotes5.md
 ../../benchmarks/openai_mrcr.md
+../../benchmarks/perspective_gap_prompt_writing.md
+../../benchmarks/perspective_gap_role_assignment.md
 ../../benchmarks/piqa.md
+../../benchmarks/plawbench.md
 ../../benchmarks/poly_math.md
+../../benchmarks/prbench.md
 ../../benchmarks/process_bench.md
 ../../benchmarks/pubmedqa.md
 ../../benchmarks/qasc.md
 ../../benchmarks/race.md
 ../../benchmarks/refcoco.md
+../../benchmarks/sanskriti.md
 ../../benchmarks/scicode.md
 ../../benchmarks/sciq.md
+../../benchmarks/seed_tts_eval.md
 ../../benchmarks/simple_qa.md
 ../../benchmarks/siqa.md
 ../../benchmarks/super_gpqa.md
@@ -220,6 +287,7 @@
 ../../benchmarks/swe_bench_verified_mini.md
 ../../benchmarks/tool_bench.md
 ../../benchmarks/trivia_qa.md
+../../benchmarks/triviaqa_indic.md
 ../../benchmarks/truthful_qa.md
 ../../benchmarks/tweebank_ner.md
 ../../benchmarks/tweet_ner_7.md

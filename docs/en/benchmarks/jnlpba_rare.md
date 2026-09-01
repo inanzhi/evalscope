@@ -35,7 +35,7 @@ The JNLPBA-Rare dataset is a specialized subset of the JNLPBA test set created t
 | **Dataset ID** | [extraordinarylab/jnlpba-rare](https://modelscope.cn/datasets/extraordinarylab/jnlpba-rare/summary) |
 | **Paper** | N/A |
 | **Tags** | `Knowledge`, `NER` |
-| **Metrics** | `precision`, `recall`, `f1_score`, `accuracy` |
+| **Metrics** | `precision`, `recall`, `f1`, `accuracy` |
 | **Default Shots** | 0-shot |
 | **Evaluation Split** | `test` |
 
@@ -199,5 +199,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

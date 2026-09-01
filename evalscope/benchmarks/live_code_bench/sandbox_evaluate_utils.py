@@ -4,17 +4,17 @@ from typing import TYPE_CHECKING, Dict, List, Tuple
 from evalscope.utils.logger import get_logger
 
 if TYPE_CHECKING:
-    from evalscope.api.mixin.sandbox_mixin import SandboxMixin
+    from evalscope.api.mixin.code_execution_sandbox_mixin import CodeExecutionSandboxMixin
 
 logger = get_logger()
 
 
 def evaluate_in_sandbox(
-    adapter: 'SandboxMixin',
+    adapter: 'CodeExecutionSandboxMixin',
     code: str,
     evaluation_sample: str,
     timeout: int = 6,
-    debug: bool = False
+    debug: bool = False,
 ) -> Tuple[bool, Dict]:
     """
     Evaluate code in sandbox environment for Live Code Bench.
@@ -55,7 +55,13 @@ def evaluate_in_sandbox(
 
 
 def _evaluate_call_based_in_sandbox(
-    adapter: 'SandboxMixin', code: str, inputs: list, outputs: list, fn_name: str, timeout: int, debug: bool
+    adapter: 'CodeExecutionSandboxMixin',
+    code: str,
+    inputs: list,
+    outputs: list,
+    fn_name: str,
+    timeout: int,
+    debug: bool,
 ) -> Tuple[bool, Dict]:
     """Evaluate call-based problems in sandbox."""
     try:
@@ -157,7 +163,7 @@ except Exception as e:
                     # Extract failure details from output
                     for line in output.split('\n'):
                         if line.startswith('TEST_FAILED:'):
-                            failed_cases.append(f"Test {i}: {line.replace('TEST_FAILED: ', '')}")
+                            failed_cases.append(f'Test {i}: {line.replace("TEST_FAILED: ", "")}')
                             break
                     all_passed = False
                     break
@@ -189,7 +195,7 @@ except Exception as e:
 
 
 def _evaluate_stdio_in_sandbox(
-    adapter: 'SandboxMixin', code: str, inputs: list, outputs: list, timeout: int, debug: bool
+    adapter: 'CodeExecutionSandboxMixin', code: str, inputs: list, outputs: list, timeout: int, debug: bool
 ) -> Tuple[bool, Dict]:
     """Evaluate stdio-based problems in sandbox."""
     try:
@@ -198,12 +204,13 @@ def _evaluate_stdio_in_sandbox(
         failed_cases = []
 
         for i, (test_input, expected_output) in enumerate(zip(inputs, outputs)):
+            test_input_literal = repr(test_input)
             test_code = f"""
+import io
 import sys
-from io import StringIO
 
 # Redirect stdin
-sys.stdin = StringIO('''{test_input}''')
+sys.stdin = io.TextIOWrapper(io.BytesIO({test_input_literal}.encode('utf-8')), encoding='utf-8')
 
 # User's code
 {code}

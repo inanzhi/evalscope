@@ -79,7 +79,7 @@ results = run_perf_benchmark(task_cfg)
 - `url`: Request URL address
 - `model`: Name of the model used
 - `api`: API service used, default is `openai`
-- `dataset`: Dataset name, here it's `random`, indicating randomly generated dataset, for specific usage instructions [refer to](./examples.md#using-the-random-dataset); for more available (multimodal) datasets, please refer to [Dataset Configuration](./parameters.md#dataset-configuration)
+- `dataset`: Dataset name, here it's `random`, indicating randomly generated dataset, for specific usage instructions [refer to](./examples.md#random-dataset); for more available (multimodal) datasets, please refer to [Dataset Configuration](./parameters.md#dataset-configuration)
 - `tokenizer-path`: Model's tokenizer path, used to calculate the number of tokens (necessary for random datasets)
 - `extra-args`: Additional parameters in the request, passed as a JSON format string, e.g., `{"ignore_eos": true}` indicates ignoring the end token
 
@@ -153,7 +153,7 @@ Percentile results:
 |--------|-------------|---------|
 | Test Duration (s) | Total time from the start to the end of the test process | Last request end time - First request start time |
 | Concurrency | Number of clients sending requests simultaneously | Preset value |
-| Request Rate (req/s) | Target request sending rate, -1 means unlimited | Preset value |
+| Request Rate (req/s) | Target request scheduling rate; -1 means no rate pacing, while the default closed-loop mode is still bounded by the `--parallel` concurrency cap | Preset value |
 | Total / Success / Failed | Total number of requests sent during the test and their success/failure counts | Successful requests + Failed requests |
 | Req Throughput (req/s) | Average number of successful requests processed per second | Successful requests / Test Duration |
 | Avg Latency (s) | Average time from sending a request to receiving a complete response | Total latency / Successful requests |
@@ -204,10 +204,19 @@ The following metrics are only shown in speculative decoding scenarios.
 
 #### Per-Trace and Workload Throughput Metrics
 
-In multi-turn mode, two additional tables are output: **Per-Trace Metrics** (trace-level distribution metrics) and **Workload Throughput** (global token throughput rates across time windows). For details, see [Multi-Turn Stress Testing — Multi-Turn Output Metrics](./multi_turn.md#multi-turn-output-metrics).
+In multi-turn mode, two additional tables are output: **Per-Trace Metrics** (trace-level distribution metrics) and **Workload Throughput** (global token throughput rates across time windows). For details, see [Multi-Turn Stress Testing — Output Metrics](./multi_turn.md#output-metrics).
 
 
 ## Visualizing Test Results
+
+### Web Dashboard
+
+The EvalScope Web Dashboard discovers performance test results under its output root. Start the service after the test completes, then open the **Performance** page:
+
+```bash
+pip install 'evalscope[service]' -U
+evalscope service --outputs outputs
+```
 
 ### Using WandB
 
@@ -278,4 +287,3 @@ Add the following parameters before starting the test:
 ```
 
 ![clearml sample](https://sail-moe.oss-cn-hangzhou.aliyuncs.com/yunlin/images/evalscope/doc/clearml_vis.jpg)
-

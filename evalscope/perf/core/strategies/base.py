@@ -39,6 +39,12 @@ class BenchmarkStrategy(ABC):
         self.api_plugin = api_plugin
         self.client = client
         self.queue = queue
+        # GPU-memory accounting is only meaningful when the model runs in this
+        # process (``--api local`` in-process inference).  For remote APIs and
+        # ``local_vllm`` (subprocess) the client process holds no CUDA memory,
+        # so the measurement would be 0 and the per-request first-time
+        # ``import torch`` would only block the event loop.  Skip it there.
+        self.track_gpu_memory = args.api == 'local'
 
     @abstractmethod
     async def run(self) -> None:
@@ -46,7 +52,7 @@ class BenchmarkStrategy(ABC):
 
         The caller is responsible for:
         - awaiting ``queue.join()`` after this coroutine returns.
-        - setting ``data_process_completed_event`` to signal the consumer.
+        - signalling its metrics consumer after the queue is drained.
         """
 
     @staticmethod
@@ -55,7 +61,20 @@ class BenchmarkStrategy(ABC):
         return None if duration is None else time.perf_counter() + duration
 
     @staticmethod
-    async def _partition_requests(gen: AsyncIterator[Tuple[dict, bool]], ) -> Tuple[List[dict], List[dict]]:
+    async def _collect_requests(
+        gen: AsyncIterator[Tuple[dict, bool]],
+    ) -> List[Tuple[dict, bool]]:
+        """Consume all ``(request, is_warmup)`` items from gen, preserving order.
+
+        Unlike :meth:`_partition_requests` this keeps both kinds in one stream so
+        a dispatcher can hand over without draining in-flight requests.
+        """
+        return [item async for item in gen]
+
+    @staticmethod
+    async def _partition_requests(
+        gen: AsyncIterator[Tuple[dict, bool]],
+    ) -> Tuple[List[dict], List[dict]]:
         """Consume all ``(request, is_warmup)`` items from gen.
 
         Returns:

@@ -13,7 +13,6 @@ logger = get_logger()
 
 @register_api('dashscope')
 class DashScopeApiPlugin(ApiPluginBase):
-
     def __init__(self, param: Arguments):
         super().__init__(param)
 
@@ -36,7 +35,7 @@ class DashScopeApiPlugin(ApiPluginBase):
                 if param.query_template.startswith('@'):
                     file_path = param.query_template[1:]
                     if os.path.exists(file_path):
-                        with open(file_path, 'r') as file:
+                        with open(file_path, 'r', encoding='utf-8') as file:
                             query = json.load(file)
                     else:
                         raise FileNotFoundError(f'{file_path}')
@@ -53,7 +52,8 @@ class DashScopeApiPlugin(ApiPluginBase):
             return None
 
     def __compose_query_from_parameter(self, payload: Dict, param: Arguments):
-        payload['model'] = param.model
+        if param.model is not None:
+            payload['model'] = param.model
         if 'parameters' not in payload:
             payload['parameters'] = {}
         if param.max_tokens is not None:

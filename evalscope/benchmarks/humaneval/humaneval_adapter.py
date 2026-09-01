@@ -8,6 +8,8 @@ from evalscope.api.dataset import Sample
 from evalscope.api.evaluator import TaskState
 from evalscope.api.messages.chat_message import ChatMessageUser
 from evalscope.api.metric import Score
+from evalscope.api.metric.semantics import MetricSelector
+from evalscope.api.mixin import CodeExecutionSandboxMixin
 from evalscope.api.registry import register_benchmark
 from evalscope.constants import Tags
 from evalscope.utils.logger import get_logger
@@ -51,20 +53,14 @@ HumanEval is a benchmark for evaluating the code generation capabilities of lang
         subset_list=['openai_humaneval'],
         metric_list=['acc'],
         aggregation='mean_and_pass_at_k',
+        primary_metric=MetricSelector(name='accuracy', aggregation='pass_at_k', dimensions={'k': 1}),
         eval_split='test',
-        prompt_template=
-        'Read the following function signature and docstring, and fully implement the function described. Your response should only contain the code for this function.\n{question}',  # noqa: E501
+        prompt_template='Read the following function signature and docstring, and fully implement the function described. Your response should only contain the code for this function.\n{question}',  # noqa: E501
         review_timeout=4,
-        sandbox_config={
-            'image': 'python:3.11-slim',
-            'tools_config': {
-                'shell_executor': {},
-                'python_executor': {}
-            }
-        },
+        sandbox_config={'image': 'python:3.11-slim', 'tools_config': {'shell_executor': {}, 'python_executor': {}}},
     )
 )
-class HumanevalAdapter(DefaultDataAdapter):
+class HumanevalAdapter(CodeExecutionSandboxMixin, DefaultDataAdapter):
     """
     HumanEval adapter using the new data processing framework.
     """
@@ -82,7 +78,7 @@ class HumanevalAdapter(DefaultDataAdapter):
                 'entry_point': record['entry_point'],
                 'prompt': record['prompt'],
                 'test': record['test'],
-            }
+            },
         )
 
     def extract_answer(self, prediction: str, task_state: TaskState) -> str:
@@ -116,7 +112,7 @@ class HumanevalAdapter(DefaultDataAdapter):
             passed = res['passed']
         else:
             check_program = (
-                problem['prompt'] + completion + '\n' + problem['test'] + '\n' + f"check({problem['entry_point']})"
+                problem['prompt'] + completion + '\n' + problem['test'] + '\n' + f'check({problem["entry_point"]})'
             )
             res = self.execute_code_in_sandbox(code=check_program, timeout=self.review_timeout, language='python')
             passed = res.get('status') == 'success'

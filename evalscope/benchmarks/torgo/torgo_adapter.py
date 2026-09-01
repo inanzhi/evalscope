@@ -1,6 +1,6 @@
 from typing import List
 
-from evalscope.api.benchmark import BenchmarkMeta, VisionLanguageAdapter
+from evalscope.api.benchmark import AudioLanguageAdapter, BenchmarkMeta
 from evalscope.api.dataset import Sample
 from evalscope.api.evaluator import TaskState
 from evalscope.api.messages import ChatMessageUser, ContentAudio, ContentText
@@ -53,16 +53,15 @@ TORGO is a specialized database of dysarthric speech designed for evaluating ASR
         subset_list=['mild', 'moderate', 'severe'],
         few_shot_num=0,
         metric_list=['cer', 'wer', 'sem_score'],
+        primary_metric='wer',
         prompt_template='Please recognize the speech and only output the recognized content:',
     )
 )
-class TorgoAdapter(VisionLanguageAdapter):
-
+class TorgoAdapter(AudioLanguageAdapter):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.reformat_subset = True
         self.add_overall_metric = False
-        self.add_aggregation_name = False
         self.use_batch_scoring = True
 
         self.jiwer_cer = None
@@ -75,13 +74,16 @@ class TorgoAdapter(VisionLanguageAdapter):
             try:
                 if self.has_metric('cer'):
                     from jiwer import cer as jiwer_cer
+
                     self.jiwer_cer = jiwer_cer
 
                 if self.has_metric('wer'):
                     from jiwer import wer as jiwer_wer
+
                     self.jiwer_wer = jiwer_wer
 
-                from evalscope.metrics.text_normalizer.wer import normalize_text
+                from evalscope.metrics.utils.text_normalizer.wer import normalize_text
+
                 self.normalize_text = normalize_text
             except Exception as e:
                 logger.warning(f'[TorgoAdapter] Failed to import jiwer components: {e}')
@@ -89,7 +91,8 @@ class TorgoAdapter(VisionLanguageAdapter):
         if self.has_metric('sem_score'):
             check_import('jellyfish', extra='torgo', raise_error=True, feature_name='SemScore Metric')
             try:
-                from evalscope.metrics.metric import SemScore
+                from evalscope.metrics.nlp.metrics import SemScore
+
                 self.sem_scorer = SemScore()
             except Exception as e:
                 logger.warning(f'[TorgoAdapter] Failed to initialize SemScore: {e}')
@@ -107,15 +110,15 @@ class TorgoAdapter(VisionLanguageAdapter):
                 'transcript': record['transcript'],
                 'intelligibility': record['intelligibility'],
                 'duration': record['duration'],
-            }
+            },
         )
 
     def match_score(self, original_prediction, filtered_prediction, reference, task_state):
-        from evalscope.metrics.text_normalizer.wer import normalize_text
+        from evalscope.metrics.utils.text_normalizer.wer import normalize_text
 
         language = 'en'
 
-        normalized_prediction = normalize_text(original_prediction, language)
+        normalized_prediction = normalize_text(filtered_prediction or '', language)
         normalized_reference = normalize_text(reference, language)
         score = Score(
             extracted_prediction=normalized_prediction,

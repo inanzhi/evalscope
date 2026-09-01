@@ -2,22 +2,29 @@
 
 This framework supports two custom multimodal evaluation methods:
 
-- **General-VQA Format**: Based on OpenAI message format, supports multi-image/audio input, system prompts, and base64 encoding, suitable for Q&A-based multimodal evaluation tasks.
-- **General-VMCQ Format**: Similar to MMMU format, question text can contain image placeholders `<image x>`, suitable for multiple-choice multimodal evaluation tasks.
+- **General-VQA Format**: Suitable for Q&A-based multimodal evaluation tasks. Supports two input styles: **OpenAI Messages Data**, **MMMU-style Data with Media Placeholders**.
+- **General-VMCQ Format**: Suitable for multiple-choice multimodal evaluation tasks. Uses the [media placeholders][mp-feature] to embed images, videos, and audio in questions and options, similar to MMMU format.
 
 ## General-VQA Format
 
-### 1. Data Preparation
+General-VQA supports **two input styles**:
 
-Prepare data files conforming to OpenAI message format, supporting **JSONL** or **TSV** formats:
+1. **OpenAI Messages Data** — full structured content with explicit media parts (images, audio, video) in the OpenAI message schema. Supports multi-turn conversations, system prompts, and fine-grained control over each content part.
+2. **MMMU-style Data with Media Placeholders** — a simpler approach where the user message is a plain-text string containing `<image N>`, `<video N>`, or `<audio N>` placeholders, and media files are supplied via separate indexed columns (see [Media Placeholder Mechanism][mp-feature]).
 
-**JSONL Format Example** (`example_openai.jsonl`):
+Both formats support **JSONL** or **TSV** files.
+
+### OpenAI Messages Data
+
+In this format, each record contains a `messages` array following the OpenAI chat completion schema. Media (images, audio, video) are embedded directly as structured content parts within user messages.
+
+**JSONL Example** (`example_openai.jsonl`):
 ```json
 {"messages": [{"role": "user", "content": [{"type": "text", "text": "What animal is this?"}, {"type": "image_url", "image_url": {"url": "custom_eval/multimodal/images/dog.jpg"}}]}], "answer": "Dog"}
 {"messages": [{"role": "user", "content": [{"type": "text", "text": "What building is this?"}, {"type": "image_url", "image_url": {"url": "custom_eval/multimodal/images/AMNH.jpg"}}]}], "answer": "Museum"}
 ```
 
-**TSV Format Example** (`example_openai.tsv`):
+**TSV Example** (`example_openai.tsv`):
 ```text
 messages	answer
 [{"role": "user", "content": [{"type": "text", "text": "What animal is this?"}, {"type": "image_url", "image_url": {"url": "custom_eval/multimodal/images/dog.jpg"}}]}]	Dog
@@ -47,7 +54,7 @@ messages	answer
 - Local path: `"url": "custom_eval/multimodal/videos/sample.mp4"`
 - HTTP URL: `"url": "https://example.com/video.mp4"` (requires model service support)
 - Base64 encoding: `"url": "data:video/mp4;base64,AAAAIGZ0eX..."`
-- Video format is inferred from the path, URL, or data URI; supported formats are `"mp4"`, `"mpeg"`, and `"mov"`.
+- Video format is inferred from the path, URL, or data URI; supported formats are `"mp4"`, `"mpeg"`, `"mov"`, and `"avi"`.
 
 **Multi-image Input**
 
@@ -187,6 +194,31 @@ Supports video content input using OpenAI-compatible `video_url` format. The `ur
 }
 ```
 
+### MMMU-style Data with Media Placeholders
+
+In this format, the `messages` field keeps the user message as a **plain-text string** containing placeholders like `<image 1>`, `<video 1>`, or `<audio 1>` and filled in-place via separate indexed columns (`image_1`, `video_1`, `audio_1`, etc.). For each media type, use either indexed columns or its plural list column, not both. See the [Media Placeholder Mechanism][mp-feature] section below for full details on how placeholders are resolved, supported column names, and media types.
+
+**JSONL Example** (`example_placeholder.jsonl`):
+```json
+{"messages": [{"role": "user", "content": "What animal is this?<image 1>"}], "image_1": "custom_eval/multimodal/images/dog.jpg", "answer": "Dog"}
+{"messages": [{"role": "user", "content": "What building is this?<image 1>"}], "image_1": "custom_eval/multimodal/images/AMNH.jpg", "answer": "Museum"}
+{"messages": [{"role": "user", "content": "Which city's skyline is this?<image 1>"}], "image_1": "custom_eval/multimodal/images/tokyo.jpg", "answer": "Tokyo"}
+{"messages": [{"role": "user", "content": "What is the brand of this car?<image 1>"}], "image_1": "custom_eval/multimodal/images/tesla.jpg", "answer": "Tesla"}
+{"messages": [{"role": "user", "content": "What is the person in the picture doing?<image 1>"}], "image_1": "custom_eval/multimodal/images/running.jpg", "answer": "Running"}
+```
+
+**Mixed Media Example**:
+```json
+{"messages": [{"role": "user",
+               "content": "<image 1> Watch <video 1> and describe both."}],
+ "answer": "A sunny beach and a wave video.",
+ "image_1": "custom_eval/multimodal/images/beach.jpg",
+ "video_1": "custom_eval/multimodal/videos/wave.mp4"}
+```
+
+**Note**: Only user messages (`"role": "user"`) with plain-text `content` are scanned for placeholders. Messages that already have structured content (a list of content parts) or messages with other roles (system, assistant, tool) are left untouched.
+
+
 ### 2. Configure Evaluation Task
 
 Evaluate using Python API or CLI:
@@ -232,31 +264,31 @@ Evaluation will output BLEU and Rouge metrics:
 +--------------+-------------+----------------+----------------+-------+---------+---------+
 | Model        | Dataset     | Metric         | Subset         |   Num |   Score | Cat.0   |
 +==============+=============+================+================+=======+=========+=========+
-| qwen-vl-plus | general_vqa | mean_bleu-1    | example_openai |     5 |  0.0067 | default |
+| qwen-vl-plus | General-VQA | BLEU ↑ · 1              | example_openai |     5 |    0.7% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
-| qwen-vl-plus | general_vqa | mean_bleu-2    | example_openai |     5 |  0      | default |
+| qwen-vl-plus | General-VQA | BLEU ↑ · 2              | example_openai |     5 |      0% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
-| qwen-vl-plus | general_vqa | mean_bleu-3    | example_openai |     5 |  0      | default |
+| qwen-vl-plus | General-VQA | BLEU ↑ · 3              | example_openai |     5 |      0% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
-| qwen-vl-plus | general_vqa | mean_bleu-4    | example_openai |     5 |  0      | default |
+| qwen-vl-plus | General-VQA | BLEU ↑ · 4              | example_openai |     5 |      0% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
-| qwen-vl-plus | general_vqa | mean_Rouge-1-R | example_openai |     5 |  0.4    | default |
+| qwen-vl-plus | General-VQA | ROUGE ↑ · 1 · Recall    | example_openai |     5 |     40% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
-| qwen-vl-plus | general_vqa | mean_Rouge-1-P | example_openai |     5 |  0.0062 | default |
+| qwen-vl-plus | General-VQA | ROUGE ↑ · 1 · Precision | example_openai |     5 |    0.6% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
-| qwen-vl-plus | general_vqa | mean_Rouge-1-F | example_openai |     5 |  0.0121 | default |
+| qwen-vl-plus | General-VQA | ROUGE ↑ · 1 · F1        | example_openai |     5 |    1.2% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
-| qwen-vl-plus | general_vqa | mean_Rouge-2-R | example_openai |     5 |  0      | default |
+| qwen-vl-plus | General-VQA | ROUGE ↑ · 2 · Recall    | example_openai |     5 |      0% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
-| qwen-vl-plus | general_vqa | mean_Rouge-2-P | example_openai |     5 |  0      | default |
+| qwen-vl-plus | General-VQA | ROUGE ↑ · 2 · Precision | example_openai |     5 |      0% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
-| qwen-vl-plus | general_vqa | mean_Rouge-2-F | example_openai |     5 |  0      | default |
+| qwen-vl-plus | General-VQA | ROUGE ↑ · 2 · F1        | example_openai |     5 |      0% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
-| qwen-vl-plus | general_vqa | mean_Rouge-L-R | example_openai |     5 |  0.4    | default |
+| qwen-vl-plus | General-VQA | ROUGE ↑ · L · Recall    | example_openai |     5 |     40% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
-| qwen-vl-plus | general_vqa | mean_Rouge-L-P | example_openai |     5 |  0.0047 | default |
+| qwen-vl-plus | General-VQA | ROUGE ↑ · L · Precision | example_openai |     5 |    0.5% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
-| qwen-vl-plus | general_vqa | mean_Rouge-L-F | example_openai |     5 |  0.0093 | default |
+| qwen-vl-plus | General-VQA | ROUGE ↑ · L · F1        | example_openai |     5 |    0.9% | default |
 +--------------+-------------+----------------+----------------+-------+---------+---------+
 ```
 
@@ -266,7 +298,7 @@ You can specify a judge model through the `judge_model` parameter to generate re
 
 ```python
 from evalscope.run import run_task
-from evalscope.constants import EvalType, JudgeStrategy
+from evalscope.constants import EvalType
 from os import environ as env
 
 task_cfg = TaskConfig(
@@ -282,17 +314,16 @@ task_cfg = TaskConfig(
         }
     },
     limit=5,
-    judge_model_args={
-        'model_id': 'qwen-plus',  # Does not need to be a multimodal model
-        'api_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-        'api_key': env.get('DASHSCOPE_API_KEY'),
-        'generation_config': {
-            'temperature': 0.0,
-            'max_tokens': 4096
+    judge={
+        'strategy': 'llm',
+        'models': {
+            'model_id': 'qwen-plus',  # Does not need to be a multimodal model
+            'api_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            'api_key': env.get('DASHSCOPE_API_KEY'),
+            'generation_config': {'temperature': 0.0, 'max_tokens': 4096},
         },
     },
     eval_batch_size=5,
-    judge_strategy=JudgeStrategy.LLM,
 )
 result = run_task(task_cfg=task_cfg)
 ```
@@ -307,9 +338,8 @@ evalscope eval \
   --datasets general_vqa \
   --dataset-args '{"general_vqa": {"local_path": "custom_eval/multimodal/vqa", "subset_list": ["example_openai"]}}' \
   --limit 5 \
-  --judge-model-args '{"model_id": "qwen-plus", "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "api_key": "$DASHSCOPE_API_KEY", "generation_config": {"temperature": 0.0, "max_tokens": 4096}}' \
-  --judge-worker-num 5 \
-  --judge-strategy llm
+  --eval-batch-size 5 \
+  --judge '{"strategy": "llm", "models": {"model_id": "qwen-plus", "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "api_key": "$DASHSCOPE_API_KEY", "generation_config": {"temperature": 0.0, "max_tokens": 4096}}}'
 ```
 
 Evaluation will output accuracy metrics:
@@ -317,7 +347,7 @@ Evaluation will output accuracy metrics:
 +--------------+-------------+----------+----------------+-------+---------+---------+
 | Model        | Dataset     | Metric   | Subset         |   Num |   Score | Cat.0   |
 +==============+=============+==========+================+=======+=========+=========+
-| qwen-vl-plus | general_vqa | mean_acc | example_openai |     5 |       1 | default |
+| qwen-vl-plus | general_vqa | Accuracy ↑ | example_openai |     5 |    100% | default |
 +--------------+-------------+----------+----------------+-------+---------+---------+ 
 ```
 
@@ -325,15 +355,7 @@ Evaluation will output accuracy metrics:
 
 ### 1. Data Preparation
 
-General-VMCQ adopts a structure similar to MMMU: question text can contain image placeholders `<image x>` and video placeholders `<video x>`; `options` is a Python list string, options can be text or media placeholders.
-
-Media support the following forms (all strings):
-- Image local or remote path/URL: `"custom_eval/multimodal/images/dog.jpg"` or `"https://.../dog.jpg"`
-- Image Base64 Data URL: `"data:image/jpeg;base64,/9j/4AAQSk..."`
-- Video local or remote path/URL: `"custom_eval/multimodal/videos/sample.mp4"` or `"https://.../sample.mp4"`
-- Video Base64 Data URL: `"data:video/mp4;base64,AAAAIGZ0eX..."`
-
-Supports up to 100 images (`image_1` to `image_100`) and 100 videos (`video_1` to `video_100`). Missing media placeholders are ignored.
+General-VMCQ adopts a structure similar to MMMU: question text can contain image placeholders `<image x>`, video placeholders `<video x>`, and audio placeholders `<audio x>`; `options` is a Python list string, options can be text or media placeholders. Media files are supplied via media columns (`image_k`, `images`, `video_k`, `audio_k`, etc.) described in the [Media Placeholder Mechanism][mp-feature] section.
 
 **JSONL Example** (`example.jsonl`):
 ```json
@@ -350,12 +372,10 @@ Which image shows a dog?	["<image 1>", "<image 2>", "<image 3>", "<image 4>"]	A	
 ```
 
 **Field Descriptions**:
-- `question`: Question text, can contain `<image x>` or `<video x>` placeholders
-- `options`: List (JSON array), elements can be text (e.g., `"School"`) or media placeholders (e.g., `"<image 1>"`, `"<video 1>"`), no need to add prefixes like `A.`, `B.`
+- `question`: Question text, can contain `<image x>`, `<video x>`, or `<audio x>` placeholders
+- `options`: List (JSON array), elements can be text (e.g., `"School"`) or media placeholders (e.g., `"<image 1>"`, `"<video 1>"`, `"<audio 1>"`), no need to add prefixes like `A.`, `B.`
 - `answer`: Correct answer letter (e.g., `"A"`, `"B"`)
-- `image_k`: Image string (local/remote path or base64 Data URL), k ∈ [1, 100]
-- `video_k`: Video string (local/remote path or base64 Data URL), k ∈ [1, 100]
-- `video_k_format`: Optional video format hint; supports `"mp4"`, `"mpeg"`, and `"mov"`
+- Media columns (`image_k`, `images`, `video_k`, `videos`, `video_k_format`, `audio_k`, `audios`,  `audio_k_format`): See the [Media Placeholder Mechanism][mp-feature] section for full details.
 
 ### 2. Configure Evaluation Task
 
@@ -403,9 +423,67 @@ Evaluation will output accuracy metrics:
 +--------------+--------------+----------+----------+-------+---------+---------+
 | Model        | Dataset      | Metric   | Subset   |   Num |   Score | Cat.0   |
 +==============+==============+==========+==========+=======+=========+=========+
-| qwen-vl-plus | general_vmcq | mean_acc | example  |     3 |       1 | default |
+| qwen-vl-plus | general_vmcq | Accuracy ↑ | example  |     3 |    100% | default |
 +--------------+--------------+----------+----------+-------+---------+---------+ 
 ```
+
+## Media Placeholder Mechanism
+[mp-feature]: #media-placeholder-mechanism
+
+General-VQA and General-VMCQ share media normalization utilities, but differ in when they validate media columns.
+
+### How It Works
+
+Placeholders like `<image 1>`, `<video 1>`, or `<audio 1>` in plain text are replaced with the corresponding media before prompting to an MLLM.
+
+- **General-VQA** resolves only media referenced by plain-text user messages. Missing referenced media is dropped with a warning; if that would leave a user message empty, its original text is retained. Unreferenced media columns are ignored.
+- **General-VMCQ** validates every non-empty media column before building its prompt. Unused malformed media columns therefore cause the record to fail.
+- By default, indexed media columns are capped at 100: `image_k`/`video_k`/`audio_k` for k ∈ [1, 100], e.g., `<image 101>` and `image_101` will be ignored.
+- For each media type, choose either indexed columns or its plural list column. Do not mix the two representations: General-VQA ignores the list when any referenced indexed column is non-empty, while General-VMCQ ignores it when any indexed column is non-empty. List columns are equivalent to `image_1`, `image_2`, ... and are not capped at 100.
+- General-VQA converts resolved placeholder content into structured OpenAI-message content. General-VMCQ inserts it into its multiple-choice prompt.
+
+### Trigger Conditions
+
+- **General-VQA**: every message that satisfies both conditions: 1. its `"role"` is `"user"`, and 2. its `"content"` field is a plain string (type `str`).
+- **General-VMCQ**: `question` and `options` field, always triggered.
+
+To bypass it, you can provide structured content for General-VQA messages, or remove placeholders in General-VMCQ questions/options. A General-VQA example is provided below:
+
+```json
+// <image 1> tag will not be replaced, because it's structured into `{"type": "text"}` dict
+{"answer": "Dog",
+ "messages": [{"role": "user",
+               "content": [{"type": "text",
+                            "text": "<image 1> What animal is this?"}]}]}
+```
+
+### Media Column Names
+
+| Column           | Description                                                                                              | k range   |
+| ---------------- | -------------------------------------------------------------------------------------------------------- | --------- |
+| `image_k`        | Image path/URL/base64 for placeholder `<image k>`                                                        | [1, 100]  |
+| `video_k`        | Video path/URL/base64 for placeholder `<video k>`                                                        | [1, 100]  |
+| `video_k_format` | Optional video format hint (`"mp4"`, `"mpeg"`, `"mov"`, `"avi"`), automatically guessed if not specified | [1, 100]  |
+| `audio_k`        | Audio path/URL/base64 for placeholder `<audio k>`                                                        | [1, 100]  |
+| `audio_k_format` | Optional audio format hint (`"wav"`, `"mp3"`), automatically guessed if not specified                    | [1, 100]  |
+| `images`         | Image list equivalent to consecutive `image_1`, `image_2`, ... Do not mix with indexed image columns. | unbounded |
+| `videos`         | Video list equivalent to consecutive `video_1`, `video_2`, ... Do not mix with indexed video columns. | unbounded |
+| `audios`         | Audio list equivalent to consecutive `audio_1`, `audio_2`, ... Do not mix with indexed audio columns. | unbounded |
+
+### Supported Media Values
+
+Each media column accepts any of the following:
+
+- **Local path**: `"custom_eval/multimodal/audio/sample.wav"`
+- **HTTP/HTTPS URL**: `"https://.../sample.wav"`
+- **Base64 Data URL**: `"data:audio/wav;base64,UklGRiQ..."`
+- **Undecoded dict** (for parquet-loaded datasets): `{"path": "..."}` or `{"bytes": b"..."}`
+- **Hugging Face Dataset features** (for parquet-loaded datasets): [Image][HFImage], [Video][HFVideo], or [Audio][HFAudio] feature objects
+
+[HFImage]: https://huggingface.co/docs/datasets/about_dataset_features#image-feature
+[HFVideo]: https://huggingface.co/docs/datasets/package_reference/main_classes#datasets.Video
+[HFAudio]: https://huggingface.co/docs/datasets/en/about_dataset_features#audio-feature
+
 
 ---
 

@@ -1,6 +1,6 @@
 # Copyright (c) Alibaba, Inc. and its affiliates.
 
-from evalscope.api.benchmark import BenchmarkMeta, VisionLanguageAdapter
+from evalscope.api.benchmark import AudioLanguageAdapter, BenchmarkMeta
 from evalscope.api.dataset import Sample
 from evalscope.api.messages import ChatMessageUser, Content, ContentAudio, ContentText
 from evalscope.api.metric.scorer import Score
@@ -51,8 +51,7 @@ LibriSpeech is a large-scale corpus of approximately 1,000 hours of read English
         prompt_template='Please recognize the speech and only output the recognized content:',
     )
 )
-class LibriSpeechAdapter(VisionLanguageAdapter):
-
+class LibriSpeechAdapter(AudioLanguageAdapter):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -67,15 +66,15 @@ class LibriSpeechAdapter(VisionLanguageAdapter):
             metadata={
                 'audio_id': record['audio_id'],
                 'audio_duration': record['audio_duration'],
-            }
+            },
         )
 
     def match_score(self, original_prediction, filtered_prediction, reference, task_state):
-        from evalscope.metrics.text_normalizer.wer import normalize_text, wer
+        from evalscope.metrics.utils.text_normalizer.wer import normalize_text, wer
 
         language = 'en'
 
-        normalized_prediction = normalize_text(original_prediction, language)
+        normalized_prediction = normalize_text(filtered_prediction or '', language)
         normalized_reference = normalize_text(reference, language)
         score = Score(
             extracted_prediction=normalized_prediction,

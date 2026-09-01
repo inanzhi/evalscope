@@ -1,6 +1,7 @@
 import math
-import numpy as np
 import re
+
+import numpy as np
 from sympy import Rational
 
 from evalscope.utils.logger import get_logger
@@ -14,7 +15,6 @@ Compare the answers to verify they represent identical values or meaning, even w
 
 Your output must follow the following format:
 1) Provide an explanation for why the answers are equivalent or not.
-2) Then provide your final answer in the form of: [[YES]] or [[NO]]
 """  # noqa: E501
 
 ORM_USER_TEMPLATE = """

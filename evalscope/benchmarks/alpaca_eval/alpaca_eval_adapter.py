@@ -1,15 +1,37 @@
-import re
-from typing import Any, Dict
+from typing import Any, Dict, List, Literal
+
+from pydantic import BaseModel, Field
 
 from evalscope.api.benchmark import BenchmarkMeta, DefaultDataAdapter
 from evalscope.api.dataset import Sample
-from evalscope.api.evaluator import TaskState
+from evalscope.api.judge import (
+    CaseVerdict,
+    JudgeCase,
+    JudgeContext,
+    JudgeDefinition,
+    JudgeRequest,
+    OutputContract,
+    PairwiseOutcome,
+    PairwisePlacementOutcome,
+    Placement,
+    ReducedVerdict,
+)
+from evalscope.api.messages import ChatMessageSystem, ChatMessageUser
 from evalscope.api.metric import Score
 from evalscope.api.registry import register_benchmark
-from evalscope.constants import Tags
+from evalscope.constants import ScoringPolicy, Tags
 from evalscope.utils.logger import get_logger
 
 logger = get_logger()
+
+
+# The judge replies with the single letter of the better output; 'm' is the baseline and 'M'
+# the evaluated model. Case matters, so an unanchored search would match any m in prose.
+class Preference(BaseModel):
+    verdict: Literal['m', 'M']
+
+
+PREFERENCE_CONTRACT = OutputContract(schema_model=Preference)
 
 GRADER_SYSTEM_PROMPT = """You are a highly efficient assistant, who evaluates and selects the best large language model (LLMs) based on the quality of their responses to a given instruction. This process will be used to create a leaderboard reflecting the most accurate and human-preferred answers."""  # noqa: E501
 
@@ -80,19 +102,20 @@ AlpacaEval 2.0 is an evaluation framework for instruction-following language mod
 """,
         dataset_id='AI-ModelScope/alpaca_eval',
         subset_list=['alpaca_eval_gpt4_baseline'],
-        metric_list=['winrate'],
+        metric_list=['win_rate'],
         few_shot_num=0,
         train_split=None,
         eval_split='eval',
-        prompt_template='{question}'
+        prompt_template='{question}',
     )
 )
 class AlpacaEvalAdapter(DefaultDataAdapter):
+    scoring_policy = ScoringPolicy.JUDGE_ONLY
+    supports_position_swap = True
+    official_position_swap = False
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
-        self._use_llm_judge = True  # Use LLM as a judge by default
 
     def record_to_sample(self, record: Dict[str, Any]) -> Sample:
         """
@@ -110,48 +133,44 @@ class AlpacaEvalAdapter(DefaultDataAdapter):
         return Sample(
             input=instruction,
             target=baseline_output,
-            metadata={
-                'generator': record.get('generator', 'unknown'),
-                'dataset': record.get('dataset', 'unknown')
+            metadata={'generator': record.get('generator', 'unknown'), 'dataset': record.get('dataset', 'unknown')},
+        )
+
+    def judge_definition(self, context: JudgeContext) -> JudgeDefinition:
+
+        def request(case, placement, completed_cases, judge_context) -> JudgeRequest:
+            candidate_first = placement is Placement.SWAPPED
+            prompt = GRADER_TEMPLATE.format(
+                instruction=judge_context.task_state.input_text,
+                output_1=judge_context.filtered_prediction if candidate_first else judge_context.reference,
+                output_2=judge_context.reference if candidate_first else judge_context.filtered_prediction,
+            )
+            return JudgeRequest(
+                messages=[
+                    ChatMessageSystem(content=GRADER_SYSTEM_PROMPT),
+                    ChatMessageUser(content=prompt + case.output_contract.instruction()),
+                ]
+            )
+
+        def reduce(case_verdicts, judge_context) -> ReducedVerdict:
+            values = case_verdicts[0].placements or {'original': case_verdicts[0].value}
+            outcomes = {
+                name: PairwisePlacementOutcome(
+                    result='win' if verdict.verdict == ('m' if name == 'swapped' else 'M') else 'loss'
+                )
+                for name, verdict in values.items()
             }
+            result = (
+                next(iter(item.result for item in outcomes.values()))
+                if len({item.result for item in outcomes.values()}) == 1
+                else 'tie'
+            )
+            outcome = PairwiseOutcome(metric_name='win_rate', result=result, placements=outcomes)
+            return ReducedVerdict(value={'win_rate': outcome.score}, outcome=outcome)
+
+        return JudgeDefinition.workflow(
+            cases=[JudgeCase(case_id='preference', output_contract=PREFERENCE_CONTRACT)],
+            request=request,
+            reduce=reduce,
+            main_score_name='win_rate',
         )
-
-    def llm_match_score(
-        self,
-        original_prediction: str,
-        filtered_prediction: str,
-        reference: str,
-        task_state: TaskState,
-    ) -> Score:
-        score = Score(
-            extracted_prediction=filtered_prediction,
-            prediction=original_prediction,
-        )
-
-        instruction = task_state.input_text
-
-        # Request judge and obtain score
-        # reference is baseline answer 'm', filtered_prediction is model answer 'M'
-        prompt = GRADER_TEMPLATE.format(instruction=instruction, output_1=reference, output_2=filtered_prediction)
-        judge_response = self.llm_judge.judge(prompt, system_prompt=GRADER_SYSTEM_PROMPT)
-
-        # parse grading response
-        match = re.search(r'(m|M)', judge_response)
-        res = match.group(0) if match else None
-
-        if res:
-            winrate = 1 if res == 'M' else 0
-        else:
-            logger.info(f'Failed to parse grading response: {prompt=}\n {judge_response=}')
-            winrate = 0
-
-        # Set score based on the match result
-        score.value = {'winrate': winrate}
-        score.explanation = f'LLM judge: {judge_response}'
-        score.metadata = {
-            'source': 'llm_judge',
-            'judge_strategy': self.judge_strategy,
-            'model': self.llm_judge.model_id
-        }
-        score.main_score_name = 'winrate'
-        return score

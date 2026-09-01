@@ -22,7 +22,9 @@ from typing import Any, Dict, List, Optional
 from evalscope.api.agent import AgentEnvironment
 from evalscope.api.registry import register_runner
 from evalscope.utils.logger import get_logger
+
 from .base import AgentRunner, AgentRunResult, BridgeEndpoint, ExternalAgentTask, RunnerTimeoutError
+from .install_helper import ensure_node_via_apt, install_task_skills
 
 logger = get_logger()
 
@@ -132,15 +134,13 @@ class CodexRunner(AgentRunner):
         return False
 
     async def _install_codex_cli(self, env: AgentEnvironment) -> None:
-        """Install Node.js (when missing) and the ``@openai/codex`` package.
-
-        Mirrors :meth:`ClaudeCodeRunner._install_claude_code` structure —
-        kept as a separate copy on purpose (this is only the second
-        runner to need this routine; if a third appears, extract to
-        :mod:`base`).
-        """
-        if not await self._node_present(env):
-            await self._install_node_via_apt(env)
+        """Install Node.js (when missing) and the ``@openai/codex`` package."""
+        await ensure_node_via_apt(
+            env,
+            node_setup_url=self._node_setup_url,
+            timeout_s=self._install_timeout_s,
+            runner_name='CodexRunner',
+        )
         npm = await env.exec(
             ['bash', '-c', f'set -e; npm install -g --no-fund --no-audit {self._npm_package} >/dev/null'],
             timeout=self._install_timeout_s,
@@ -149,44 +149,6 @@ class CodexRunner(AgentRunner):
             raise RuntimeError(
                 f'CodexRunner.setup: `npm install -g {self._npm_package}` failed '
                 f'(rc={npm.returncode}). stderr={npm.stderr.strip()[-1000:]!r}'
-            )
-
-    async def _node_present(self, env: AgentEnvironment) -> bool:
-        probe = await env.exec(['bash', '-c', 'command -v node && command -v npm'])
-        return probe.returncode == 0
-
-    async def _install_node_via_apt(self, env: AgentEnvironment) -> None:
-        logger.info(
-            f'CodexRunner.setup: installing Node.js via {self._node_setup_url} '
-            f'(one-shot per sample; npm cache volume optimisation planned).'
-        )
-        prep = await env.exec(
-            [
-                'bash', '-c', 'set -e; export DEBIAN_FRONTEND=noninteractive; '
-                'apt-get update -qq && '
-                'apt-get install -y --no-install-recommends curl ca-certificates gnupg'
-            ],
-            timeout=self._install_timeout_s,
-        )
-        if prep.returncode != 0:
-            raise RuntimeError(
-                f'CodexRunner.setup: apt prerequisite install failed (rc={prep.returncode}). '
-                f'This runner expects a Debian/Ubuntu-based image with network access, or a '
-                f'base image where Node.js is already installed. '
-                f'stderr={prep.stderr.strip()[-1000:]!r}'
-            )
-        node = await env.exec(
-            [
-                'bash', '-c', 'set -e; export DEBIAN_FRONTEND=noninteractive; '
-                f'curl -fsSL {self._node_setup_url} | bash - && '
-                'apt-get install -y --no-install-recommends nodejs'
-            ],
-            timeout=self._install_timeout_s,
-        )
-        if node.returncode != 0:
-            raise RuntimeError(
-                f'CodexRunner.setup: Node.js install failed (rc={node.returncode}). '
-                f'stderr={node.stderr.strip()[-1000:]!r}'
             )
 
     # ------------------------------------------------------------------
@@ -209,17 +171,24 @@ class CodexRunner(AgentRunner):
         home_dir = self._resolve_home()
         if home_dir is not None:
             env_vars['HOME'] = home_dir
+        await install_task_skills(
+            env,
+            task,
+            home_dir=home_dir,
+            native_install_paths=['$HOME/.agents/skills'],
+            runner_name='CodexRunner',
+        )
 
         # Build -c overrides. Order: builtin (provider config) → user extras.
         # codex parses these as TOML literals, so string values need shell-
         # escaped double quotes; the list-form ``cmd`` carries them as a
         # single argv entry, which env.exec quotes for the shell.
         config_pairs: List[str] = [
-            f'model_provider="evalscope"',
-            f'model_providers.evalscope.name="EvalScope Bridge"',
+            'model_provider="evalscope"',
+            'model_providers.evalscope.name="EvalScope Bridge"',
             f'model_providers.evalscope.base_url="{bridge.base_url}/openai/v1"',
-            f'model_providers.evalscope.env_key="EVALSCOPE_BRIDGE_TOKEN"',
-            f'model_providers.evalscope.wire_api="responses"',
+            'model_providers.evalscope.env_key="EVALSCOPE_BRIDGE_TOKEN"',
+            'model_providers.evalscope.wire_api="responses"',
         ]
         if self._model_name:
             config_pairs.append(f'model="{self._model_name}"')

@@ -42,6 +42,7 @@ HarveyNER is a dataset with fine-grained locations annotated in tweets, collecte
         train_split='train',
         eval_split='test',
         metric_list=['precision', 'recall', 'f1_score', 'accuracy'],
+        primary_metric='f1',
         prompt_template=PROMPT_TEMPLATE,
         few_shot_prompt_template=FEWSHOT_TEMPLATE,
     )
@@ -69,7 +70,7 @@ class HarveyNERAdapter(NERAdapter):
                 'building, intersections of roads or rivers.'
             ),
             'RIVER': 'A river or a section of a river.',
-            'ROAD': 'A road or a section of a road.'
+            'ROAD': 'A road or a section of a road.',
         }
 
         # Setup entity mappings based on the defined entity types

@@ -37,7 +37,7 @@ GeneralArena is a custom benchmark designed to evaluate the performance of large
 | **Dataset ID** | `general_arena` |
 | **Paper** | N/A |
 | **Tags** | `Arena`, `Custom` |
-| **Metrics** | `winrate` |
+| **Metrics** | `win_rate` |
 | **Default Shots** | 0-shot |
 | **Evaluation Split** | `test` |
 | **Aggregation** | `elo` |
@@ -131,5 +131,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

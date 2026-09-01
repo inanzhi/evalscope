@@ -42,7 +42,6 @@ HallusionBench is an advanced diagnostic benchmark designed to evaluate image-co
 | **Metrics** | `aAcc`, `qAcc`, `fAcc` |
 | **Default Shots** | 0-shot |
 | **Evaluation Split** | `image` |
-| **Aggregation** | `f1` |
 
 
 ## Data Statistics
@@ -135,5 +134,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

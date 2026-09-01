@@ -34,7 +34,7 @@ BiomixQA is a curated biomedical question-answering dataset designed to evaluate
 | **Dataset ID** | [extraordinarylab/biomix-qa](https://modelscope.cn/datasets/extraordinarylab/biomix-qa/summary) |
 | **Paper** | N/A |
 | **Tags** | `Knowledge`, `MCQ`, `Medical` |
-| **Metrics** | `acc` |
+| **Metrics** | `accuracy` |
 | **Default Shots** | 0-shot |
 | **Evaluation Split** | `test` |
 
@@ -113,5 +113,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

@@ -5,28 +5,35 @@ import { ThemeProvider } from '@/contexts/ThemeContext'
 import MainLayout from '@/layouts/MainLayout'
 import ErrorBoundary from '@/components/common/ErrorBoundary'
 import { lazy, Suspense } from 'react'
-import LoadingSpinner from '@/components/common/LoadingSpinner'
+import Skeleton from '@/components/ui/Skeleton'
 
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'))
 const ReportsPage = lazy(() => import('@/pages/ReportsPage'))
 const ReportDetailPage = lazy(() => import('@/pages/ReportDetailPage'))
 const ComparePage = lazy(() => import('@/pages/ComparePage'))
-const EvalTaskPage = lazy(() => import('@/pages/EvalTaskPage'))
-const PerfTaskPage = lazy(() => import('@/pages/PerfTaskPage'))
+const TasksPage = lazy(() => import('@/pages/TasksPage'))
+const PerfReportsPage = lazy(() => import('@/pages/PerfReportsPage'))
+const PerfReportDetailPage = lazy(() => import('@/pages/PerfReportDetailPage'))
+const PerfComparePage = lazy(() => import('@/pages/PerfComparePage'))
 const ReportViewerPage = lazy(() => import('@/pages/ReportViewerPage'))
 const BenchmarksPage = lazy(() => import('@/pages/BenchmarksPage'))
 
 function AppRoutes() {
   return (
-    <Suspense fallback={<LoadingSpinner />}>
+    <Suspense fallback={<Skeleton lines={6} height={16} className="p-6" />}>
       <Routes>
         <Route element={<MainLayout />}>
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/reports" element={<ReportsPage />} />
-          <Route path="/reports/:reportId" element={<ReportDetailPage />} />
+          <Route path="/reports/:runId/:modelId" element={<ReportDetailPage />} />
           <Route path="/compare" element={<ComparePage />} />
-          <Route path="/eval" element={<EvalTaskPage />} />
-          <Route path="/perf" element={<PerfTaskPage />} />
+          <Route path="/performance" element={<PerfReportsPage />} />
+          <Route path="/perf-report" element={<PerfReportDetailPage />} />
+          <Route path="/perf-compare" element={<PerfComparePage />} />
+          <Route path="/tasks" element={<TasksPage />} />
+          {/* Legacy task routes — redirect into the unified Tasks page */}
+          <Route path="/eval" element={<Navigate to="/tasks?tab=eval" replace />} />
+          <Route path="/perf" element={<Navigate to="/tasks?tab=perf" replace />} />
           <Route path="/benchmarks" element={<BenchmarksPage />} />
           <Route path="/viewer" element={<ReportViewerPage />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />

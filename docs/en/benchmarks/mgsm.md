@@ -37,7 +37,7 @@ MGSM (Multilingual Grade School Math) is a benchmark designed to evaluate multil
 | **Dataset ID** | [evalscope/mgsm](https://modelscope.cn/datasets/evalscope/mgsm/summary) |
 | **Paper** | N/A |
 | **Tags** | `Math`, `MultiLingual`, `Reasoning` |
-| **Metrics** | `acc` |
+| **Metrics** | `accuracy` |
 | **Default Shots** | 4-shot |
 | **Evaluation Split** | `test` |
 | **Train Split** | `train` |
@@ -151,5 +151,3 @@ task_cfg = TaskConfig(
 
 run_task(task_cfg=task_cfg)
 ```
-
-

@@ -79,9 +79,9 @@ results = run_perf_benchmark(task_cfg)
 - `url`: 请求的URL地址
 - `model`: 使用的模型名称
 - `api`: 使用的API服务，默认为`openai`
-- `dataset`: 数据集名称，此处为`random`，表示随机生成数据集，具体使用说明[参考](./examples.md#使用random数据集)；更多可用的(多模态)数据集请参考[数据集配置](./parameters.md#数据集配置)
+- `dataset`: 数据集名称，此处为`random`，表示随机生成数据集，具体使用说明[参考](./examples.md#随机数据集)；更多可用的(多模态)数据集请参考[数据集配置](./parameters.md#数据集配置)
 - `tokenizer-path`: 模型的tokenizer路径，用于计算token数量（在random数据集中是必须的）
-- `extra-args`: 请求中的额外的参数，传入json格式的字符串，例如`{"ignore_eos": true}`表示忽略结束token
+- `extra-args`: 请求中的额外参数，传入json格式的字符串，例如`{"ignore_eos": true}`表示忽略结束token
 
 ```{seealso}
 [完整参数说明](./parameters.md)
@@ -153,7 +153,7 @@ Percentile results:
 |------|----------|------|------|
 | 测试总时长 | Test Duration (s) | 整个测试过程从开始到结束所花费的总时间 | 最后一个请求结束时间 - 第一个请求开始时间 |
 | 并发数 | Concurrency | 同时发送请求的客户端数量 | 预设值 |
-| 请求速率 | Request Rate (req/s) | 目标请求发送速率，-1 表示不限制 | 预设值 |
+| 请求速率 | Request Rate (req/s) | 目标请求调度速率；-1 表示不做速率节流，默认 closed-loop 模式下仍受 `--parallel` 并发上限约束 | 预设值 |
 | 总请求数 / 成功数 / 失败数 | Total / Success / Failed | 在整个测试过程中发送的所有请求数量及其成功与失败数 | 成功请求数 + 失败请求数 |
 | 请求吞吐量 | Req Throughput (req/s) | 每秒钟成功处理的平均请求数 | 成功请求数 / 测试总时长 |
 | 平均延迟 | Avg Latency (s) | 从发送请求到接收完整响应的平均时间 | 总延迟时间 / 成功请求数 |
@@ -204,10 +204,19 @@ Percentile results:
 
 #### Per-Trace 与 Workload Throughput 指标
 
-多轮对话模式下还会输出 **Per-Trace Metrics**（对话级分布指标）和 **Workload Throughput**（全局时间维度token吞吐率）两张表，详细说明请参考[多轮对话压测 — 多轮专属输出指标](./multi_turn.md#多轮专属输出指标)。
+多轮对话模式下还会输出 **Per-Trace Metrics**（对话级分布指标）和 **Workload Throughput**（全局时间维度token吞吐率）两张表，详细说明请参考[多轮对话压测 — 输出指标](./multi_turn.md#输出指标)。
 
 
 ## 可视化测试结果
+
+### Web Dashboard
+
+EvalScope Web Dashboard 会发现输出根目录下的压测结果。压测完成后启动服务，并打开**性能测试**页面：
+
+```bash
+pip install 'evalscope[service]' -U
+evalscope service --outputs outputs
+```
 
 ### 使用Wandb
 
@@ -279,4 +288,3 @@ clearml-init
 ```
 
 ![clearml sample](https://sail-moe.oss-cn-hangzhou.aliyuncs.com/yunlin/images/evalscope/doc/clearml_vis.jpg)
-

@@ -3,14 +3,20 @@ import { ExternalLink, ArrowLeft } from 'lucide-react'
 import { useLocale } from '@/contexts/LocaleContext'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
-import { formatScore } from '@/utils/formatUtils'
 import { scoreColor } from '@/utils/colorScale'
+import { formatMetric, formatMetricLabel, getBoundedQualityRatio } from '@/domain/metric'
+import type { MetricSemantics } from '@/domain/metric'
+import { directionHintKey } from '@/domain/report/primaryMetrics'
 
 interface Props {
   modelName: string
   datasetName: string
   datasets?: string[]
-  score: number
+  datasetLabels?: Record<string, string>
+  score: number | null
+  metricName?: string
+  /** Backend semantics of the primary metric shown in the header. */
+  semantics?: MetricSemantics | null
   totalSamples: number
   htmlReportUrl: string
   onDatasetClick?: (dataset: string) => void
@@ -20,7 +26,10 @@ export default function ReportHeader({
   modelName,
   datasetName,
   datasets,
+  datasetLabels = {},
   score,
+  metricName,
+  semantics,
   totalSamples,
   htmlReportUrl,
   onDatasetClick,
@@ -28,8 +37,13 @@ export default function ReportHeader({
   const { t } = useLocale()
   const navigate = useNavigate()
 
-  const normalizedScore = score > 1 ? score / 100 : score
-  const variant = normalizedScore >= 0.7 ? 'success' : normalizedScore >= 0.4 ? 'warning' : 'danger'
+  const normalizedScore = getBoundedQualityRatio(score, semantics)
+  const variant = normalizedScore == null
+    ? 'default'
+    : normalizedScore >= 0.7 ? 'success' : normalizedScore >= 0.4 ? 'warning' : 'danger'
+  const hintKey = directionHintKey(semantics)
+  const directionHint = hintKey ? t(hintKey) : undefined
+  const metricTooltip = [metricName, directionHint].filter(Boolean).join(' · ') || undefined
 
   return (
     <div
@@ -54,10 +68,10 @@ export default function ReportHeader({
                         onClick={() => onDatasetClick(ds)}
                         className="text-lg text-[var(--accent)] hover:underline cursor-pointer bg-transparent border-none p-0 font-inherit"
                       >
-                        {ds}
+                        <span title={ds}>{datasetLabels[ds] || ds}</span>
                       </button>
                     ) : (
-                      <span className="text-lg text-[var(--text-muted)]">{ds}</span>
+                      <span className="text-lg text-[var(--text-muted)]" title={ds}>{datasetLabels[ds] || ds}</span>
                     )}
                   </span>
                 ))}
@@ -68,7 +82,14 @@ export default function ReportHeader({
           </div>
           <div className="flex items-center gap-3">
             <Badge variant={variant} className="font-mono text-sm px-3 py-1">
-              <span style={{ color: scoreColor(normalizedScore) }}>{formatScore(score)}</span>
+              <span
+                style={{ color: normalizedScore == null ? undefined : scoreColor(normalizedScore) }}
+                title={metricTooltip}
+                aria-label={semantics ? `${semantics.metric_name}${directionHint ? `, ${directionHint}` : ''}` : undefined}
+              >
+                {semantics ? `${metricName ?? formatMetricLabel(semantics.metric_name, semantics)} ` : ''}
+                {formatMetric(score, semantics).primary}
+              </span>
             </Badge>
             <span className="text-sm text-[var(--text-muted)]">
               {totalSamples.toLocaleString()} {t('single.samples')}

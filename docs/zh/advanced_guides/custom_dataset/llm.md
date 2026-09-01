@@ -81,7 +81,7 @@ run_task(task_cfg=task_cfg)
 +---------------------+-------------+-----------------+----------+-------+---------+---------+
 | Model               | Dataset     | Metric          | Subset   |   Num |   Score | Cat.0   |
 +=====================+=============+=================+==========+=======+=========+=========+
-| Qwen2-0.5B-Instruct | general_mcq | AverageAccuracy | example  |    12 |  0.5833 | default |
+| Qwen2-0.5B-Instruct | general_mcq | Accuracy ↑ | example | 12 | 58.3% | default |
 +---------------------+-------------+-----------------+----------+-------+---------+---------+
 ```
 
@@ -208,45 +208,49 @@ run_task(task_cfg=task_cfg)
 +-----------------------+------------+-----------+----------+-------+---------+---------+
 | Model                 | Dataset    | Metric    | Subset   |   Num |   Score | Cat.0   |
 +=======================+============+===========+==========+=======+=========+=========+
-| Qwen2.5-0.5B-Instruct | general_qa | Rouge-1-R | example  |    12 |  0.6944 | default |
+| Qwen2.5-0.5B-Instruct | General-QA | ROUGE ↑ · 1 · Recall    | example | 12 | 69.4% | default |
 +-----------------------+------------+-----------+----------+-------+---------+---------+
-| Qwen2.5-0.5B-Instruct | general_qa | Rouge-1-P | example  |    12 |  0.176  | default |
+| Qwen2.5-0.5B-Instruct | General-QA | ROUGE ↑ · 1 · Precision | example | 12 | 17.6% | default |
 +-----------------------+------------+-----------+----------+-------+---------+---------+
-| Qwen2.5-0.5B-Instruct | general_qa | Rouge-1-F | example  |    12 |  0.2276 | default |
+| Qwen2.5-0.5B-Instruct | General-QA | ROUGE ↑ · 1 · F1        | example | 12 | 22.8% | default |
 +-----------------------+------------+-----------+----------+-------+---------+---------+
-| Qwen2.5-0.5B-Instruct | general_qa | Rouge-2-R | example  |    12 |  0.4667 | default |
+| Qwen2.5-0.5B-Instruct | General-QA | ROUGE ↑ · 2 · Recall    | example | 12 | 46.7% | default |
 +-----------------------+------------+-----------+----------+-------+---------+---------+
-| Qwen2.5-0.5B-Instruct | general_qa | Rouge-2-P | example  |    12 |  0.0939 | default |
+| Qwen2.5-0.5B-Instruct | General-QA | ROUGE ↑ · 2 · Precision | example | 12 | 9.4%  | default |
 +-----------------------+------------+-----------+----------+-------+---------+---------+
-| Qwen2.5-0.5B-Instruct | general_qa | Rouge-2-F | example  |    12 |  0.1226 | default |
+| Qwen2.5-0.5B-Instruct | General-QA | ROUGE ↑ · 2 · F1        | example | 12 | 12.3% | default |
 +-----------------------+------------+-----------+----------+-------+---------+---------+
-| Qwen2.5-0.5B-Instruct | general_qa | Rouge-L-R | example  |    12 |  0.6528 | default |
+| Qwen2.5-0.5B-Instruct | General-QA | ROUGE ↑ · L · Recall    | example | 12 | 65.3% | default |
 +-----------------------+------------+-----------+----------+-------+---------+---------+
-| Qwen2.5-0.5B-Instruct | general_qa | Rouge-L-P | example  |    12 |  0.1628 | default |
+| Qwen2.5-0.5B-Instruct | General-QA | ROUGE ↑ · L · Precision | example | 12 | 16.3% | default |
 +-----------------------+------------+-----------+----------+-------+---------+---------+
-| Qwen2.5-0.5B-Instruct | general_qa | Rouge-L-F | example  |    12 |  0.2063 | default |
+| Qwen2.5-0.5B-Instruct | General-QA | ROUGE ↑ · L · F1        | example | 12 | 20.6% | default |
 +-----------------------+------------+-----------+----------+-------+---------+---------+
-| Qwen2.5-0.5B-Instruct | general_qa | bleu-1    | example  |    12 |  0.1644 | default |
+| Qwen2.5-0.5B-Instruct | General-QA | BLEU ↑ · 1              | example | 12 | 16.4% | default |
 +-----------------------+------------+-----------+----------+-------+---------+---------+
-| Qwen2.5-0.5B-Instruct | general_qa | bleu-2    | example  |    12 |  0.0935 | default |
+| Qwen2.5-0.5B-Instruct | General-QA | BLEU ↑ · 2              | example | 12 | 9.4%  | default |
 +-----------------------+------------+-----------+----------+-------+---------+---------+
-| Qwen2.5-0.5B-Instruct | general_qa | bleu-3    | example  |    12 |  0.0655 | default |
+| Qwen2.5-0.5B-Instruct | General-QA | BLEU ↑ · 3              | example | 12 | 6.6%  | default |
 +-----------------------+------------+-----------+----------+-------+---------+---------+
-| Qwen2.5-0.5B-Instruct | general_qa | bleu-4    | example  |    12 |  0.0556 | default |
+| Qwen2.5-0.5B-Instruct | General-QA | BLEU ↑ · 4              | example | 12 | 5.6%  | default |
 +-----------------------+------------+-----------+----------+-------+---------+---------+ 
 ```
 </details>
 
 **方法2. 基于LLM的评测**
 
-基于LLM的评测可以方便的评测模型的正确性（或其他维度的指标，需要设置自定义的prompt）。下面是一个示例，配置了`judge_model_args`相关的参数，使用预置的`pattern`模式来判断模型输出是否正确。
+基于 LLM 的评测可以方便地评测模型的正确性（或其他维度的指标，需要设置自定义 prompt）。下面是一个使用预置 `pattern` JSON 契约判断模型输出是否正确的示例。
 
 完整的judge参数说明请[参考文档](../../get_started/parameters.md#judge参数)。
+
+```{note}
+裁判模型以单个 JSON 对象回复。无法解析为 JSON 的回复会被**排除**在指标之外而不是记为 0 分，
+因此 `Num` 可能小于样本数。自定义 `prompt_template` 只需描述打分标准，回复格式要求会自动追加。
+```
 
 ```python
 import os
 from evalscope import TaskConfig, run_task
-from evalscope.constants import JudgeStrategy
 
 task_cfg = TaskConfig(
     model='Qwen/Qwen2.5-0.5B-Instruct',
@@ -261,22 +265,18 @@ task_cfg = TaskConfig(
             ],
         }
     },
-    # judge 相关参数
-    judge_model_args={
-        'model_id': 'qwen2.5-72b-instruct',
-        'api_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-        'api_key': os.getenv('DASHSCOPE_API_KEY'),
-        'generation_config': {
-            'temperature': 0.0,
-            'max_tokens': 4096
+    judge={
+        'strategy': 'llm',
+        'models': {
+            'model_id': 'qwen2.5-72b-instruct',
+            'api_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            'api_key': os.getenv('DASHSCOPE_API_KEY'),
+            'generation_config': {'temperature': 0.0, 'max_tokens': 4096},
         },
-        # 根据参考答案和模型输出，判断模型输出是否正确
-        'score_type': 'pattern',
+        'contract': {'score_type': 'pattern'},
     },
     # 评测并发数
     eval_batch_size=5,
-    # 使用 LLM 进行评测
-    judge_strategy=JudgeStrategy.LLM,
 )
 
 run_task(task_cfg=task_cfg)
@@ -288,7 +288,7 @@ run_task(task_cfg=task_cfg)
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
 | Model                 | Dataset    | Metric          | Subset   |   Num |   Score | Cat.0   |
 +=======================+============+=================+==========+=======+=========+=========+
-| Qwen2.5-0.5B-Instruct | general_qa | AverageAccuracy | example  |    12 |  0.5833 | default |
+| Qwen2.5-0.5B-Instruct | General-QA | Accuracy ↑ | example | 12 | 58.3% | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+ 
 ```
 </details>
@@ -297,13 +297,12 @@ run_task(task_cfg=task_cfg)
 
 若数据集没有参考答案，可以使用LLM裁判来评测模型输出的答案，不配置LLM将不会有打分结果。
 
-下面是一个示例，配置了`judge_model_args`相关的参数，使用预置的`numeric`模式，从准确性、相关性、有用性等维度，自动综合判断模型输出得分，分数越高表示模型输出越好。
+下面是一个使用预置 `numeric` JSON 契约的示例，从准确性、相关性、有用性等维度自动综合判断模型输出得分，分数越高表示模型输出越好。
 
 完整的judge参数说明请[参考文档](../../get_started/parameters.md#judge参数)。
 ```python
 import os
 from evalscope import TaskConfig, run_task
-from evalscope.constants import JudgeStrategy
 
 task_cfg = TaskConfig(
     model='Qwen/Qwen2.5-0.5B-Instruct',
@@ -318,22 +317,18 @@ task_cfg = TaskConfig(
             ],
         }
     },
-    # judge 相关参数
-    judge_model_args={
-        'model_id': 'qwen2.5-72b-instruct',
-        'api_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-        'api_key': os.getenv('DASHSCOPE_API_KEY'),
-        'generation_config': {
-            'temperature': 0.0,
-            'max_tokens': 4096
+    judge={
+        'strategy': 'llm',
+        'models': {
+            'model_id': 'qwen2.5-72b-instruct',
+            'api_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            'api_key': os.getenv('DASHSCOPE_API_KEY'),
+            'generation_config': {'temperature': 0.0, 'max_tokens': 4096},
         },
-        # 直接打分
-        'score_type': 'numeric',
+        'contract': {'score_type': 'numeric'},
     },
     # 评测并发数
     eval_batch_size=5,
-    # 使用 LLM 进行评测
-    judge_strategy=JudgeStrategy.LLM,
 )
 
 run_task(task_cfg=task_cfg)
@@ -345,7 +340,7 @@ run_task(task_cfg=task_cfg)
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
 | Model                 | Dataset    | Metric          | Subset   |   Num |   Score | Cat.0   |
 +=======================+============+=================+==========+=======+=========+=========+
-| Qwen2.5-0.5B-Instruct | general_qa | AverageAccuracy | example  |    12 |  0.6375 | default |
+| Qwen2.5-0.5B-Instruct | General-QA | Accuracy ↑ | example | 12 | 63.8% | default |
 +-----------------------+------------+-----------------+----------+-------+---------+---------+
 ```
 </details>

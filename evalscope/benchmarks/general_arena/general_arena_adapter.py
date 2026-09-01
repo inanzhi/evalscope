@@ -2,25 +2,47 @@
 import glob
 import os
 from collections import defaultdict
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Literal
+
+from pydantic import BaseModel
 
 from evalscope.api.benchmark import BenchmarkMeta, DefaultDataAdapter
-from evalscope.api.dataset import DatasetDict, DictDataLoader, Sample
+from evalscope.api.dataset import DatasetDict, Sample, build_dataset_from_records
 from evalscope.api.evaluator import TaskState
-from evalscope.api.messages.chat_message import ChatMessageUser
+from evalscope.api.judge import (
+    JudgeCase,
+    JudgeContext,
+    JudgeDefinition,
+    JudgeRequest,
+    OutputContract,
+    PairwiseOutcome,
+    PairwisePlacementOutcome,
+    Placement,
+    ReducedVerdict,
+)
+from evalscope.api.messages.chat_message import ChatMessageSystem, ChatMessageUser
 from evalscope.api.metric import AggScore, SampleScore, Score
 from evalscope.api.registry import register_benchmark
-from evalscope.constants import Tags
+from evalscope.constants import ScoringPolicy, Tags
 from evalscope.report import Report, ReportKey
 from evalscope.utils.import_utils import check_import
 from evalscope.utils.logger import get_logger
 
 logger = get_logger()
 
-GRADER_SYSTEM_PROMPT = "Please act as an impartial judge and evaluate the quality of the responses provided by two AI assistants to the user prompt displayed below. You will be given assistant A's answer and assistant B's answer. Your job is to evaluate which assistant's answer is better.\n\nBegin your evaluation by generating your own answer to the prompt. You must provide your answers before judging any answers.\n\nWhen evaluating the assistants' answers, compare both assistants' answers with your answer. You must identify and correct any mistakes or inaccurate information.\n\nThen consider if the assistant's answers are helpful, relevant, and concise. Helpful means the answer correctly responds to the prompt or follows the instructions. Note when user prompt has any ambiguity or more than one interpretation, it is more helpful and appropriate to ask for clarifications or more information from the user than providing an answer based on assumptions. Relevant means all parts of the response closely connect or are appropriate to what is being asked. Concise means the response is clear and not verbose or excessive.\n\nThen consider the creativity and novelty of the assistant's answers when needed. Finally, identify any missing important information in the assistants' answers that would be beneficial to include when responding to the user prompt.\n\nAfter providing your explanation, you must output only one of the following choices as your final verdict with a label:\n\n1. Assistant A is significantly better: [[A>>B]]\n2. Assistant A is slightly better: [[A>B]]\n3. Tie, relatively the same: [[A=B]]\n4. Assistant B is slightly better: [[B>A]]\n5. Assistant B is significantly better: [[B>>A]]\n\nExample output: \"My final verdict is tie: [[A=B]]\"."  # noqa: E501
 
-GRADER_TEMPLATE = "<|User Prompt|>\n{question}\n\n<|The Start of Assistant A's Answer|>\n{answer_1}\n<|The End of Assistant A's Answer|>\n\n<|The Start of Assistant B's Answer|>\n{answer_2}\n<|The End of Assistant B's Answer|>".strip(
-)  # noqa: E501
+class BattleVerdict(BaseModel):
+    """One game's verdict on the official five-point preference scale."""
+
+    reasoning: str = ''
+    verdict: Literal['A>>B', 'A>B', 'A=B', 'B>A', 'B>>A']
+
+
+BATTLE_CONTRACT = OutputContract(schema_model=BattleVerdict)
+
+GRADER_SYSTEM_PROMPT = "Please act as an impartial judge and evaluate the quality of the responses provided by two AI assistants to the user prompt displayed below. You will be given assistant A's answer and assistant B's answer. Your job is to evaluate which assistant's answer is better.\n\nBegin your evaluation by generating your own answer to the prompt. You must provide your answers before judging any answers.\n\nWhen evaluating the assistants' answers, compare both assistants' answers with your answer. You must identify and correct any mistakes or inaccurate information.\n\nThen consider if the assistant's answers are helpful, relevant, and concise. Helpful means the answer correctly responds to the prompt or follows the instructions. Note when user prompt has any ambiguity or more than one interpretation, it is more helpful and appropriate to ask for clarifications or more information from the user than providing an answer based on assumptions. Relevant means all parts of the response closely connect or are appropriate to what is being asked. Concise means the response is clear and not verbose or excessive.\n\nThen consider the creativity and novelty of the assistant's answers when needed. Finally, identify any missing important information in the assistants' answers that would be beneficial to include when responding to the user prompt.\n\nAfter providing your explanation, you must state your final verdict as one of: A>>B (Assistant A is significantly better), A>B (Assistant A is slightly better), A=B (tie), B>A (Assistant B is slightly better), or B>>A (Assistant B is significantly better)."  # noqa: E501
+
+GRADER_TEMPLATE = "<|User Prompt|>\n{question}\n\n<|The Start of Assistant A's Answer|>\n{answer_1}\n<|The End of Assistant A's Answer|>\n\n<|The Start of Assistant B's Answer|>\n{answer_2}\n<|The End of Assistant B's Answer|>".strip()  # noqa: E501
 
 
 @register_benchmark(
@@ -57,7 +79,7 @@ GeneralArena is a custom benchmark designed to evaluate the performance of large
 - See [Arena User Guide](https://evalscope.readthedocs.io/en/latest/user_guides/arena.html) for details
 """,
         dataset_id='general_arena',
-        metric_list=['winrate'],
+        metric_list=['win_rate'],
         aggregation='elo',
         few_shot_num=0,
         train_split=None,
@@ -68,29 +90,25 @@ GeneralArena is a custom benchmark designed to evaluate the performance of large
             'models': {
                 'type': 'list[dict]',
                 'description': 'List of model entries with name and report_path for arena comparison.',
-                'value': [{
-                    'name': 'qwen-plus',
-                    'report_path': 'outputs/20250627_172550/reports/qwen-plus'
-                }, {
-                    'name': 'qwen2.5-7b',
-                    'report_path': 'outputs/20250627_172817/reports/qwen2.5-7b-instruct'
-                }]
+                'value': [
+                    {'name': 'qwen-plus', 'report_path': 'outputs/20250627_172550/reports/qwen-plus'},
+                    {'name': 'qwen2.5-7b', 'report_path': 'outputs/20250627_172817/reports/qwen2.5-7b-instruct'},
+                ],
             },
             'baseline': {
                 'type': 'str',
                 'description': 'Baseline model name used for ELO and winrate comparisons.',
-                'value': 'qwen2.5-7b'
-            }
-        }
+                'value': 'qwen2.5-7b',
+            },
+        },
     )
 )
 class GeneralArenaAdapter(DefaultDataAdapter):
+    scoring_policy = ScoringPolicy.JUDGE_ONLY
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         check_import(module_name=['sklearn'], extra='general_arena', raise_error=True, feature_name=self.pretty_name)
-
-        self._use_llm_judge = True
 
         self.models = self.extra_params.get('models', [])
         self.baseline = self.extra_params.get('baseline', None)
@@ -107,13 +125,16 @@ class GeneralArenaAdapter(DefaultDataAdapter):
         # Convert to DatasetDict format
         dataset_dict = {}
         for subset_name, samples in datasets.items():
-            dataset = DictDataLoader(
-                dict_list=samples,
+            dataset = build_dataset_from_records(
+                records=samples,
+                sample_fields=self.record_to_sample,
+                name=subset_name,
+                location=None,
                 limit=self.limit,
                 shuffle=self.shuffle,
                 repeats=self.repeats,
-                sample_fields=self.record_to_sample
-            ).load()
+                seed=None,
+            )
             dataset_dict[subset_name] = dataset
 
         test_dataset = DatasetDict(dataset_dict)
@@ -128,7 +149,7 @@ class GeneralArenaAdapter(DefaultDataAdapter):
                 'answer_1': record['answer_1'],
                 'model_1': record['model_1'],
                 'model_2': record['model_2'],
-            }
+            },
         )
 
     def _check_names(self):
@@ -199,6 +220,7 @@ class GeneralArenaAdapter(DefaultDataAdapter):
     def _build_pair_wise_data(self, dataset_dict):
         """Build pairwise data for the models."""
         from evalscope.api.evaluator import ReviewResult
+
         from .utils import process_review_item
 
         pairwise_data = defaultdict(list)
@@ -214,88 +236,93 @@ class GeneralArenaAdapter(DefaultDataAdapter):
                 pairs = []
                 for model_item, baseline_item in zip(model_data[name], model_data[self.baseline]):
                     # Convert to ReviewResult objects like in get_model_prediction
-                    model_review = ReviewResult.model_validate(model_item)
-                    baseline_review = ReviewResult.model_validate(baseline_item)
+                    model_review = ReviewResult.from_cache_item(model_item)
+                    baseline_review = ReviewResult.from_cache_item(baseline_item)
 
                     for model_choice, baseline_choice in zip(
                         process_review_item(model_review), process_review_item(baseline_review)
                     ):
-                        pairs.append({
-                            'question': model_choice['Question'],
-                            'answer_1': model_choice['Generated'],
-                            'answer_2': baseline_choice['Generated'],
-                            'model_1': name,
-                            'model_2': self.baseline
-                        })
+                        pairs.append(
+                            {
+                                'question': model_choice['Question'],
+                                'answer_1': model_choice['Generated'],
+                                'answer_2': baseline_choice['Generated'],
+                                'model_1': name,
+                                'model_2': self.baseline,
+                            }
+                        )
                 pairwise_data[f'{dataset_name}&{subset_name}@{name}&{self.baseline}'] = pairs
 
         return pairwise_data
 
-    def llm_match_score(
-        self, original_prediction: str, filtered_prediction: str, reference: str, task_state: TaskState
-    ) -> Score:
-        """Use LLM as a judge to evaluate the predicted answer against the baseline."""
-        from .utils import get_judge_score, post_process_result
+    supports_position_swap = True
+    official_position_swap = True
+    """Each pair is judged twice with the two answers swapped."""
 
-        score = Score(
-            extracted_prediction=filtered_prediction,
-            prediction=original_prediction,
+    def judge_definition(self, context: JudgeContext) -> JudgeDefinition:
+
+        def request(case, placement, completed_cases, judge_context) -> JudgeRequest:
+            metadata = judge_context.task_state.metadata or {}
+            candidate_first = placement is Placement.ORIGINAL
+            prompt = self.prompt_template.format(
+                question=judge_context.task_state.input_text,
+                answer_1=metadata['answer_1'] if candidate_first else judge_context.reference,
+                answer_2=judge_context.reference if candidate_first else metadata['answer_1'],
+            )
+            return JudgeRequest(
+                messages=[
+                    ChatMessageSystem(content=self.system_prompt),
+                    ChatMessageUser(content=prompt + case.output_contract.instruction()),
+                ]
+            )
+
+        def reduce(case_verdicts, judge_context) -> ReducedVerdict:
+            placements = case_verdicts[0].placements
+            res1 = placements.get('original', case_verdicts[0].value).verdict
+            res2 = placements.get('swapped')
+            outcomes = {'original': _placement_outcome(res1, candidate_is_a=True)}
+            if res2 is not None:
+                outcomes['swapped'] = _placement_outcome(res2.verdict, candidate_is_a=False)
+            result, strength = _reduce_placements(outcomes)
+            outcome = PairwiseOutcome(metric_name='score', result=result, strength=strength, placements=outcomes)
+            return ReducedVerdict(value={'score': outcome.score}, outcome=outcome)
+
+        def finalize(score, review, judge_context) -> Score:
+            if review.outcome is not None:
+                metadata = judge_context.task_state.metadata or {}
+                model_1, model_2 = metadata['model_1'], metadata['model_2']
+                score.metadata['battle_result'] = {
+                    'score': review.value['score'],
+                    'games': [
+                        {
+                            'model_a': model_1,
+                            'model_b': model_2,
+                            'judgment': _battle_label(review.outcome.placements['original'], candidate_is_a=True),
+                        },
+                        *(
+                            [
+                                {
+                                    'model_a': model_2,
+                                    'model_b': model_1,
+                                    'judgment': _battle_label(
+                                        review.outcome.placements['swapped'], candidate_is_a=False
+                                    ),
+                                }
+                            ]
+                            if 'swapped' in review.outcome.placements
+                            else []
+                        ),
+                    ],
+                }
+            return score
+
+        return JudgeDefinition.workflow(
+            cases=[JudgeCase(case_id='battle', output_contract=BATTLE_CONTRACT)],
+            request=request,
+            reduce=reduce,
+            main_score_name='score',
+            finalize=finalize,
         )
-
-        question = task_state.input_text
-        answer_1 = task_state.metadata['answer_1']
-        answer_2 = reference  # baseline answer
-        model_1 = task_state.metadata['model_1']
-        model_2 = task_state.metadata['model_2']
-
-        system_template = self.system_prompt
-        prompt_template = self.prompt_template
-
-        prompt1 = prompt_template.format(question=question, answer_1=answer_1, answer_2=answer_2)
-        # reverse the order
-        prompt2 = prompt_template.format(question=question, answer_1=answer_2, answer_2=answer_1)
-
-        # get grading response
-        game1_response = self.llm_judge.judge(prompt1, system_prompt=system_template)
-        game2_response = self.llm_judge.judge(prompt2, system_prompt=system_template)
-
-        # parse grading response
-        # game1
-        res1 = post_process_result(game1_response)
-        score1 = get_judge_score(res1, reverse=False)
-        # game2
-        res2 = post_process_result(game2_response)
-        score2 = get_judge_score(res2, reverse=True)
-
-        battle_result = {
-            'score': (score1 + score2) / 2,
-            'games': [
-                {
-                    'model_a': model_1,
-                    'model_b': model_2,
-                    'response': game1_response,
-                    'judgment': res1
-                },
-                {
-                    'model_a': model_2,
-                    'model_b': model_1,
-                    'response': game2_response,
-                    'judgment': res2
-                },
-            ]
-        }
-
-        score.value = {'score': battle_result['score']}
-        score.explanation = f'LLM judge battles: Game1: {game1_response[:100]}... Game2: {game2_response[:100]}...'
-        score.metadata = {
-            'source': 'llm_judge',
-            'judge_strategy': getattr(self, 'judge_strategy', 'default'),
-            'model': self.llm_judge.model_id if hasattr(self.llm_judge, 'model_id') else 'unknown',
-            'battle_result': battle_result
-        }
-        score.main_score_name = 'score'
-
-        return score
 
     def aggregate_scores(self, sample_scores: List[SampleScore]) -> List[AggScore]:
         """Aggregate scores to compute winrate."""
@@ -304,7 +331,11 @@ class GeneralArenaAdapter(DefaultDataAdapter):
 
         from .utils import compute_mle_elo, get_battles_from_row, get_bootstrap_result, get_win_rate_column
 
-        battles = pd.concat([get_battles_from_row(res.score.metadata['battle_result']) for res in sample_scores])
+        # A sample whose judge verdicts were unusable has no battle to contribute.
+        scored = [res for res in sample_scores if (res.score.metadata or {}).get('battle_result')]
+        if not scored:
+            return []
+        battles = pd.concat([get_battles_from_row(res.score.metadata['battle_result']) for res in scored])
 
         bt_model_coef = compute_mle_elo(battles, baseline_model=self.baseline)
 
@@ -323,9 +354,11 @@ class GeneralArenaAdapter(DefaultDataAdapter):
             stats.at[i, 'upper'] = np.percentile(bootstrap_model_coef[model], 97.5)
 
         metrics_dict = {}
-        metrics_dict['winrate'] = get_win_rate_column(stats, 'score', self.baseline).to_dict()
-        metrics_dict['winrate_lower'] = get_win_rate_column(stats, 'lower', self.baseline).to_dict()
-        metrics_dict['winrate_upper'] = get_win_rate_column(stats, 'upper', self.baseline).to_dict()
+        # Canonical names: `winrate` is migrated to `win_rate` on the way into AggScore, so the
+        # bounds must follow the same spelling or the leaderboard filter below cannot match them.
+        metrics_dict['win_rate'] = get_win_rate_column(stats, 'score', self.baseline).to_dict()
+        metrics_dict['win_rate_lower'] = get_win_rate_column(stats, 'lower', self.baseline).to_dict()
+        metrics_dict['win_rate_upper'] = get_win_rate_column(stats, 'upper', self.baseline).to_dict()
 
         agg_scores = []
         for metric_name, models in metrics_dict.items():
@@ -354,8 +387,8 @@ class GeneralArenaAdapter(DefaultDataAdapter):
         # Convert report to dataframe
         df = report.to_dataframe()
 
-        # Filter for winrate-related metrics
-        winrate_df = df[df[ReportKey.metric_name].str.contains('winrate')].copy()
+        # Filter for win-rate related metrics
+        winrate_df = df[df[ReportKey.metric_name].str.contains('win_rate')].copy()
 
         if winrate_df.empty:
             logger.warning('No winrate data found in the report.')
@@ -369,13 +402,13 @@ class GeneralArenaAdapter(DefaultDataAdapter):
 
         def format_leaderboard(data_df, title):
             """Format DataFrame as leaderboard with CI."""
-            # Pivot to get winrate, winrate_lower, winrate_upper as columns
+            # Pivot to get win_rate, win_rate_lower, win_rate_upper as columns
             pivot_df = data_df.pivot_table(
                 index=[ReportKey.model_name], columns=ReportKey.metric_name, values=ReportKey.score, aggfunc='first'
             )
 
-            # Add baseline model with 50% winrate
-            baseline_data = {'winrate': 0.5, 'winrate_lower': 0.5, 'winrate_upper': 0.5}
+            # Add baseline model with 50% win rate
+            baseline_data = {'win_rate': 0.5, 'win_rate_lower': 0.5, 'win_rate_upper': 0.5}
 
             # Create a complete index with all models
             complete_index = pd.Index(all_model_names, name=pivot_df.index.name)
@@ -387,26 +420,28 @@ class GeneralArenaAdapter(DefaultDataAdapter):
                     if col in pivot_df.columns:
                         pivot_df.loc[self.baseline, col] = val
 
-            # Fill missing values with winrate score for other models
-            if 'winrate' in pivot_df.columns:
-                pivot_df['winrate_lower'] = pivot_df.get('winrate_lower', pivot_df['winrate'])
-                pivot_df['winrate_upper'] = pivot_df.get('winrate_upper', pivot_df['winrate'])
+            # Fill missing values with the win rate score for other models
+            if 'win_rate' in pivot_df.columns:
+                pivot_df['win_rate_lower'] = pivot_df.get('win_rate_lower', pivot_df['win_rate'])
+                pivot_df['win_rate_upper'] = pivot_df.get('win_rate_upper', pivot_df['win_rate'])
 
             # Format for display
             leaderboard_data = []
             for model in pivot_df.index:
-                if pd.isna(pivot_df.loc[model, 'winrate']):
+                if pd.isna(pivot_df.loc[model, 'win_rate']):
                     continue
 
-                score_pct = pivot_df.loc[model, 'winrate'] * 100
-                lower_diff = (pivot_df.loc[model, 'winrate_lower'] - pivot_df.loc[model, 'winrate']) * 100
-                upper_diff = (pivot_df.loc[model, 'winrate_upper'] - pivot_df.loc[model, 'winrate']) * 100
+                score_pct = pivot_df.loc[model, 'win_rate'] * 100
+                lower_diff = (pivot_df.loc[model, 'win_rate_lower'] - pivot_df.loc[model, 'win_rate']) * 100
+                upper_diff = (pivot_df.loc[model, 'win_rate_upper'] - pivot_df.loc[model, 'win_rate']) * 100
 
-                leaderboard_data.append({
-                    'Model': model,
-                    'WinRate (%)': f'{score_pct:.1f}',
-                    'CI (%)': f'({lower_diff:+.1f} / {upper_diff:+.1f})'
-                })
+                leaderboard_data.append(
+                    {
+                        'Model': model,
+                        'WinRate (%)': f'{score_pct:.1f}',
+                        'CI (%)': f'({lower_diff:+.1f} / {upper_diff:+.1f})',
+                    }
+                )
 
             # Sort by score descending
             leaderboard_data.sort(key=lambda x: float(x['WinRate (%)'].replace('%', '')), reverse=True)
@@ -441,13 +476,15 @@ class GeneralArenaAdapter(DefaultDataAdapter):
         for _, row in winrate_df.iterrows():
             dataset_name, subset_name, model_1, model_2 = parse_dataset_key(row[ReportKey.subset_name])
             if dataset_name is not None:
-                parsed_data.append({
-                    'dataset_name': dataset_name,
-                    'subset_name': subset_name,
-                    ReportKey.model_name: model_1,
-                    ReportKey.metric_name: row[ReportKey.metric_name],
-                    ReportKey.score: row[ReportKey.score]
-                })
+                parsed_data.append(
+                    {
+                        'dataset_name': dataset_name,
+                        'subset_name': subset_name,
+                        ReportKey.model_name: model_1,
+                        ReportKey.metric_name: row[ReportKey.metric_name],
+                        ReportKey.score: row[ReportKey.score],
+                    }
+                )
 
         if not parsed_data:
             logger.warning('No valid dataset keys found for parsing.')
@@ -456,16 +493,18 @@ class GeneralArenaAdapter(DefaultDataAdapter):
         parsed_df = pd.DataFrame(parsed_data)
 
         # 1. Overall ranking (aggregate across all datasets and subsets)
-        overall_df = parsed_df.groupby([ReportKey.model_name,
-                                        ReportKey.metric_name])[ReportKey.score].mean().reset_index()
+        overall_df = (
+            parsed_df.groupby([ReportKey.model_name, ReportKey.metric_name])[ReportKey.score].mean().reset_index()
+        )
         leaderboard_outputs.append(format_leaderboard(overall_df, '=== OVERALL LEADERBOARD ==='))
 
         # 2. Dataset-level rankings
         datasets = parsed_df['dataset_name'].unique()
         for dataset in sorted(datasets):
             dataset_df = parsed_df[parsed_df['dataset_name'] == dataset]
-            dataset_agg = dataset_df.groupby([ReportKey.model_name,
-                                              ReportKey.metric_name])[ReportKey.score].mean().reset_index()
+            dataset_agg = (
+                dataset_df.groupby([ReportKey.model_name, ReportKey.metric_name])[ReportKey.score].mean().reset_index()
+            )
             leaderboard_outputs.append(format_leaderboard(dataset_agg, f'=== DATASET LEADERBOARD: {dataset} ==='))
 
         # 3. Subset-level rankings
@@ -473,8 +512,9 @@ class GeneralArenaAdapter(DefaultDataAdapter):
         for _, subset_row in subsets.iterrows():
             dataset_name = subset_row['dataset_name']
             subset_name = subset_row['subset_name']
-            subset_df = parsed_df[(parsed_df['dataset_name'] == dataset_name)
-                                  & (parsed_df['subset_name'] == subset_name)]
+            subset_df = parsed_df[
+                (parsed_df['dataset_name'] == dataset_name) & (parsed_df['subset_name'] == subset_name)
+            ]
             leaderboard_outputs.append(
                 format_leaderboard(subset_df, f'=== SUBSET LEADERBOARD: {dataset_name} - {subset_name} ===')
             )
@@ -484,3 +524,36 @@ class GeneralArenaAdapter(DefaultDataAdapter):
             f.write('\n'.join(leaderboard_outputs))
 
         logger.info(f'Leaderboard results saved to: {leaderboard_file}')
+
+
+def _candidate_outcome(label: str, candidate_is_a: bool) -> str:
+    if label == 'A=B':
+        return 'tie'
+    return 'win' if label.startswith('A') == candidate_is_a else 'loss'
+
+
+def _placement_outcome(label: str, candidate_is_a: bool) -> PairwisePlacementOutcome:
+    return PairwisePlacementOutcome(
+        result=_candidate_outcome(label, candidate_is_a),
+        strength='strong' if label in ('A>>B', 'B>>A') else 'weak',
+    )
+
+
+def _reduce_placements(placements: Dict[str, PairwisePlacementOutcome]) -> tuple[str, str]:
+    results = [placement.result for placement in placements.values()]
+    result = results[0] if len(set(results)) == 1 else 'tie'
+    strength = (
+        'strong'
+        if result != 'tie'
+        and any(placement.result == result and placement.strength == 'strong' for placement in placements.values())
+        else 'weak'
+    )
+    return result, strength
+
+
+def _battle_label(outcome: PairwisePlacementOutcome, candidate_is_a: bool) -> str:
+    if outcome.result == 'tie':
+        return 'A=B'
+    a_wins = (outcome.result == 'win') == candidate_is_a
+    marker = '>>' if outcome.strength == 'strong' else '>'
+    return f'A{marker}B' if a_wins else f'B{marker}A'

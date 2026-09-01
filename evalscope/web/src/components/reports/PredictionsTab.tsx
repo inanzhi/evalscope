@@ -1,12 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, Hash, List, CircleCheck, CircleX, HelpCircle, Search, MessageSquare, AlertCircle } from 'lucide-react'
+import { Hash, List, ArrowUp, ArrowDown, HelpCircle, Search, MessageSquare, AlertCircle } from 'lucide-react'
 import { useLocale } from '@/contexts/LocaleContext'
+import { useAsyncResource } from '@/hooks/useAsyncResource'
+import { useScopedState } from '@/hooks/useScopedState'
 import type { PredictionRow, ReportData } from '@/api/types'
 import { getPredictions, getDataFrame } from '@/api/reports'
 import Select from '@/components/ui/Select'
+import SegmentedControl, { type SegmentedOption } from '@/components/ui/SegmentedControl'
+import ScoreThresholdInput from '@/components/ui/ScoreThresholdInput'
+import Tooltip from '@/components/ui/Tooltip'
+import SampleNavigator from '@/components/reports/SampleNavigator'
 
-import ChatView from '@/components/single/ChatView'
+import ChatView from '@/components/chat/ChatView'
 import Skeleton from '@/components/ui/Skeleton'
+import EmptyStateSystem from '@/components/common/EmptyStateSystem'
+import ErrorAlert from '@/components/ui/ErrorAlert'
 
 interface Props {
   reportName: string
@@ -16,12 +24,12 @@ interface Props {
   initialSubset?: string
 }
 
+/** Stable placeholders so an unresolved read does not produce a new array each render. */
+const EMPTY_SUBSETS: string[] = []
+const EMPTY_PREDICTIONS: PredictionRow[] = []
+
 export default function PredictionsTab({ reportName, datasetName, rootPath, initialSubset }: Props) {
   const { t } = useLocale()
-  const [subsets, setSubsets] = useState<string[]>([])
-  const [selectedSubset, setSelectedSubset] = useState('')
-  const [predictions, setPredictions] = useState<PredictionRow[]>([])
-  const [loading, setLoading] = useState(false)
   const [mode, setMode] = useState('All')
   const [threshold, setThreshold] = useState(0.99)
   const [page, setPage] = useState(1)
@@ -35,89 +43,83 @@ export default function PredictionsTab({ reportName, datasetName, rootPath, init
   const indexInputRef = useRef<HTMLInputElement>(null)
   const msgIdInputRef = useRef<HTMLInputElement>(null)
 
-  // Load subsets when dataset changes
-  useEffect(() => {
-    if (!datasetName || !reportName) return
-    let cancelled = false
-
-    const loadSubsets = async () => {
-      try {
-        const dfRes = await getDataFrame(rootPath, reportName, 'dataset', datasetName)
-        if (cancelled) return
-        const subNames: string[] = []
-        for (const row of dfRes.data) {
-          const catCol = Object.keys(row).find((k) => k.startsWith('Cat.'))
-          if (catCol && row[catCol] === '-') continue
-          const name = String(row['Subset'] ?? '')
-          if (name && !subNames.includes(name)) subNames.push(name)
-        }
-        setSubsets(subNames)
-        const target = initialSubset && subNames.includes(initialSubset) ? initialSubset : (subNames[0] ?? '')
-        setSelectedSubset(target)
-        setPredictions([])
-      } catch (e) {
-        console.error('Failed to load subsets:', e)
+  // Which subsets this dataset was scored on.
+  const subsetsResource = useAsyncResource(
+    async (signal) => {
+      const frame = await getDataFrame(rootPath, reportName, 'dataset', datasetName, signal)
+      const names: string[] = []
+      for (const row of frame.data) {
+        const catCol = Object.keys(row).find((k) => k.startsWith('Cat.'))
+        if (catCol && row[catCol] === '-') continue
+        const name = String(row['Subset'] ?? '')
+        if (name && !names.includes(name)) names.push(name)
       }
-    }
-    loadSubsets()
-    return () => { cancelled = true }
-  }, [datasetName, reportName, rootPath, initialSubset])
+      return names
+    },
+    [rootPath, reportName, datasetName],
+    { enabled: Boolean(datasetName && reportName), fallbackMessage: t('common.loadError') },
+  )
+  const subsets = subsetsResource.data ?? EMPTY_SUBSETS
 
-  // Load predictions when subset changes
-  const loadPredictions = useCallback(async () => {
-    if (!selectedSubset || !reportName || !datasetName) return
-    setLoading(true)
-    try {
-      const res = await getPredictions(rootPath, reportName, datasetName, selectedSubset)
-      setPredictions(res.predictions)
-    } catch (e) {
-      console.error('Failed to load predictions:', e)
-      setPredictions([])
-    } finally {
-      setLoading(false)
-    }
-  }, [rootPath, reportName, datasetName, selectedSubset])
+  // Follow the requested subset when it exists, otherwise open on the first one.
+  const subsetScope = `${rootPath}\0${reportName}\0${datasetName}`
+  const defaultSubset = initialSubset && subsets.includes(initialSubset) ? initialSubset : (subsets[0] ?? '')
+  // A pick only holds while it is still one of the subsets on offer: the list can
+  // come back without it after a rescan.
+  const [pickedSubset, setSelectedSubset] = useScopedState<string | null>(subsetScope, null)
+  const selectedSubset = pickedSubset !== null && subsets.includes(pickedSubset)
+    ? pickedSubset
+    : defaultSubset
 
-  useEffect(() => {
-    loadPredictions()
-  }, [loadPredictions])
+  const predictionsResource = useAsyncResource(
+    (signal) => getPredictions(rootPath, reportName, datasetName, selectedSubset, signal),
+    [rootPath, reportName, datasetName, selectedSubset],
+    {
+      enabled: Boolean(selectedSubset && reportName && datasetName),
+      fallbackMessage: t('common.loadError'),
+    },
+  )
+  const predictions = predictionsResource.data?.predictions ?? EMPTY_PREDICTIONS
+  const loading = predictionsResource.loading
+  const loadError = subsetsResource.error || predictionsResource.error
 
+  // The threshold is a view-only filter (above/below), not a pass/fail verdict,
+  // and it never leaves this view. A sample without a usable score belongs to neither
+  // side; counting it as Below would report an unscored sample as a failure.
   const filtered = useMemo(() => {
-    if (mode === 'Pass') return predictions.filter((p) => p.NScore >= threshold)
-    if (mode === 'Fail') return predictions.filter((p) => p.NScore < threshold)
+    if (mode === 'Above') return predictions.filter((p) => p.NScore !== null && p.NScore >= threshold)
+    if (mode === 'Below') return predictions.filter((p) => p.NScore !== null && p.NScore < threshold)
     return predictions
   }, [predictions, mode, threshold])
 
-  const passCount = useMemo(() => predictions.filter((p) => p.NScore >= threshold).length, [predictions, threshold])
-  const failCount = predictions.length - passCount
+  const aboveCount = useMemo(
+    () => predictions.filter((p) => p.NScore !== null && p.NScore >= threshold).length,
+    [predictions, threshold],
+  )
+  const belowCount = useMemo(
+    () => predictions.filter((p) => p.NScore !== null && p.NScore < threshold).length,
+    [predictions, threshold],
+  )
   const totalPages = filtered.length
   const row = totalPages > 0 ? filtered[Math.min(page - 1, totalPages - 1)] : null
 
   // Reset page & search state when filter changes
   useEffect(() => {
-    setPage(1)
-    setIndexSearch('')
-    setMsgIdSearch('')
-    setIndexError(false)
-    setMsgIdError(false)
-    setHighlightMsgId(undefined)
+    const reset = () => {
+      setPage(1)
+      setIndexSearch('')
+      setMsgIdSearch('')
+      setIndexError(false)
+      setMsgIdError(false)
+      setHighlightMsgId(undefined)
+    }
+    reset()
   }, [mode, threshold, selectedSubset])
 
-  // Keyboard navigation (skip when search inputs are focused)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
-      if (e.key === 'ArrowLeft' && page > 1) {
-        setPage(p => p - 1)
-        setHighlightMsgId(undefined)
-      } else if (e.key === 'ArrowRight' && page < totalPages) {
-        setPage(p => p + 1)
-        setHighlightMsgId(undefined)
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [page, totalPages])
+  const goToSample = useCallback((next: number) => {
+    setPage(next)
+    setHighlightMsgId(undefined)
+  }, [])
 
   // --- Search handlers ---
   const handleIndexSearch = useCallback(() => {
@@ -154,22 +156,22 @@ export default function PredictionsTab({ reportName, datasetName, rootPath, init
 
   const subsetOptions = subsets.map((s) => ({ value: s, label: s }))
 
-  // Filter button config
-  const filterBtns = [
-    { key: 'All', icon: <List size={13} />, count: predictions.length },
-    { key: 'Pass', icon: <CircleCheck size={13} />, count: passCount },
-    { key: 'Fail', icon: <CircleX size={13} />, count: failCount },
-  ] as const
+  // Filter options describe the view filter (above/below the threshold), not a
+  // pass/fail outcome.
+  const filterOptions: SegmentedOption<string>[] = [
+    { value: 'All', label: t('common.all'), icon: <List size={13} />, count: predictions.length },
+    { value: 'Above', label: t('prediction.aboveFilter'), icon: <ArrowUp size={13} />, count: aboveCount },
+    { value: 'Below', label: t('prediction.belowFilter'), icon: <ArrowDown size={13} />, count: belowCount },
+  ]
 
-  const navBtnBase = 'bg-transparent border border-[var(--border)] rounded-full w-8 h-8 flex items-center justify-center text-[var(--text)] transition-colors'
   const searchInputBase = 'pl-7 pr-2 py-[0.3rem] text-[0.8rem] w-[120px] bg-[var(--bg-deep)] rounded-[var(--radius-sm)] text-[var(--text)] outline-none transition-colors'
 
   return (
     <div className="flex flex-col gap-3">
 
-      {/* ── 行 1：全局配置区 — Subset（左）+ Threshold（右） ── */}
+      {/* ── Row 1: global config — Subset (left) + Threshold (right) ── */}
       <div className="flex items-end justify-between gap-4 flex-wrap">
-        {/* 左：Subset 选择器 */}
+        {/* Left: Subset selector */}
         <div className="flex-none max-w-[280px] min-w-[160px]">
           <Select
             label={t('reportDetail.selectSubset')}
@@ -180,91 +182,66 @@ export default function PredictionsTab({ reportName, datasetName, rootPath, init
           />
         </div>
 
-        {/* 右：Score Threshold + ? 图标 */}
-        <div className="flex items-center gap-[0.4rem] shrink-0 pb-[2px]">
-          <label className="text-xs text-[var(--text-muted)] whitespace-nowrap">
-            {t('single.scoreThreshold')}
-          </label>
-          <input
-            type="number"
+        {/* Right: Score Threshold + ? icon */}
+        <div className="flex shrink-0 items-end gap-[0.4rem] pb-[2px]">
+          <ScoreThresholdInput
+            id="prediction-score-threshold"
             value={threshold}
-            step={0.01}
-            min={0}
-            max={1}
-            onChange={(e) => setThreshold(Number(e.target.value))}
-            className="w-20 px-2 py-1 text-sm rounded-[var(--radius-sm)] bg-[var(--bg-deep)] border border-[var(--border)] text-[var(--text)] focus:outline-none focus:border-[var(--accent)]"
+            onChange={setThreshold}
+            label={t('single.scoreThreshold')}
           />
-          <span
-            className="relative inline-flex cursor-help text-[var(--text-dim)]"
-            onMouseEnter={e => {
-              const tip = document.createElement('div')
-              tip.id = '__threshold_tip'
-              tip.textContent = t('prediction.thresholdHint')
-              Object.assign(tip.style, {
-                position: 'fixed',
-                background: 'var(--bg-card)',
-                color: 'var(--text)',
-                border: '1px solid var(--border)',
-                borderRadius: '6px',
-                padding: '0.35rem 0.65rem',
-                fontSize: '0.72rem',
-                lineHeight: '1.5',
-                maxWidth: '220px',
-                zIndex: '9999',
-                pointerEvents: 'none',
-                boxShadow: 'var(--shadow)',
-                whiteSpace: 'normal',
-              })
-              document.body.appendChild(tip)
-              const rect = e.currentTarget.getBoundingClientRect()
-              tip.style.left = `${Math.min(rect.left, window.innerWidth - 240)}px`
-              tip.style.top = `${rect.bottom + 6}px`
-            }}
-            onMouseLeave={() => document.getElementById('__threshold_tip')?.remove()}
+          {/* text-dim allowed: non-essential help affordance per DESIGN.md §Text */}
+          <Tooltip
+            content={t('prediction.thresholdHint')}
+            label={t('prediction.thresholdHint')}
+            className="mb-2 cursor-help text-[var(--text-dim)]"
           >
             <HelpCircle size={14} />
-          </span>
+          </Tooltip>
         </div>
       </div>
 
-      {/* 分隔线 */}
+      {/* Divider */}
       <hr className="border-none border-t border-[var(--border)] m-0" />
 
       {loading && <Skeleton lines={4} />}
 
+      {loadError && (
+        <ErrorAlert className="flex flex-wrap items-center justify-between gap-2 rounded-[var(--radius-sm)] px-3 py-2">
+          <span>{loadError}</span>
+          {selectedSubset && (
+            <button
+              type="button"
+              onClick={predictionsResource.reload}
+              className="min-h-11 rounded-[var(--radius-sm)] border border-current px-3 font-medium"
+            >
+              {t('common.retry')}
+            </button>
+          )}
+        </ErrorAlert>
+      )}
+
       {!loading && predictions.length > 0 && (
         <>
-          {/* ── 行 2：操作区 — 过滤器（左）+ 搜索框（右） ── */}
+          {/* ── Row 2: actions — filters (left) + search box (right) ── */}
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            {/* 左：All / Pass / Fail 按钮组 */}
-            <div className="inline-flex rounded-[var(--radius)] border border-[var(--border-md)] overflow-hidden">
-              {filterBtns.map(({ key, icon, count }, idx) => {
-                const isActive = mode === key
-                return (
-                  <button
-                    key={key}
-                    onClick={() => { setMode(key); setPage(1) }}
-                    className={[
-                      'flex items-center gap-[0.4rem] px-4 py-2 text-sm font-medium border-0 cursor-pointer transition-colors',
-                      idx < filterBtns.length - 1 ? 'border-r border-[var(--border-md)]' : '',
-                      isActive ? 'bg-[var(--accent)] text-[var(--bg)]' : 'bg-[var(--bg-card2)] text-[var(--text-muted)]',
-                    ].join(' ')}
-                  >
-                    {icon}
-                    <span>{key}</span>
-                    <span className="opacity-65 text-[0.8rem]">{count}</span>
-                  </button>
-                )
-              })}
-            </div>
+            {/* Left: All / Above / Below filter group */}
+            <SegmentedControl
+              options={filterOptions}
+              value={mode}
+              onChange={(next) => { setMode(next); setPage(1) }}
+              ariaLabel={t('prediction.aboveFilter')}
+            />
 
-            {/* 右：搜索跳转框 */}
+            {/* Right: search-jump box */}
             <div className="flex items-center gap-2">
               {/* Sample index search */}
               <div className="relative flex items-center">
                 <Search size={12} className="absolute left-2 text-[var(--text-dim)] pointer-events-none" />
                 <input
                   ref={indexInputRef}
+                  aria-label={t('prediction.searchByIndex')}
+                  name="prediction-index-search"
                   type="text"
                   value={indexSearch}
                   onChange={e => { setIndexSearch(e.target.value); setIndexError(false) }}
@@ -284,6 +261,8 @@ export default function PredictionsTab({ reportName, datasetName, rootPath, init
                 <MessageSquare size={12} className="absolute left-2 text-[var(--text-dim)] pointer-events-none" />
                 <input
                   ref={msgIdInputRef}
+                  aria-label={t('prediction.searchByMsgId')}
+                  name="prediction-message-id-search"
                   type="text"
                   value={msgIdSearch}
                   onChange={e => { setMsgIdSearch(e.target.value); setMsgIdError(false) }}
@@ -301,40 +280,27 @@ export default function PredictionsTab({ reportName, datasetName, rootPath, init
           </div>
 
           {/* Row 2: Sample nav */}
-          <div className="flex items-center gap-3">
-            {/* Left arrow */}
-            <button
-              onClick={() => { setPage(p => Math.max(1, p - 1)); setHighlightMsgId(undefined) }}
-              disabled={page <= 1}
-              className={`${navBtnBase} ${page <= 1 ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'}`}
-            >
-              <ChevronLeft size={16} />
-            </button>
-
+          <SampleNavigator page={page} total={totalPages} onPageChange={goToSample}>
             {/* Sample X / Y with hash icon */}
-            <span className="flex items-center gap-[0.3rem] text-[var(--text-muted)] text-sm tabular-nums">
+            <span className="flex items-center gap-[0.3rem] text-sm tabular-nums text-[var(--text-muted)]">
               <Hash size={13} className="opacity-50" />
               Sample {page} / {totalPages}
               {row && (
-                <span className="text-xs opacity-50 ml-1">
+                <span className="ml-1 text-xs opacity-50">
                   (index: {row.Index})
                 </span>
               )}
             </span>
-
-            {/* Right arrow */}
-            <button
-              onClick={() => { setPage(p => Math.min(totalPages, p + 1)); setHighlightMsgId(undefined) }}
-              disabled={page >= totalPages}
-              className={`${navBtnBase} ${page >= totalPages ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'}`}
-            >
-              <ChevronRight size={16} />
-            </button>
-          </div>
+          </SampleNavigator>
 
           {/* Content area */}
           {row && (
             <div className="transition-all duration-200">
+              {highlightMsgId && (
+                <p className="type-body-xs mb-2 text-[var(--text-muted)]" role="status">
+                  {t('prediction.messageLocated', { id: highlightMsgId })}
+                </p>
+              )}
               <ChatView prediction={row} threshold={threshold} highlightMsgId={highlightMsgId} />
             </div>
           )}
@@ -342,8 +308,7 @@ export default function PredictionsTab({ reportName, datasetName, rootPath, init
       )}
 
       {!loading && predictions.length === 0 && selectedSubset && (
-        // text-dim allowed: non-essential ≥14px metadata (DESIGN.md §Text)
-        <p className="text-sm text-[var(--text-dim)] py-4">{t('common.noData')}</p>
+        <EmptyStateSystem reason="no-data" context={{ view: 'evaluations' }} />
       )}
     </div>
   )

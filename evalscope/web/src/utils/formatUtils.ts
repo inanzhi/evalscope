@@ -8,26 +8,21 @@ export function fmtMs(ms: number | null | undefined): string {
   return `${(ms / 1000).toFixed(1)}s`
 }
 
+/** How much of an ISO timestamp to keep. */
+export type TimestampPrecision = 'minutes' | 'seconds'
+
 /**
- * Format seconds value to "X.XXs". Returns null for null/undefined.
+ * Render an ISO timestamp as a space-separated local-looking string.
+ *
+ * `minutes` yields `YYYY-MM-DD HH:MM` for list and table cells, `seconds` yields
+ * `YYYY-MM-DD HH:MM:SS` where the exact instant matters (run identity, tooltips).
+ * An absent timestamp renders as the empty string so callers can pick their own
+ * placeholder.
  */
-export function fmtSec(n: number | null | undefined): string | null {
-  if (n == null) return null
-  return `${n.toFixed(2)}s`
-}
-
-export function formatScore(score: number, precision = 4): string {
-  return score.toFixed(precision)
-}
-
-export function formatPercent(value: number): string {
-  return `${(value * 100).toFixed(1)}%`
-}
-
-export function prettyJson(value: unknown): string {
-  try {
-    return JSON.stringify(value, null, 2)
-  } catch {
-    return String(value)
-  }
+export function formatTimestamp(
+  ts: string | null | undefined,
+  precision: TimestampPrecision = 'minutes',
+): string {
+  if (!ts) return ''
+  return ts.replace('T', ' ').slice(0, precision === 'seconds' ? 19 : 16)
 }

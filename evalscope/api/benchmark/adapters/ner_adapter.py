@@ -13,6 +13,7 @@ from evalscope.utils.ner import (
     extract_spans_from_bio,
     xml_to_bio_tags,
 )
+
 from .default_data_adapter import DefaultDataAdapter
 
 logger = get_logger()
@@ -59,9 +60,9 @@ class NERAdapter(DefaultDataAdapter):
         self.entity_list = [f'<{ent.lower()}>' for ent in self.entity_type_map.values()]
 
         # Create description of entities for prompt
-        self.entities_description = ', '.join([
-            f'{self.entity_type_map[tag]} ({self.entity_descriptions[tag]})' for tag in self.entity_type_map
-        ])
+        self.entities_description = ', '.join(
+            [f'{self.entity_type_map[tag]} ({self.entity_descriptions[tag]})' for tag in self.entity_type_map]
+        )
 
     def record_to_sample(self, record: Dict[str, Any]) -> Sample:
         """
@@ -98,7 +99,7 @@ class NERAdapter(DefaultDataAdapter):
             fewshot=fewshot,
             entities=self.entities_description,
             entity_list=', '.join(self.entity_list),
-            text=sample.input
+            text=sample.input,
         )
 
     def sample_to_fewshot(self, sample: Sample) -> str:
@@ -148,7 +149,7 @@ class NERAdapter(DefaultDataAdapter):
             f1 = f1_score(y_true, y_pred)
             accuracy = accuracy_score(y_true, y_pred)
 
-            score.value = {'precision': precision, 'recall': recall, 'f1_score': f1, 'accuracy': accuracy}
+            score.value = {'precision': precision, 'recall': recall, 'f1': f1, 'accuracy': accuracy}
 
             # Store tags for aggregation (proper micro-averaging in aggregate_scores)
             # This way aggregate_scores can compute metrics across all samples at once,
@@ -156,7 +157,7 @@ class NERAdapter(DefaultDataAdapter):
             score.metadata = {'y_true': original_tags, 'y_pred': pred_bio_tags}
         except Exception as e:
             logger.warning(f'Error evaluating NER prediction: {str(e)}')
-            score.value = {'precision': 0.0, 'recall': 0.0, 'f1_score': 0.0, 'accuracy': 0.0}
+            score.value = {'precision': 0.0, 'recall': 0.0, 'f1': 0.0, 'accuracy': 0.0}
 
         return score
 
@@ -182,7 +183,7 @@ class NERAdapter(DefaultDataAdapter):
             num_samples = len(sample_scores)
             avg_precision = sum(ss.score.value.get('precision', 0.0) for ss in sample_scores) / num_samples
             avg_recall = sum(ss.score.value.get('recall', 0.0) for ss in sample_scores) / num_samples
-            avg_f1 = sum(ss.score.value.get('f1_score', 0.0) for ss in sample_scores) / num_samples
+            avg_f1 = sum(ss.score.value.get('f1', 0.0) for ss in sample_scores) / num_samples
             avg_accuracy = sum(ss.score.value.get('accuracy', 0.0) for ss in sample_scores) / num_samples
         else:
             # Use seqeval for micro-averaged metrics across all samples
@@ -198,15 +199,26 @@ class NERAdapter(DefaultDataAdapter):
                 metric_name='precision',
                 score=avg_precision,
                 num=num_samples,
-                metadata={'type': 'seqeval-micro-average'}
+                metadata={'type': 'seqeval-micro-average'},
             ),
             AggScore(
-                metric_name='recall', score=avg_recall, num=num_samples, metadata={'type': 'seqeval-micro-average'}
+                metric_name='recall',
+                score=avg_recall,
+                num=num_samples,
+                metadata={'type': 'seqeval-micro-average'},
             ),
-            AggScore(metric_name='f1_score', score=avg_f1, num=num_samples, metadata={'type': 'seqeval-micro-average'}),
             AggScore(
-                metric_name='accuracy', score=avg_accuracy, num=num_samples, metadata={'type': 'seqeval-accuracy'}
-            )
+                metric_name='f1',
+                score=avg_f1,
+                num=num_samples,
+                metadata={'type': 'seqeval-micro-average'},
+            ),
+            AggScore(
+                metric_name='accuracy',
+                score=avg_accuracy,
+                num=num_samples,
+                metadata={'type': 'seqeval-accuracy'},
+            ),
         ]
 
         return agg_scores

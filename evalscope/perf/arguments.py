@@ -2,12 +2,13 @@ import argparse
 import json
 import os
 from contextlib import contextmanager
-from pydantic import Field, field_validator, model_validator
 from typing import Any, Dict, List, Optional, Union
 
+from pydantic import Field, SecretStr, field_validator, model_validator
+
 from evalscope.constants import DEFAULT_WORK_DIR, VisualizerType
-from evalscope.perf.multi_turn_args import IntOrRange, MultiTurnArgs, _sample_int_or_range
-from evalscope.utils import BaseArgument
+from evalscope.perf.multi_turn_args import IntOrRange, MultiTurnArgs
+from evalscope.utils import BaseArgument, get_secret_value, secretize_auth_headers
 from evalscope.utils.logger import get_logger
 
 logger = get_logger()
@@ -23,10 +24,25 @@ _OPENAI_API_ENDPOINT_MAP = {
     'rerank': 'reranks',
 }
 
+_OPENAI_RESPONSES_APIS = ('openai_responses', 'openai_response', 'responses')
+_KNOWN_OPENAI_ENDPOINTS = ('chat/completions', 'completions', 'responses', 'embeddings', 'reranks', 'rerank')
+
+
+def _as_list_if_scalar(value: Any) -> Any:
+    if value is None:
+        return value
+    if isinstance(value, (list, tuple, set)):
+        return list(value)
+    return [value]
+
+
+def _at_least_one(value: int) -> int:
+    return max(value, 1) if value <= 0 else value
+
 
 class Arguments(BaseArgument):
     # Model and API
-    model: str
+    model: Optional[str] = None
     """Model name or path."""
 
     model_id: Optional[str] = None
@@ -63,7 +79,7 @@ class Arguments(BaseArgument):
     total_timeout: Optional[int] = 6 * 60 * 60
     """Total timeout in seconds."""
 
-    api_key: Optional[str] = None
+    api_key: Optional[SecretStr] = None
     """The API key for authentication."""
 
     no_test_connection: bool = False
@@ -87,6 +103,10 @@ class Arguments(BaseArgument):
     - 0 < value < 1 (float): ratio of ``--number``, e.g. 0.1 = 10% warmup.
       Actual count = max(1, int(warmup_num * number)). Useful for sweep mode
       where each run has a different number of requests.
+
+    Warmup requests go through the same concurrency slots as the measured ones
+    and are only excluded from the reported metrics; the closed-loop dispatcher
+    never drains in between, so use at least ``--parallel`` there.
     """
 
     @property
@@ -98,10 +118,9 @@ class Arguments(BaseArgument):
         """
         if self.warmup_num <= 0:
             return 0
-        n = self.number if isinstance(self.number, int) else self.number[0]
         if self.warmup_num >= 1:
             return int(self.warmup_num)
-        return max(1, int(self.warmup_num * n))
+        return max(1, int(self.warmup_num * self._current_number()))
 
     @property
     def total_count(self) -> int:
@@ -110,8 +129,7 @@ class Arguments(BaseArgument):
         Equal to ``number + warmup_count``.  When ``number`` is a list
         (sweep mode), uses the first element.
         """
-        n = self.number if isinstance(self.number, int) else self.number[0]
-        return n + self.warmup_count
+        return self._current_number() + self.warmup_count
 
     open_loop: bool = False
     """Enable open-loop rate mode: dispatch requests at the scheduled rate without semaphore backpressure.
@@ -187,6 +205,14 @@ class Arguments(BaseArgument):
     in_flight_task_multiplier: int = 2
     """Max scheduled tasks = parallel * this multiplier."""
 
+    num_workers: int = 0
+    """Number of worker processes for CPU-bound dataset/request generation.
+
+    Set to 0 for auto-detection based on the current CPU affinity, 1 to force
+    serial generation, or >1 to explicitly choose the worker count. Only
+    dataset plugins that advertise parallel generation use this setting.
+    """
+
     # Logging and debugging
     log_every_n_query: int = 100
     """Log every N queries."""
@@ -200,11 +226,11 @@ class Arguments(BaseArgument):
     visualizer: Optional[str] = None
     """Visualizer for logging, supports 'swanlab' or 'wandb'."""
 
-    wandb_api_key: Optional[str] = None
+    wandb_api_key: Optional[SecretStr] = None
     """API key for wandb visualizer. [Deprecated] Prefer the WANDB_API_KEY env var; this field
     will be removed in a future release."""
 
-    swanlab_api_key: Optional[str] = None
+    swanlab_api_key: Optional[SecretStr] = None
     """API key for swanlab visualizer. [Deprecated] Prefer the SWANLAB_API_KEY env var; this
     field will be removed in a future release."""
 
@@ -265,6 +291,11 @@ class Arguments(BaseArgument):
     dataset_path: Optional[str] = None
     """Path to the dataset."""
 
+    data_source: Optional[str] = None
+    """Data source for loading datasets. One of: 'modelscope', 'huggingface', 'local'.
+    Defaults to 'modelscope' when not specified. When --dataset-path points to a local
+    directory containing Arrow/Parquet files, this is automatically treated as 'local'."""
+
     dataset_offset: int = 0
     """Global token-sequence offset for random datasets.
 
@@ -275,6 +306,14 @@ class Arguments(BaseArgument):
 
     Set to 0 (default) to enable automatic cumulative offsetting.
     A non-zero initial value shifts the starting position of the first run.
+    """
+
+    dataset_args: Optional[Dict[str, Any]] = None
+    """Per-dataset arguments as a dict (parsed from a JSON string on the CLI).
+
+    Validated against the schema declared by the selected ``--dataset`` plugin
+    (``args_schema``), giving strongly-typed, fail-fast per-dataset options.
+    The deprecated ``--multi-turn-args`` is folded into this field.
     """
 
     # Response settings
@@ -392,7 +431,7 @@ class Arguments(BaseArgument):
 
     @field_validator('max_tokens', mode='before')
     @classmethod
-    def _validate_max_tokens(cls, v):
+    def _validate_max_tokens(cls, v: Any) -> Any:
         if isinstance(v, list):
             if len(v) == 1:
                 return v[0]  # single value from nargs='+'
@@ -420,7 +459,7 @@ class Arguments(BaseArgument):
 
     @field_validator('multi_turn_args', mode='before')
     @classmethod
-    def _validate_multi_turn_args(cls, v):
+    def _validate_multi_turn_args(cls, v: Any) -> Any:
         if v is None:
             return v
         if isinstance(v, MultiTurnArgs):
@@ -434,41 +473,64 @@ class Arguments(BaseArgument):
             return MultiTurnArgs(**v)
         return v
 
+    @field_validator('dataset_args', mode='before')
+    @classmethod
+    def _validate_dataset_args(cls, v: Any) -> Any:
+        if v is None or isinstance(v, dict):
+            return v
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except Exception as e:
+                raise ValueError(f'Failed to parse --dataset-args JSON: {e}') from e
+        return v
+
+    @field_validator('headers', mode='after')
+    @classmethod
+    def _validate_headers(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        return secretize_auth_headers(v) or {}
+
     @field_validator('rate', mode='before')
     @classmethod
-    def _validate_rate(cls, v):
-        if isinstance(v, (int, float)):
-            return [float(v)]
-        return v
+    def _validate_rate(cls, v: Any) -> Any:
+        return _as_list_if_scalar(v)
 
     @field_validator('number', mode='before')
     @classmethod
-    def _validate_number(cls, v):
-        if isinstance(v, int):
-            return [v]
-        return v
+    def _validate_number(cls, v: Any) -> Any:
+        return _as_list_if_scalar(v)
 
     @field_validator('parallel', mode='before')
     @classmethod
-    def _validate_parallel(cls, v):
-        if isinstance(v, int):
-            return [v]
-        return v
+    def _validate_parallel(cls, v: Any) -> Any:
+        return _as_list_if_scalar(v)
 
     @field_validator('db_commit_interval', mode='after')
     @classmethod
-    def _validate_db_commit_interval(cls, v):
-        return max(v, 1) if v <= 0 else v
+    def _validate_db_commit_interval(cls, v: int) -> int:
+        return _at_least_one(v)
 
     @field_validator('queue_size_multiplier', mode='after')
     @classmethod
-    def _validate_queue_size_multiplier(cls, v):
-        return max(v, 1) if v <= 0 else v
+    def _validate_queue_size_multiplier(cls, v: int) -> int:
+        return _at_least_one(v)
 
     @field_validator('in_flight_task_multiplier', mode='after')
     @classmethod
-    def _validate_in_flight_task_multiplier(cls, v):
-        return max(v, 1) if v <= 0 else v
+    def _validate_in_flight_task_multiplier(cls, v: int) -> int:
+        return _at_least_one(v)
+
+    @field_validator('log_every_n_query', mode='after')
+    @classmethod
+    def _validate_log_every_n_query(cls, v: int) -> int:
+        return _at_least_one(v)
+
+    @field_validator('num_workers', mode='after')
+    @classmethod
+    def _validate_num_workers(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError('--num-workers must be >= 0')
+        return v
 
     # --- Model validator (cross-field logic) ---
 
@@ -476,86 +538,185 @@ class Arguments(BaseArgument):
     def _post_init(self) -> 'Arguments':
         # Set the default headers
         self.headers = self.headers or {}
-        if self.api_key:
-            self.headers['Authorization'] = f'Bearer {self.api_key}'
+        api_key = get_secret_value(self.api_key)
+        if api_key:
+            self.headers['Authorization'] = SecretStr(f'Bearer {api_key}')
 
         # Set the model ID based on the model name
-        self.model_id = os.path.basename(self.model)
+        self.model_id = os.path.basename(self.model) if self.model else (self.dataset or 'unknown')
 
-        # Set the URL based on the dataset type
-        self._resolve_url()
+        if self.model is None:
+            from evalscope.perf.plugin.registry import DatasetRegistry
 
-        # Resolve apply_chat_template from the *original* URL before any redirects.
+            if not self.dataset or DatasetRegistry.get_class(self.dataset).requires_model:
+                raise ValueError('--model is required.')
+
+        # Set the URL based on the dataset type.
+        self._resolve_local_url()
+        self._resolve_openai_compatible_url()
+
+        # Resolve apply_chat_template before tokenize_prompt redirects chat/completions to completions.
         if self.apply_chat_template is None:
             self.apply_chat_template = self.url.strip('/').endswith('chat/completions')
+
+        self._resolve_tokenize_prompt_url()
 
         # Validate sweep params (number/parallel/rate consistency)
         self._validate_sweep_params()
 
+        # Fold deprecated --multi-turn-args into --dataset-args (pure dict merge).
+        # NOTE: dataset_args is kept as a raw dict here; validation against the
+        # dataset's typed schema happens in the plugin layer (which owns the
+        # schema), so the config layer stays free of any plugin dependency.
+        self._normalize_legacy_dataset_args()
+
+        # Promote deprecated num_workers to top-level. It must be removed from
+        # dataset_args regardless, otherwise non-multi-turn schemas (extra='forbid')
+        # would reject it during plugin construction.
+        legacy_num_workers = None
+        if self.dataset_args and 'num_workers' in self.dataset_args:
+            legacy_num_workers = self.dataset_args.pop('num_workers')
+        elif self.multi_turn_args is not None and 'num_workers' in self.multi_turn_args.model_fields_set:
+            legacy_num_workers = self.multi_turn_args.num_workers
+        if legacy_num_workers is not None:
+            logger.warning(
+                '`num_workers` in dataset/multi-turn args is deprecated. Please use top-level `--num-workers` instead.'
+            )
+            if 'num_workers' not in self.model_fields_set:
+                try:
+                    coerced = int(legacy_num_workers)
+                except (TypeError, ValueError) as e:
+                    raise ValueError(f'`num_workers` must be an integer, got {legacy_num_workers!r}') from e
+                if coerced < 0:
+                    raise ValueError(f'`num_workers` must be >= 0, got {coerced}')
+                self.num_workers = coerced
+
         return self
 
-    def _resolve_url(self):
+    def _normalize_legacy_dataset_args(self) -> None:
+        """Fold the deprecated ``--multi-turn-args`` into ``--dataset-args``.
+
+        Only user-set keys are folded (``setdefault`` semantics): on a key
+        conflict, ``--dataset-args`` takes precedence and a warning is emitted
+        (never an error).  Other legacy top-level flags (``prefix_length``,
+        ``image_*``, ``min/max_turns``, ``min/max_prompt_length``) are left
+        untouched and are still read directly by the plugins.
+        """
+        if self.multi_turn_args is None:
+            return
+        legacy = self.multi_turn_args.model_dump(exclude_unset=True)
+        # ``num_workers`` is a cross-cutting deprecated alias for top-level
+        # ``--num-workers`` (promoted separately); never fold it into dataset_args,
+        # which would otherwise be rejected by non-multi-turn dataset schemas.
+        legacy.pop('num_workers', None)
+        if not legacy:
+            return
+        merged = dict(self.dataset_args) if self.dataset_args else {}
+        conflicts = [k for k in legacy if k in merged]
+        for k, v in legacy.items():
+            merged.setdefault(k, v)
+        self.dataset_args = merged
+        logger.warning(
+            '`--multi-turn-args` is deprecated; its values were folded into `--dataset-args`. '
+            'Please migrate to `--dataset-args`.'
+        )
+        if conflicts:
+            logger.warning(
+                f'Keys {conflicts} were set in both --multi-turn-args and --dataset-args; '
+                '--dataset-args takes precedence.'
+            )
+
+    def _current_number(self) -> int:
+        return self.number if isinstance(self.number, int) else self.number[0]
+
+    def _resolve_url(self) -> None:
         """Resolve URL based on api, dataset, port, and tokenize_prompt settings."""
-        # Set the URL based on the dataset type
+        self._resolve_local_url()
+        self._resolve_openai_compatible_url()
+        self._resolve_tokenize_prompt_url()
+
+    def _resolve_local_url(self) -> None:
         if self.api.startswith('local'):
             if self.dataset.startswith('speed_benchmark'):
                 self.url = f'http://127.0.0.1:{self.port}/v1/completions'
             else:
                 self.url = f'http://127.0.0.1:{self.port}/v1/chat/completions'
 
-        # Auto-append endpoint path for openai-compatible APIs when URL has no known endpoint suffix
+    def _resolve_openai_compatible_url(self) -> None:
         if self.api in _OPENAI_API_ENDPOINT_MAP:
-            _stripped = self.url.rstrip('/')
-            _expected_suffix = _OPENAI_API_ENDPOINT_MAP[self.api]
-            _known_endpoints = ('chat/completions', 'completions', 'responses', 'embeddings', 'reranks')
-            if self.api in ('openai_responses', 'openai_response',
-                            'responses') and _stripped.endswith('/chat/completions'):
-                self.url = _stripped[:-len('chat/completions')] + 'responses'
-                logger.warning(f'OpenAI Responses API selected: URL auto-adjusted to responses endpoint: {self.url}')
-            elif not any(_stripped.endswith('/' + ep) for ep in _known_endpoints):
-                self.url = _stripped + '/' + _expected_suffix
+            stripped_url = self.url.rstrip('/')
+            expected_suffix = _OPENAI_API_ENDPOINT_MAP[self.api]
+            if self._redirect_responses_url(stripped_url):
+                return
+            if not any(stripped_url.endswith('/' + endpoint) for endpoint in _KNOWN_OPENAI_ENDPOINTS):
+                self.url = stripped_url + '/' + expected_suffix
                 logger.warning(
-                    f'URL "{_stripped}" has no endpoint path, auto-appended "/{_expected_suffix}". '
+                    f'URL "{stripped_url}" has no endpoint path, auto-appended "/{expected_suffix}". '
                     'If this is not intended, please specify the full URL explicitly.'
                 )
 
-        # When tokenize_prompt is enabled, redirect to the completions endpoint.
-        if self.tokenize_prompt:
-            if self.api in ('openai_responses', 'openai_response', 'responses'):
-                raise ValueError('--tokenize-prompt is not supported with the OpenAI Responses API.')
-            if not self.tokenizer_path:
-                raise ValueError('--tokenizer-path is required when --tokenize-prompt is set.')
-            _stripped = self.url.rstrip('/')
-            if _stripped.endswith('chat/completions'):
-                self.url = _stripped[:-len('chat/completions')] + 'completions'
-                logger.warning(
-                    f'--tokenize-prompt is set: URL auto-adjusted from chat/completions '
-                    f'to completions endpoint: {self.url}'
-                )
+    def _redirect_responses_url(self, stripped_url: str) -> bool:
+        if self.api in _OPENAI_RESPONSES_APIS and stripped_url.endswith('/chat/completions'):
+            self.url = stripped_url[: -len('chat/completions')] + 'responses'
+            logger.warning(f'OpenAI Responses API selected: URL auto-adjusted to responses endpoint: {self.url}')
+            return True
+        return False
 
-    def _validate_sweep_params(self):
-        """Validate number/parallel/rate consistency after normalization."""
-        if self.open_loop:
-            if len(self.number) != len(self.rate):
-                raise ValueError(
-                    f'In open-loop mode the length of --number and --rate must match, '
-                    f'but got number: {self.number} and rate: {self.rate}'
-                )
-            if not all(r > 0 for r in self.rate):
-                raise ValueError(f'In open-loop mode all --rate values must be > 0, but got: {self.rate}')
-            # In open-loop mode concurrency is unbounded; set parallel=-1 so downstream
-            # display layers render it as INF instead of a numeric value.
-            self.parallel = [-1]
-            logger.info(
-                'open-loop mode enabled: concurrency is unbounded (parallel set to -1 / INF). '
-                f'Rate sweep: {self.rate}, number sweep: {self.number}.'
+    def _resolve_tokenize_prompt_url(self) -> None:
+        if not self.tokenize_prompt:
+            return
+        if self.api in _OPENAI_RESPONSES_APIS:
+            raise ValueError('--tokenize-prompt is not supported with the OpenAI Responses API.')
+        if not self.tokenizer_path:
+            raise ValueError('--tokenizer-path is required when --tokenize-prompt is set.')
+        stripped_url = self.url.rstrip('/')
+        if stripped_url.endswith('chat/completions'):
+            self.url = stripped_url[: -len('chat/completions')] + 'completions'
+            logger.warning(
+                f'--tokenize-prompt is set: URL auto-adjusted from chat/completions to completions endpoint: {self.url}'
             )
-        else:
-            if len(self.number) != len(self.parallel):
-                raise ValueError(
-                    f'The length of number and parallel should be the same, '
-                    f'but got number: {self.number} and parallel: {self.parallel}'
-                )
+
+    def _validate_sweep_params(self) -> None:
+        """Validate number/parallel/rate consistency after normalization."""
+        if self.multi_turn and self.open_loop:
+            raise ValueError(
+                '--multi-turn is not supported in open-loop mode: turn N cannot be dispatched before the '
+                'response of turn N-1 has been appended to the conversation context, which contradicts '
+                'open-loop scheduling (dispatch independent of in-flight requests).'
+            )
+        if self.open_loop:
+            self._validate_open_loop_sweep_params()
+            return
+        self._validate_closed_loop_sweep_params()
+
+    def _validate_open_loop_sweep_params(self) -> None:
+        if len(self.number) != len(self.rate):
+            raise ValueError(
+                f'In open-loop mode the length of --number and --rate must match, '
+                f'but got number: {self.number} and rate: {self.rate}'
+            )
+        if not all(r > 0 for r in self.rate):
+            from evalscope.perf.plugin.registry import DatasetRegistry
+
+            dataset_cls = DatasetRegistry.get_class(self.dataset)
+            if not dataset_cls.provides_arrival_schedule:
+                raise ValueError(f'In open-loop mode all --rate values must be > 0, but got: {self.rate}')
+        # In open-loop mode concurrency is unbounded; set parallel=-1 so downstream
+        # display layers render it as INF instead of a numeric value.
+        self.parallel = [-1]
+        logger.info(
+            'open-loop mode enabled: concurrency is unbounded (parallel set to -1 / INF). '
+            f'Rate sweep: {self.rate}, number sweep: {self.number}.'
+        )
+
+    def _validate_closed_loop_sweep_params(self) -> None:
+        if len(self.number) != len(self.parallel):
+            raise ValueError(
+                f'The length of number and parallel should be the same, '
+                f'but got number: {self.number} and parallel: {self.parallel}'
+            )
+        if any(p <= 0 for p in self.parallel):
+            raise ValueError(f'--parallel values must be > 0, but got: {self.parallel}')
 
     @contextmanager
     def output_context(self, path: str):
@@ -575,9 +736,12 @@ class Arguments(BaseArgument):
         finally:
             self.outputs_dir = original_path
 
+    def to_dict(self) -> dict:
+        """Convert the instance to a display-safe dictionary."""
+        return self.model_dump(mode='json')
+
 
 class ParseKVAction(argparse.Action):
-
     def __call__(self, parser, namespace, values, option_string=None):
         if not values:
             setattr(namespace, self.dest, {})
@@ -595,16 +759,16 @@ class ParseKVAction(argparse.Action):
                 parser.error(f'Error parsing key-value pairs: {e}')
 
 
-def add_argument(parser: argparse.ArgumentParser):
-    # yapf: disable
-    # Model and API
-    parser.add_argument('--model', type=str, required=True, help='The test model name.')
-    parser.add_argument('--attn-implementation', required=False, default=None, help='Attention implementaion')
+# fmt: off
+def _add_model_api_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument('--model', type=str, default=None, help='The test model name.')
+    parser.add_argument('--attn-implementation', required=False, default=None, help='Attention implementation')
     parser.add_argument('--api', type=str, default='openai', help='Service API protocol: openai | openai_responses/responses | openai_embedding/embedding | openai_rerank/rerank | local/local_vllm. Determines the auto-appended endpoint path on --url.')  # noqa: E501
     parser.add_argument(
         '--tokenizer-path', type=str, required=False, default=None, help='Specify the tokenizer weight path')
 
-    # Connection settings
+
+def _add_connection_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument('--url', type=str, default='http://127.0.0.1:8877/v1/chat/completions')
     parser.add_argument('--port', type=int, default=8877, help='The port for local inference')
     parser.add_argument('--headers', nargs='+', dest='headers', action=ParseKVAction, help='Extra HTTP headers')
@@ -614,8 +778,9 @@ def add_argument(parser: argparse.ArgumentParser):
     parser.add_argument('--total-timeout', type=int, default=6 * 60 * 60, help='The total timeout for each request')  # noqa: E501
     parser.add_argument('--no-test-connection', action='store_true', default=False, help='Do not test the connection before starting the benchmark')  # noqa: E501
 
-    # Performance and parallelism
-    parser.add_argument('-n', '--number', type=int, default=1000, nargs='+', help='How many requests to be made')
+
+def _add_performance_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument('-n', '--number', type=int, default=None, nargs='+', help='How many requests to be made')
     parser.add_argument('--parallel', type=int, default=1, nargs='+', help='Set number of concurrency requests, default 1')  # noqa: E501
     parser.add_argument('--rate', type=float, default=-1, nargs='+',
                         help='Number of requests per second. default -1 means no rate limit. '
@@ -637,7 +802,8 @@ def add_argument(parser: argparse.ArgumentParser):
              'matching trie). Warmup ignores this. When both --number and --duration are set, '
              'whichever limit is reached first ends the run.')  # noqa: E501
 
-    # SLA Auto-tuning
+
+def _add_sla_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument('--sla-auto-tune', action='store_true', default=False, help='Enable SLA auto-tuning')
     parser.add_argument('--sla-variable', type=str, default='parallel', choices=['parallel', 'rate'], help='The variable to tune, can be parallel or rate')  # noqa: E501
     parser.add_argument('--sla-params', type=json.loads, default=None, help='SLA constraints in JSON format')
@@ -647,12 +813,23 @@ def add_argument(parser: argparse.ArgumentParser):
     parser.add_argument('--sla-fixed-parallel', type=int, default=None, help='Fixed parallel workers used when --sla-variable=rate. Defaults to --sla-upper-bound for backward compatibility.')  # noqa: E501
     parser.add_argument('--sla-number-multiplier', type=float, default=None, help='Multiplier for number of requests relative to parallel/rate in SLA auto-tuning. number = round(val * N). Defaults to 2 if not set.')  # noqa: E501
 
-    # Tuning knobs
+
+def _add_tuning_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument('--db-commit-interval', type=int, default=1000, help='Rows buffered before SQLite commit')
     parser.add_argument('--queue-size-multiplier', type=int, default=5, help='Queue maxsize = parallel * multiplier')
     parser.add_argument('--in-flight-task-multiplier', type=int, default=2, help='Max scheduled tasks = parallel * multiplier')  # noqa: E501
+    parser.add_argument(
+        '--num-workers',
+        type=int,
+        default=None,
+        help=(
+            'Worker processes for CPU-bound dataset/request generation. '
+            '0=auto from CPU affinity, 1=serial, >1=explicit worker count.'
+        ),
+    )
 
-    # Logging and debugging
+
+def _add_logging_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument('--log-every-n-query', type=int, default=100, help='Logging every n query')
     parser.add_argument('--debug', action='store_true', default=False, help='Debug request send')
     parser.add_argument('--visualizer', type=str, default=None,
@@ -667,14 +844,15 @@ def add_argument(parser: argparse.ArgumentParser):
     parser.add_argument('--name', type=str, help='The wandb/swanlab/clearml result name and result db name')
     parser.add_argument('--enable-progress-tracker', action='store_true', default=False, help='Enable progress tracker')
 
-    # Prompt settings
+
+def _add_prompt_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument('--max-prompt-length', type=int, default=131072, help='Maximum input prompt length')
     parser.add_argument('--min-prompt-length', type=int, default=0, help='Minimum input prompt length')
     parser.add_argument('--prefix-length', type=int, default=0, help='The prefix length')
     parser.add_argument('--prompt', type=str, required=False, default=None, help='Specified the request prompt')
     parser.add_argument('--query-template', type=str, default=None, help='Specify the query template')
     parser.add_argument(
-        '--apply-chat-template', type=argparse.BooleanOptionalAction, default=None, help='Apply chat template to the prompt')  # noqa: E501
+        '--apply-chat-template', action=argparse.BooleanOptionalAction, default=None, help='Apply chat template to the prompt')  # noqa: E501
     # random vl settings
     parser.add_argument('--image-width', type=int, default=224, help='Width of the image for random VL dataset')
     parser.add_argument('--image-height', type=int, default=224, help='Height of the image for random VL dataset')
@@ -682,13 +860,22 @@ def add_argument(parser: argparse.ArgumentParser):
     parser.add_argument('--image-num', type=int, default=1, help='Number of images for random VL dataset')
     parser.add_argument('--image-patch-size', type=int, default=28, help='Patch size for image tokenizer, only for local image token calculation')  # noqa: E501
 
-    # Output settings
+
+def _add_output_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument('--outputs-dir', help='Outputs dir.', default='outputs')
     parser.add_argument('--no-timestamp', action='store_true', default=False, help='Do not add timestamp to output directory')  # noqa: E501
 
-    # Dataset settings
+
+def _add_dataset_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument('--dataset', type=str, default='openqa', help='Specify the dataset')
-    parser.add_argument('--dataset-path', type=str, required=False, help='Path to the dataset file')
+    parser.add_argument('--dataset-path', type=str, required=False, help='Path to the dataset file or directory')
+    parser.add_argument(
+        '--data-source',
+        type=str,
+        default=None,
+        choices=['modelscope', 'huggingface', 'local'],
+        help='Data source for dataset loading: modelscope, huggingface, or local (default: modelscope)',
+    )
     parser.add_argument(
         '--dataset-offset',
         type=int,
@@ -699,8 +886,20 @@ def add_argument(parser: argparse.ArgumentParser):
             'Default 0.'
         ),
     )
+    parser.add_argument(
+        '--dataset-args',
+        type=json.loads,
+        default=None,
+        dest='dataset_args',
+        help=(
+            'Per-dataset arguments as a JSON string, validated against the selected dataset schema. '
+            'Example: \'{"target_input_len": 2048, "input_len_mode": "cap"}\'. '
+            'Supersedes the deprecated --multi-turn-args.'
+        ),
+    )
 
-    # Response settings
+
+def _add_response_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument('--frequency-penalty', type=float, help='The frequency_penalty value', default=None)
     parser.add_argument('--repetition-penalty', type=float, help='The repetition_penalty value', default=None)
     parser.add_argument('--logprobs', action='store_true', help='The logprobs', default=None)
@@ -733,7 +932,9 @@ def add_argument(parser: argparse.ArgumentParser):
             'Requires --tokenizer-path to be set.'
         ),
     )
-    # Multi-turn settings
+
+
+def _add_multi_turn_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         '--multi-turn',
         action='store_true',
@@ -774,7 +975,8 @@ def add_argument(parser: argparse.ArgumentParser):
             'Example: \'{"first_turn_length": 65000, "subsequent_turn_length": 500, '
             '"chars_per_token": 3.0}\'. '
             'Note: min_turns and max_turns are top-level --min-turns / --max-turns arguments '
-            '(per-conversation turn count is sampled from [min_turns, max_turns]).'
+            '(per-conversation turn count is sampled from [min_turns, max_turns]); '
+            'use top-level --num-workers for live construction parallelism.'
         ),
     )
     parser.add_argument(
@@ -791,7 +993,21 @@ def add_argument(parser: argparse.ArgumentParser):
             'providers ignore the unknown field/header. Off by default.'
         ),
     )
-    # yapf: enable
+
+
+def add_argument(parser: argparse.ArgumentParser) -> None:
+    _add_model_api_arguments(parser)
+    _add_connection_arguments(parser)
+    _add_performance_arguments(parser)
+    _add_sla_arguments(parser)
+    _add_tuning_arguments(parser)
+    _add_logging_arguments(parser)
+    _add_prompt_arguments(parser)
+    _add_output_arguments(parser)
+    _add_dataset_arguments(parser)
+    _add_response_arguments(parser)
+    _add_multi_turn_arguments(parser)
+# fmt: on
 
 
 def parse_args():

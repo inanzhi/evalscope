@@ -1,14 +1,15 @@
 import asyncio
-import numpy as np
-from typing import TYPE_CHECKING, AsyncGenerator, Optional, Tuple
+from typing import TYPE_CHECKING, AsyncGenerator, List, Optional, Tuple
 
 from evalscope.perf.arguments import Arguments
 from evalscope.perf.core.http_client import AioHttpClient
-from evalscope.perf.core.metrics_consumer import connect_test, data_process_completed_event, statistic_benchmark_metric
+from evalscope.perf.core.metrics_consumer import connect_test
+from evalscope.perf.core.pipeline import run_benchmark_pipeline
 from evalscope.perf.core.strategies import ClosedLoopStrategy, OpenLoopStrategy
 from evalscope.perf.plugin import ApiRegistry, DatasetRegistry
 from evalscope.perf.utils.db_util import load_prompt, summary_result
 from evalscope.perf.utils.handler import exception_handler
+from evalscope.perf.utils.worker_util import resolve_dataset_generation_workers
 from evalscope.utils.logger import get_logger
 from evalscope.utils.tqdm_utils import TqdmLogging as tqdm
 
@@ -33,10 +34,7 @@ async def get_requests(args: Arguments, api_plugin: 'ApiPluginBase') -> AsyncGen
     total_count = args.total_count
 
     if warmup_count > 0:
-        logger.info(
-            f'Warmup enabled: {warmup_count} warmup requests '
-            f'(total: {total_count}, benchmark: {args.number})'
-        )
+        logger.info(f'Warmup enabled: {warmup_count} warmup requests (total: {total_count}, benchmark: {args.number})')
 
     async def _generate_from_prompt():
         """Generate requests by repeating a single prompt."""
@@ -49,20 +47,36 @@ async def get_requests(args: Arguments, api_plugin: 'ApiPluginBase') -> AsyncGen
     async def _generate_from_dataset():
         """Generate requests by cycling through a dataset."""
         message_generator = DatasetRegistry.get_class(args.dataset)(args)
-        dataset_messages = []
+        # Re-read: dataset plugins may adjust args.number / args.warmup_num.
+        total_count = args.total_count
+        warmup_count = args.warmup_count
+        supports_parallel_generation = message_generator.supports_parallel_message_generation(total_count)
+        dataset_generation_workers = resolve_dataset_generation_workers(
+            args=args,
+            total_count=total_count,
+            supports_parallel_generation=supports_parallel_generation,
+        )
+        dataset_messages: List = []
 
-        # Load dataset messages into memory (limited by total_count).
-        with tqdm(
-            message_generator.build_messages(),
-            desc='Generating[requests]',
-            total=total_count,
-            initial=1,
-            logger=logger
-        ) as pbar:
-            for messages in pbar:
-                dataset_messages.append(messages)
-                if len(dataset_messages) >= total_count:
-                    break
+        if dataset_generation_workers > 1:
+            logger.info(f'Using {dataset_generation_workers} workers for CPU-bound request generation.')
+            dataset_messages = message_generator.build_messages_parallel(
+                total_count=total_count,
+                workers=dataset_generation_workers,
+            )
+        else:
+            # Load dataset messages into memory (limited by total_count).
+            with tqdm(
+                message_generator.build_messages(),
+                desc='Generating[requests]',
+                total=total_count,
+                initial=0,
+                logger=logger,
+            ) as pbar:
+                for messages in pbar:
+                    dataset_messages.append(messages)
+                    if len(dataset_messages) >= total_count:
+                        break
 
         if not dataset_messages:
             raise ValueError('Dataset is empty!')
@@ -72,12 +86,25 @@ async def get_requests(args: Arguments, api_plugin: 'ApiPluginBase') -> AsyncGen
         dataset_index = 0
         num_messages = len(dataset_messages)
 
+        # Guard against an infinite loop: if build_request returns None for a whole
+        # pass over the dataset, no request will ever be produced, so abort instead
+        # of spinning forever (count would never advance).
+        consecutive_skips = 0
+
         while count < total_count:
             messages = dataset_messages[dataset_index]
             request = api_plugin.build_request(messages)
             if request is not None:
                 yield request, count < warmup_count
                 count += 1
+                consecutive_skips = 0
+            else:
+                consecutive_skips += 1
+                if consecutive_skips >= num_messages:
+                    raise ValueError(
+                        f'{type(api_plugin).__name__}.build_request() returned None for every one of '
+                        f'the {num_messages} dataset message(s); no request could be generated.'
+                    )
             dataset_index = (dataset_index + 1) % num_messages
 
     # Dispatch based on arguments.
@@ -93,6 +120,30 @@ async def get_requests(args: Arguments, api_plugin: 'ApiPluginBase') -> AsyncGen
     # consecutive dispatches rather than during pre-collection.
     async for request, is_warmup in generator:
         yield request, is_warmup
+
+
+def _log_warmup_handoff(args: Arguments) -> None:
+    """Warn when warmup cannot keep the start-up burst out of the measured window."""
+    parallel = args.parallel
+    warmup_count = args.warmup_count
+
+    if parallel <= 1 or warmup_count >= parallel:
+        return
+
+    if warmup_count == 0:
+        reason = f'Warmup is disabled, so the first {parallel} requests are released at once'
+    else:
+        uncovered = parallel - warmup_count
+        reason = (
+            f'Warmup covers only {warmup_count} of the {parallel} concurrency slots, so '
+            f'{uncovered} measured requests are released at once alongside it'
+        )
+
+    logger.warning(
+        f'{reason} against an idle server. Their TTFT carries the start-up burst and can dominate '
+        f'the reported percentiles. Pass --warmup-num {parallel} to keep that burst out of the '
+        f'measured window, or {2 * parallel} if you also read the max column.'
+    )
 
 
 @exception_handler
@@ -116,29 +167,25 @@ async def run_benchmark(
 
     await connect_test(args, api_plugin)
 
+    if not args.open_loop:
+        _log_warmup_handoff(args)
+
     if args.open_loop:
         queue: asyncio.Queue = asyncio.Queue()
     else:
         queue = asyncio.Queue(maxsize=max(1, args.parallel * args.queue_size_multiplier))
 
-    data_process_completed_event.clear()
-
     client = AioHttpClient(args, api_plugin)
     async with client:
-        statistic_task = asyncio.create_task(statistic_benchmark_metric(queue, args, api_plugin))
-
         request_gen = get_requests(args, api_plugin)
         if args.open_loop:
             strategy = OpenLoopStrategy(args, api_plugin, client, queue, request_gen)
         else:
             strategy = ClosedLoopStrategy(args, api_plugin, client, queue, request_gen)
 
-        await strategy.run()
-
-        await queue.join()
-        data_process_completed_event.set()
-
-        metrics, trace_summary, workload_timeline, result_db_path = await statistic_task
+        metrics, trace_summary, workload_timeline, result_db_path = await run_benchmark_pipeline(
+            strategy.run(), queue, args, api_plugin
+        )
 
     return summary_result(
         args,

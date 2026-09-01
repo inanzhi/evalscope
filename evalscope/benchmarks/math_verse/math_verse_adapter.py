@@ -5,7 +5,7 @@ from evalscope.api.benchmark import BenchmarkMeta, VisionLanguageAdapter
 from evalscope.api.dataset import Sample
 from evalscope.api.messages import ChatMessageUser, Content, ContentImage, ContentText
 from evalscope.api.registry import register_benchmark
-from evalscope.constants import Tags
+from evalscope.constants import ScoringPolicy, Tags
 from evalscope.utils.io_utils import bytes_to_base64
 from evalscope.utils.logger import get_logger
 
@@ -64,22 +64,18 @@ MathVerse is an all-around visual math benchmark designed for equitable and in-d
 - Results reported per problem version for detailed analysis
 """,
         subset_list=SUBSET_LIST,
-        metric_list=[{
-            'acc': {
-                'numeric': True
-            }
-        }],
+        metric_list=[{'acc': {'numeric': True}}],
         default_subset='testmini',
         eval_split='testmini',
         prompt_template=OPEN_PROMPT,
     )
 )
 class MathVerseAdapter(VisionLanguageAdapter):
+    scoring_policy = ScoringPolicy.JUDGE_DEFAULT
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.reformat_subset = True
-        self._use_llm_judge = True
 
     def record_to_sample(self, record: Dict[str, Any]) -> Sample:
         """
@@ -130,6 +126,6 @@ class MathVerseAdapter(VisionLanguageAdapter):
         )
 
     def extract_answer(self, prediction: str, task_state):
-        from evalscope.metrics.math_parser import extract_answer
+        from evalscope.metrics.math.parser import extract_answer
 
         return extract_answer(prediction)

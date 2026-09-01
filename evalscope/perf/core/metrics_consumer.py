@@ -1,8 +1,9 @@
 import asyncio
 import json
 import sqlite3
-from tqdm import tqdm as tqdm_std
 from typing import TYPE_CHECKING, Tuple
+
+from tqdm import tqdm as tqdm_std
 
 from evalscope.constants import HEARTBEAT_INTERVAL_SEC
 from evalscope.perf.arguments import Arguments
@@ -21,16 +22,13 @@ if TYPE_CHECKING:
 
 logger = get_logger()
 
-# Global event signalling that all requests have been dispatched and the
-# metrics consumer should flush remaining items and exit.
-data_process_completed_event = asyncio.Event()
-
 
 @exception_handler
 async def statistic_benchmark_metric(
     benchmark_data_queue: asyncio.Queue,
     args: Arguments,
     api_plugin: 'ApiPluginBase',
+    completed_event: asyncio.Event,
 ) -> Tuple['MetricsAccumulator', 'TraceLevelSummary', 'WorkloadTimeline', str]:
     """Consume benchmark results from the queue, update metrics, and persist to DB.
 
@@ -38,6 +36,7 @@ async def statistic_benchmark_metric(
         benchmark_data_queue: Queue populated by request workers.
         args: Benchmark configuration.
         api_plugin: API plugin used to finalise token counts.
+        completed_event: Per-benchmark signal indicating that production has finished.
 
     Returns:
         Tuple of ``(metrics_accumulator_result, trace_level_summary, workload_timeline, result_db_path)``.
@@ -61,7 +60,8 @@ async def statistic_benchmark_metric(
 
         cur_run_name = (
             f'rate_{args.rate}_number_{args.number}'
-            if args.open_loop else f'parallel_{args.parallel}_number_{args.number}'
+            if args.open_loop
+            else f'parallel_{args.parallel}_number_{args.number}'
         )
 
         # Warmup bar
@@ -79,7 +79,7 @@ async def statistic_benchmark_metric(
             log_interval=HEARTBEAT_INTERVAL_SEC,
             track_progress=True,
         ) as pbar:
-            while not (data_process_completed_event.is_set() and benchmark_data_queue.empty()):
+            while not (completed_event.is_set() and benchmark_data_queue.empty()):
                 try:
                     benchmark_data = await asyncio.wait_for(benchmark_data_queue.get(), timeout=0.1)
                 except asyncio.TimeoutError:
@@ -92,12 +92,16 @@ async def statistic_benchmark_metric(
                         continue
                     if _warmup_pbar:
                         _warmup_pbar.update(1)
+                        # Closed-loop hands the concurrency slots over to the
+                        # measured portion before the trailing warmup responses
+                        # arrive, so warmup and measured items interleave here.
+                        # Close on the completion count instead of on the first
+                        # measured item, otherwise the remaining warmup updates
+                        # would be dropped and the bar left unfinished.
+                        if _warmup_pbar.n >= warmup_count:
+                            _warmup_pbar.close()
+                            _warmup_pbar = None
                     continue
-
-                # First benchmark item — close the warmup bar so it disappears.
-                if _warmup_pbar:
-                    _warmup_pbar.close()
-                    _warmup_pbar = None
 
                 # Update accumulator and write to DB immediately.
                 accumulator.update(benchmark_data, api_plugin)
@@ -114,11 +118,16 @@ async def statistic_benchmark_metric(
                     await asyncio.to_thread(con.commit)
                     processed_since_commit = 0
 
-                message = accumulator.to_result().create_message(api_type=args.api)
-
-                await asyncio.to_thread(maybe_log_to_visualizer, args, message)
+                # Snapshot metrics and ship them to the visualizer off the event
+                # loop.  Skipped entirely when no visualizer is configured (the
+                # default): building the message for every request would be
+                # pure per-request overhead.
+                if args.visualizer:
+                    message = accumulator.to_result().create_message(api_type=args.api)
+                    await asyncio.to_thread(maybe_log_to_visualizer, args, message)
 
                 if int(accumulator.n_total) % args.log_every_n_query == 0:
+                    message = accumulator.to_result().create_message(api_type=args.api)
                     msg = json.dumps(message, ensure_ascii=False, indent=2)
                     logger.info(msg)
 
@@ -130,6 +139,12 @@ async def statistic_benchmark_metric(
                 if not benchmark_data.is_last_turn and benchmark_data.input_num_turns > 0:
                     continue
                 pbar.update(1)
+
+        # Safety net: close the warmup bar if some warmup responses never
+        # arrived (e.g. the run was cut short), so it does not linger.
+        if _warmup_pbar:
+            _warmup_pbar.close()
+            _warmup_pbar = None
 
         await asyncio.to_thread(con.commit)
 
