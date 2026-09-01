@@ -16,7 +16,7 @@
 
 defaults:
   cmmlu:
-    limit: null                 # null/省略 = 全量跑；填 50 做快速冒烟
+    limit: 50                   # 每个学科子集的样本数（cmmlu 共 67 个子集）；50=每子集50、共3350样本；null=每子集全量
     eval_batch_size: 8
     generation_config:
       temperature: 0

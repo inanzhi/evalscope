@@ -51,7 +51,7 @@ models:
 ```
 
 - `api_key` 自己填、别贴聊天；`credentials.yaml` 已在 `.gitignore`，不会进 git。
-- 想快速冒烟：把 `defaults.cmmlu.limit` 改成 `50`。
+- cmmlu 默认 `limit: 50`（每子集 50、共 3350 样本）；想全量跑改成 `null`。注意：cmmlu 的 `limit` 是「每个学科子集」的样本数（共 67 个子集），`50` 不是总共 50 个。
 
 ## 执行流程
 
@@ -101,7 +101,7 @@ models:
   - `cmmlu.generation_config.extra_body`（如 glm-5.2 用 `thinking: {type: disabled}`）
   - `humaneval_plus.generation_config.extra_body`（如 `reasoning_effort: low`）
   - `longalpaca.extra_args`（注入请求体的非原生字段）
-  - `cmmlu.limit`：`null`/省略 = 全量跑（对比报告需要全量）；填 `50` 做快速冒烟。
+  - `cmmlu.limit`：**每个学科子集**的样本数（cmmlu 共 67 个子集）。默认 `50` = 每子集 50、共 3350 个样本；`null`/省略 = 每子集全量。
 - `swe.dataset_offset` 默认 `10`、`swe.session_cache` 默认 `off`（`on` → 加 `--multi-turn-session-cache`）。
 - `swe.dataset_path` 默认 `auto`：`dataset_offset==0` 用 `outputs/agentic_dataset.json`，否则 `outputs/agentic_pool.json`。
 - **推理模型限长（可选）**：默认都用 `max_tokens`。想连 reasoning 一起限长：`swe` / `longalpaca`（perf）可改用 `max_completion_tokens`（优先于 `max_tokens`）；`cmmlu` / `humaneval_plus`（eval）没有该字段，改在 `generation_config.extra_body` 里写 `max_completion_tokens`、同时删掉顶层 `max_tokens`。配置模板里已留注释示例。
