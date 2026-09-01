@@ -255,6 +255,9 @@ def main() -> int:
     parser.add_argument('--skip', default='', help='Comma-separated model names to skip.')
     parser.add_argument('--manifest', default='runs_manifest.json', help='Output manifest path (relative to repo root).')
     parser.add_argument('--log-dir', default='logs/eval-compare', help='Directory for per-run log files.')
+    parser.add_argument('--order', default='benchmark', choices=['benchmark', 'model'],
+                        help='Execution order: "benchmark" runs every model per benchmark (fairer for perf comparison); '
+                             '"model" runs all benchmarks per model (legacy).')
     args = parser.parse_args()
 
     defaults, models = load_config(args.config)
@@ -270,6 +273,8 @@ def main() -> int:
         except (json.JSONDecodeError, KeyError, TypeError):
             existing = {}
 
+    # Build filtered entries (cfg + per-model record) once, independent of execution order.
+    entries: list[tuple[dict, dict[str, Any]]] = []
     results: list[dict[str, Any]] = []
     for entry in models:
         cfg = entry_cfg(defaults, entry)
@@ -279,42 +284,46 @@ def main() -> int:
         if cfg['model'] in skip:
             continue
 
-        if args.dry_run:
-            for section in SECTIONS:
-                print(f"[{mid}/{section}] " + ' '.join(redact_key(BUILDERS[section](cfg, args.cmd))))
-            continue
-
         record = existing.get(mid, {}).copy()
         record.update({'model': cfg['model'], 'vendor': cfg['vendor'],
                        'label': cfg['label'], 'model_id': mid})
         record.setdefault('runs', {})
+        entries.append((cfg, record))
         results.append(record)
 
-        for section in SECTIONS:
-            cmd = BUILDERS[section](cfg, args.cmd)
-            log_path = ROOT / args.log_dir / f'{mid}_{section}.log'
-            if not args.force and record['runs'].get(section, {}).get('status') == 'ok':
-                print(f'[SKIP] {mid}/{section} (already done)')
-                continue
-            start = time.time()
-            rc = run_command(cmd, log_path)
-            elapsed = time.time() - start
-            marker = newest_match(marker_patterns(cfg, section), start)
-            run_rec: dict[str, Any] = {'status': 'ok' if rc == 0 else f'fail(rc={rc})',
-                                       'elapsed': round(elapsed, 1)}
-            if marker:
-                if section in ('cmmlu', 'humaneval_plus'):
-                    run_rec['json'] = marker
-                elif section == 'longalpaca':
-                    run_rec['dir'] = str(Path(marker).parent.parent)
-                else:
-                    run_rec['dir'] = str(Path(marker).parent)
-            record['runs'][section] = run_rec
-            print(f"[{mid}/{section}] {run_rec['status']} ({elapsed:.1f}s) -> {marker or 'no marker found'}")
-            _write_manifest(manifest_path, results)
+    if args.order == 'benchmark':
+        work = [(cfg, record, section) for section in SECTIONS for cfg, record in entries]
+    else:
+        work = [(cfg, record, section) for cfg, record in entries for section in SECTIONS]
 
     if args.dry_run:
+        for cfg, _record, section in work:
+            print(f"[{cfg['model_id']}/{section}] " + ' '.join(redact_key(BUILDERS[section](cfg, args.cmd))))
         return 0
+
+    for cfg, record, section in work:
+        mid = cfg['model_id']
+        cmd = BUILDERS[section](cfg, args.cmd)
+        log_path = ROOT / args.log_dir / f'{mid}_{section}.log'
+        if not args.force and record['runs'].get(section, {}).get('status') == 'ok':
+            print(f'[SKIP] {mid}/{section} (already done)')
+            continue
+        start = time.time()
+        rc = run_command(cmd, log_path)
+        elapsed = time.time() - start
+        marker = newest_match(marker_patterns(cfg, section), start)
+        run_rec: dict[str, Any] = {'status': 'ok' if rc == 0 else f'fail(rc={rc})',
+                                   'elapsed': round(elapsed, 1)}
+        if marker:
+            if section in ('cmmlu', 'humaneval_plus'):
+                run_rec['json'] = marker
+            elif section == 'longalpaca':
+                run_rec['dir'] = str(Path(marker).parent.parent)
+            else:
+                run_rec['dir'] = str(Path(marker).parent)
+        record['runs'][section] = run_rec
+        print(f"[{mid}/{section}] {run_rec['status']} ({elapsed:.1f}s) -> {marker or 'no marker found'}")
+        _write_manifest(manifest_path, results)
 
     _write_manifest(manifest_path, results)
     print(f'\nManifest written to {manifest_path}')

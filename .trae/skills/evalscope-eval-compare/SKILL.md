@@ -8,7 +8,7 @@ description: "给定 url/api_key/模型名/厂商后缀，生成并顺序执行 
 一个 (模型 × 厂商) 条目只给 5 个字段：`url`、`api_key`、`model`、`vendor`、`label`，
 本 skill 负责生成全部命令、**严格串行**执行、并在跑完后按模板生成 HTML 对比报告。
 
-每个条目依次跑 4 条命令：
+每个条目跑 4 条命令（默认 `--order benchmark` 按评测项维度跨条目执行、更利于对比公平；`--order model` 则按条目依次跑完）：
 
 | 顺序 | 评测项 | 命令来源 | 产出 |
 | --- | --- | --- | --- |
@@ -19,7 +19,7 @@ description: "给定 url/api_key/模型名/厂商后缀，生成并顺序执行 
 
 ## 输入契约
 
-每个条目 5 个字段（可一次多个条目，全部顺序执行）。**`api_key` 是敏感信息：请让用户自己写进本地 YAML，不要让他贴到聊天里**；`model` / `vendor` / `label` / `url` 可由用户口头/聊天提供、agent 代填 YAML，`api_key` 留占位符待用户填。
+每个条目 5 个字段（可一次多个条目，串行执行，顺序见 `--order`）。**`api_key` 是敏感信息：请让用户自己写进本地 YAML，不要让他贴到聊天里**；`model` / `vendor` / `label` / `url` 可由用户口头/聊天提供、agent 代填 YAML，`api_key` 留占位符待用户填。
 
 | 字段 | 说明 | 示例 |
 | --- | --- | --- |
@@ -94,6 +94,7 @@ models:
 | `--cmd` | `evalscope` | 基础命令；用 `.venv` 时设为 `.venv/Scripts/evalscope`（Windows） |
 | `--dry-run` | 关 | 只打印命令不执行 |
 | `--force` | 关 | 强制重跑已完成的项 |
+| `--order` | `benchmark` | 执行顺序：`benchmark`=按评测项逐个跑所有模型（对比更公平）；`model`=按模型逐个跑完所有评测项（旧行为） |
 | `--only` / `--skip` | 全部 | 按模型名过滤 |
 | `--manifest` | `runs_manifest.json` | 产物路径清单输出 |
 | `--log-dir` | `logs/eval-compare` | 每条日志目录 |
