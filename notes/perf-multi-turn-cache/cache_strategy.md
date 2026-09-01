@@ -63,65 +63,80 @@ python scripts/perf/build_swe_smith_dataset.py \
 ```
 > 两份务必用**相同的轮长/轮数参数**生成，保证小集和大池子里的对话同构、可比（凑不齐长度的会被丢弃，所以实际条数会略少于 `--number`）。
 
-### Step 2: 编写单例运行脚本 (`scripts/perf/run_perf_one.py`)
-因为多轮测试参数多且复杂，推荐使用 Python 脚本固定公共参数，每次只改顶部几行：
+### Step 2: 直接用原生 `evalscope perf --multi-turn` 命令
 
-```python
-# ===== 每次只需改这里的变量 =====
-model = 'deepseek-v3.2'
-url = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'
-multi_turn_session_cache = False  # 腾讯云设为 True，阿里百炼设为 False
-dataset_offset = 0                # 同模型复测时，每次加 10
+多轮压测已不再维护单例脚本，全部参数走原生 CLI（批量/多模型可用 `.trae/skills/evalscope-eval-compare` skill 编排）：
 
-# ===== 全程固定参数（保证公平） =====
-# api='openai', dataset='swe_smith', dataset_path='outputs/agentic_dataset.json'
-# multi_turn=True, parallel=5（会话级并发，详见 Step 3.3）, number=10, max_tokens=16384
-# 生成参数（可自行修改，键名见 evalscope/perf/arguments.py）：
-#   temperature=0.0   # 采样温度；0=贪心（可复现）
-#   top_p=1.0         # 核采样；temperature=0 时为空操作，留作可调旋钮
-#   extra_args={'reasoning_effort': 'high'} 或者 {'thinking': {'type': 'enabled'}} (Kimi 等) # 思考档位；非原生字段，走 extra_args 注入请求体。非推理模型请删掉
+```bash
+evalscope perf \
+  --url <厂商 chat/completions 端点> \
+  --api-key <key> \
+  --model <待测模型名> \
+  --dataset swe_smith \
+  --dataset-path outputs/agentic_dataset.json \
+  --dataset-offset 0 \
+  --multi-turn \
+  --parallel 5 --number 10 \
+  --max-tokens 16384 --seed 42 --temperature 1.0 --top-p 0.95 \
+  --stream \
+  --extra-args '{"reasoning_effort":"low"}' \
+  --read-timeout 300 --no-test-connection \
+  --name swe_<model>_<vendor>_offset-0_cache-off
 ```
 
-> **不传时 perf 的内部默认（[arguments.py](../../evalscope/perf/arguments.py#L281)）**：硬默认 `temperature=0.0`、`max_tokens=2048`、`stream=True`、`total_timeout=6h`；`top_p` / `top_k` / `seed` / `reasoning_effort` 默认 `None` → **不发送**，由服务端自有默认决定。脚本里显式写 `max_tokens=16384`、`seed=42`、`extra_args` 就是为覆盖这些默认、锁死可复现。
+关键固定参数（保证跨厂商公平，别动）：
+- `--dataset swe_smith` + `--dataset-path outputs/agentic_dataset.json`：读预生成的统一 JSON；
+- `--multi-turn`、`--parallel 5`、`--number 10`、`--max-tokens 16384`、`--seed 42`、`--temperature 1.0`、`--top-p 0.95`；
+- `--extra-args`：推理模型注入思考档位（`{"reasoning_effort":"low"}` 或 `{"thinking":{"type":"enabled"}}`），非推理模型删掉；
+- `--multi-turn-session-cache`：腾讯云等需显式 Session 路由的厂商加这个参数；阿里百炼（隐式缓存）不加。
+
+> **不传时 perf 的内部默认（[arguments.py](../../evalscope/perf/arguments.py#L281)）**：硬默认 `temperature=0.0`、`max_tokens=2048`、`stream=True`、`total_timeout=6h`；`top_p` / `top_k` / `seed` / `reasoning_effort` 默认 `None` → **不发送**，由服务端自有默认决定。上面显式写 `max_tokens=16384`、`seed=42`、`extra_args` 就是为覆盖这些默认、锁死可复现。
 
 ### Step 3: 执行与指标验收
-执行 `python scripts/perf/run_perf_one.py`，查看跑出的结果。
+执行上面的 `evalscope perf --multi-turn` 命令，查看跑出的结果。
 
 ### Step 3.1: 小集 vs 大池子——什么时候用哪个、命令怎么写
 
-`run_perf_one.py` 的**第二个参数 `offset` 会自动决定用哪份数据**，你不用手动改 `--dataset-path`：
+`--dataset-offset` 的取值决定用哪份数据（小集还是大池子），同时决定落盘目录名：
 
-| 用途 | offset | 自动选用的数据 | 落盘目录 |
+| 用途 | offset | 数据 | 落盘目录 |
 | --- | --- | --- | --- |
-| **横向对比**不同厂商/模型（第一把都用它，绝对公平） | `0`（默认，不传） | 小集 `outputs/agentic_dataset.json`（10 条） | `results/<profile>_cache-{on/off}` |
-| **复测同一(模型,厂商)** 取平均（防残留缓存让命中率虚高） | `>0` | 大池子 `outputs/agentic_pool.json`（近万条） | `results/<profile>_offset-<N>_cache-{on/off}` |
+| **横向对比**不同厂商/模型（第一把都用它，绝对公平） | `0` | 小集 `outputs/agentic_dataset.json`（10 条） | `outputs/<ts>/swe_<model_id>_offset-0_cache-off/` |
+| **复测同一(模型,厂商)** 取平均（防残留缓存让命中率虚高） | `>0` | 大池子 `outputs/agentic_pool.json`（近万条） | `outputs/<ts>/swe_<model_id>_offset-<N>_cache-off/` |
 
-> 目录尾巴的 `_cache-on` / `_cache-off` 记录的是本次 `session_cache`（Session 缓存路由注入）的**实际生效状态**，让同一模型「开缓存 / 关缓存」两种跑法各自落盘、互不覆盖。
+> `--name` 尾巴的 `_cache-on` / `_cache-off` 记录本次 `--multi-turn-session-cache` 的**实际生效状态**（加了该 flag 就是 on、没加是 off），让「开缓存 / 关缓存」两种跑法各自落盘、互不覆盖。
 
-**① 横向对比（小集）——不传 offset：**
+**① 横向对比（小集）——offset=0：**
 ```powershell
-python scripts/perf/run_perf_one.py deepseek-v4-pro_tencent
+evalscope perf --url <url> --api-key <key> --model deepseek-v4-pro `
+  --dataset swe_smith --dataset-path outputs/agentic_dataset.json --dataset-offset 0 `
+  --multi-turn --parallel 5 --number 10 --max-tokens 16384 --seed 42 --temperature 1.0 --top-p 0.95 `
+  --stream --extra-args '{"reasoning_effort":"low"}' --read-timeout 300 --no-test-connection `
+  --name swe_deepseek-v4-pro_tencent_offset-0_cache-off
 ```
 
-**② 复测同模型（大池子）——传 offset > 0：**
-每轮跑 `number=10` 条，从 offset 起取 10 条（`offset .. offset+9`）。复测时每次 **+10** 取完全不重叠的新一批：
+**② 复测同模型（大池子）——offset > 0：**
+每轮跑 `number=10` 条，从 offset 起取 10 条（`offset .. offset+9`）。复测时每次 **+10** 取完全不重叠的新一批（`--dataset-path` 换成 `outputs/agentic_pool.json`）：
 ```powershell
-python scripts/perf/run_perf_one.py deepseek-v4-pro_tencent 10   # 第 10~19 条 → results/...-off10
-python scripts/perf/run_perf_one.py deepseek-v4-pro_tencent 20   # 第 20~29 条 → results/...-off20
-python scripts/perf/run_perf_one.py deepseek-v4-pro_tencent 30   # 第 30~39 条 → results/...-off30
+evalscope perf --url <url> --api-key <key> --model deepseek-v4-pro `
+  --dataset swe_smith --dataset-path outputs/agentic_pool.json --dataset-offset 10 `
+  --multi-turn --parallel 5 --number 10 --max-tokens 16384 --seed 42 --temperature 1.0 --top-p 0.95 `
+  --stream --extra-args '{"reasoning_effort":"low"}' --read-timeout 300 --no-test-connection `
+  --name swe_deepseek-v4-pro_tencent_offset-10_cache-off
 ```
 
-- offset **必须 > 0** 才会切到大池子（`=0` 会退回小集）；取 **10 的倍数** 才能整批不重叠。
+- offset **必须 > 0** 才切到大池子（`=0` 用回小集）；取 **10 的倍数** 才能整批不重叠。
 - 上限 `offset + 10 ≤ 池子条数`（当前 9549），即 offset 最大约 **9539**，够测几百轮互不蹭缓存。
 - ⚠️ **铁律**：不同厂商/模型**横向对比时绝不要换 offset**，都用小集（offset=0）才最公平；只有**同一(模型,厂商)复测取平均**时才换 offset。
 
-**③ 临时开关 session_cache（第 3 个参数）——同模型对比开 / 关缓存：**
-`session_cache` 默认取 `VENDORS[厂商]` 里登记的值（腾讯云 `False`、阿里百炼 `True`）；想在不改代码的前提下临时翻转，传**第 3 个参数** `on`/`off`（`on/1/true/yes` 为开，其余为关）。生效状态会写进目录尾巴 `_cache-on` / `_cache-off`，两种跑法各自落盘：
+**③ 开关 session_cache——同模型对比开 / 关缓存：**
+默认**关**（不加 `--multi-turn-session-cache`）。要测「开缓存」就在命令里加 `--multi-turn-session-cache`，并把 `--name` 尾巴写成 `_cache-on`，两种跑法各自落盘：
 ```powershell
-python scripts/perf/run_perf_one.py deepseek-v4-pro_tencent 0 on    # 强开  → results/deepseek-v4-pro_tencent_cache-on
-python scripts/perf/run_perf_one.py deepseek-v4-pro_tencent 0 off   # 强关  → results/deepseek-v4-pro_tencent_cache-off
+# 开缓存（腾讯云等需显式 Session 路由）
+... --multi-turn-session-cache --name swe_deepseek-v4-pro_tencent_offset-0_cache-on
+# 关缓存
+... --name swe_deepseek-v4-pro_tencent_offset-0_cache-off
 ```
-> 第 3 个参数省略时即用厂商登记的默认值；要传它就得把第 2 个 offset 参数也占上位（不复测就填 `0`）。
 
 ### Step 3.2: `number=10` 到底发了多少次请求？（别被"10"骗了）
 
@@ -151,7 +166,7 @@ python scripts/perf/run_perf_one.py deepseek-v4-pro_tencent 0 off   # 强关  �
 合计 = 6+10+8+11+11+10+5+9+5+4 = 79 次串行请求
 ```
 
-所以"跑 10 条"≈ **跑 79 次请求**。在 JSON 里这体现为：每条会话是个**列表**，列表里有几个元素（每个元素 `{messages, prompt_tokens}`）就代表要发几次请求。叠加 `reasoning_effort='high'`（深度思考几十秒~分钟）、`max_tokens=16384`（长输出）、每轮上万 token 的长 prefill，慢是必然的。
+所以"跑 10 条"≈ **跑 79 次请求**。在 JSON 里这体现为：每条会话是个**列表**，列表里有几个元素（每个元素 `{messages, prompt_tokens}`）就代表要发几次请求。叠加 `reasoning_effort='low'`（推理输出）、`max_tokens=16384`（长输出）、每轮上万 token 的长 prefill，慢是必然的。
 
 ### Step 3.3: 会话级并发（`parallel`）——想跑快点看这里
 
@@ -173,16 +188,16 @@ python scripts/perf/run_perf_one.py deepseek-v4-pro_tencent 0 off   # 强关  �
 - **只关心缓存命中率** → 放心调大 `parallel`，结果一样还快很多。
 - **要测单点延迟并和其它厂商横向对比** → 必须**所有厂商用同一个 `parallel` 档**，否则延迟数不可比。
 
-> 改 `parallel` 改的是 `run_perf_one.py` 里 `FIXED` 的那一行；正在运行的进程不受影响，需**重启命令**才生效。
+> 改 `parallel` 改的是命令里的 `--parallel` 参数；正在运行的进程不受影响，需**重启命令**才生效。
 
 ---
 
 ## 4. 进阶答疑与避坑指南
 
 ### 4.1 避坑指南
-1. **别用 `ignore_eos`**：多轮长文本下，云厂商普遍不支持强行忽略结束符，改用 `{"reasoning_effort":"high"}` 并配合足够大的 `--max-tokens`（如 16384）让其自然输出即可。
+1. **别用 `ignore_eos`**：多轮长文本下，云厂商普遍不支持强行忽略结束符，改用 `{"reasoning_effort":"low"}` 并配合足够大的 `--max-tokens`（如 16384）让其自然输出即可。
 2. **`--api openai` 是铁律**：测试 DashScope 或腾讯云的兼容接口时，必须用 `--api openai` 才能保证自定义的 Extra Args 和注入字段不被丢弃。
-3. **换厂商必须换输出目录**：保证 `results/` 目录下各模型各厂商的 JSON 不被覆盖。
+3. **换厂商必须换 `--name`**：保证 `outputs/` 目录下各模型各厂商的结果互不覆盖（`--name` 里带上 `<model>_<vendor>`）。
 
 ### 4.2 数据集生成的随机性与对齐（控制变量的核心）
 **问：每次测试的 `--min-turns 4 --max-turns 12` 包含随机性，对比不同模型时，实际执行的轮次能保证一致吗？**

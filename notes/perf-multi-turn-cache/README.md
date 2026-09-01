@@ -170,7 +170,7 @@ curl $URL/v1/chat/completions -H "Authorization: Bearer $KEY" \
 
 ## 8. 跨云/跨模型对比实验（方案 B：一次 run 内自动注入 session-id）
 
-> 场景：对比 **阿里百炼** 与 **腾讯云** 的 DeepSeek 系列（v4-pro / v4-flash / v3.2），OpenAI 兼容接口，全部开深度思考，用 `swe_smith` 测多轮缓存命中率。不需要并发（`--parallel 1`）。
+> 场景：对比 **阿里百炼** 与 **腾讯云** 的 DeepSeek 系列（v4-pro / v4-flash / v3.2），OpenAI 兼容接口，全部开推理（`reasoning_effort`），用 `swe_smith` 测多轮缓存命中率。不需要并发（`--parallel 1`）。
 
 ### 8.1 概念对齐：一条对话 = 一个 Session
 
@@ -308,25 +308,25 @@ $common = @(
   "--dataset","swe_smith","--dataset-path","outputs/agentic_dataset.json",
   "--multi-turn","--parallel","1","--number","10",
   "--max-tokens","16384","--seed","42","--temperature","0","--top-p","1.0","--stream",
-  "--extra-args",'{"reasoning_effort":"high"}',   # reasoning_effort 非原生字段，走 extra-args 注入请求体；非推理模型删掉这行
+  "--extra-args",'{"reasoning_effort":"low"}',   # reasoning_effort 非原生字段，走 extra-args 注入请求体；非推理模型删掉这行
   "--read-timeout","300",          # 读超时 300s：reasoning=high 单轮常需数十秒~分钟，60s 会误杀
   "--no-timestamp","--no-test-connection"
 )
 
 # 腾讯云三个：加 --multi-turn-session-cache，session-id / prompt_cache_key 由代码按对话自动注入
 # --name / --outputs-dir 都带「厂商-模型」：同一款模型在不同厂商跑时输出与结果名各自唯一，绝不撞车
-evalscope perf --model deepseek-v4-pro   --url $tencentUrl --api-key $env:TENCENT_API_KEY  @common --multi-turn-session-cache --name tencent-v4pro   --outputs-dir results/tencent-v4pro
-evalscope perf --model deepseek-v4-flash --url $tencentUrl --api-key $env:TENCENT_API_KEY  @common --multi-turn-session-cache --name tencent-v4flash --outputs-dir results/tencent-v4flash
-evalscope perf --model deepseek-v3.2     --url $tencentUrl --api-key $env:TENCENT_API_KEY  @common --multi-turn-session-cache --name tencent-v32    --outputs-dir results/tencent-v32
+evalscope perf --model deepseek-v4-pro   --url $tencentUrl --api-key $env:TENCENT_API_KEY  @common --multi-turn-session-cache --name tencent-v4pro   --outputs-dir outputs/tencent-v4pro
+evalscope perf --model deepseek-v4-flash --url $tencentUrl --api-key $env:TENCENT_API_KEY  @common --multi-turn-session-cache --name tencent-v4flash --outputs-dir outputs/tencent-v4flash
+evalscope perf --model deepseek-v3.2     --url $tencentUrl --api-key $env:TENCENT_API_KEY  @common --multi-turn-session-cache --name tencent-v32    --outputs-dir outputs/tencent-v32
 # 阿里百炼一个：无此类字段，不加 flag（加了也无害，未知字段被忽略）
-evalscope perf --model deepseek-v3.2     --url $bailianUrl --api-key $env:DASHSCOPE_API_KEY @common --name bailian-v32    --outputs-dir results/bailian-v32
+evalscope perf --model deepseek-v3.2     --url $bailianUrl --api-key $env:DASHSCOPE_API_KEY @common --name bailian-v32    --outputs-dir outputs/bailian-v32
 ```
 
 **参数三层分类：**
 
 | 层级 | 参数 |
 |---|---|
-| 全程固定（保证一致） | `--dataset-path`、`--seed 42`、`--parallel 1`、`--number 10`、`--max-tokens`、`--temperature 0`、`--top-p 1.0`、`reasoning_effort high`、`--multi-turn` |
+| 全程固定（保证一致） | `--dataset-path`、`--seed 42`、`--parallel 1`、`--number 10`、`--max-tokens`、`--temperature 0`、`--top-p 1.0`、`reasoning_effort low`、`--multi-turn` |
 | 随被测对象变 | `--model`、`--url`、`--api-key`、`--name`（带厂商-模型）、`--outputs-dir`（带厂商-模型） |
 | 开关触发（代码注入） | `--multi-turn-session-cache` → 自动注入 `X-Session-ID` / `prompt_cache_key` = `{model}-{trace_id}` |
 
@@ -340,8 +340,8 @@ evalscope perf --model deepseek-v3.2     --url $bailianUrl --api-key $env:DASHSC
 # $common / $tencentUrl / $bailianUrl 同上
 # 同一个模型，两个厂商各跑一次（两个 endpoint 缓存物理隔离，互不污染）
 # --name / --outputs-dir 都带厂商后缀：同模型跨厂商也不会撞目录、不会触发「db 已存在」退出
-evalscope perf --model deepseek-v3.2 --url $tencentUrl --api-key $env:TENCENT_API_KEY  @common --multi-turn-session-cache --name v32-tencent --outputs-dir results/v32-tencent
-evalscope perf --model deepseek-v3.2 --url $bailianUrl --api-key $env:DASHSCOPE_API_KEY @common --name v32-bailian --outputs-dir results/v32-bailian
+evalscope perf --model deepseek-v3.2 --url $tencentUrl --api-key $env:TENCENT_API_KEY  @common --multi-turn-session-cache --name v32-tencent --outputs-dir outputs/v32-tencent
+evalscope perf --model deepseek-v3.2 --url $bailianUrl --api-key $env:DASHSCOPE_API_KEY @common --name v32-bailian --outputs-dir outputs/v32-bailian
 ```
 
 - 换别的模型对比时，只改 `--model` + 对应的 `--url/--api-key/--outputs-dir`，其它一律不动。
@@ -363,46 +363,31 @@ evalscope perf --model deepseek-v3.2 --url $bailianUrl --api-key $env:DASHSCOPE_
 2. **彻底**：按 [8.5.1](#851-生成最大池子为复测用-offset-错开残留缓存) 生成大池子（P 条），每次只跑 `--number 10`，复测时加 `--dataset-offset 0 / 10 / 20 …` 取**不相交**的 10 条。
    ⚠️ **池子=跑的条数时 offset 无效**（同样 N 条只是换顺序，服务端缓存里全有）——必须 `池子 > --number` 才有用。
 
-#### 8.6.3 用 Python 脚本跑（一次一个模型，推荐）
+#### 8.6.3 用原生 CLI 跑（一次一个模型）
 
-不想写一长串 CLI、也不想四个模型挤一个脚本时，存成 `run_perf_one.py`，每次只改最上面一组：
+直接跑原生 `evalscope perf --multi-turn` 命令（`--url` / `--api-key` 显式传入）：
 
-```python
-from evalscope.perf.main import run_perf_benchmark
-from evalscope.perf.arguments import Arguments
-
-task = Arguments(
-    # ===== 每次只改这一组（随被测对象变）=====
-    model='deepseek-v3.2',
-    url='https://tokenhub.tencentmaas.com/v1/chat/completions',  # 腾讯 TencentMaaS；百炼换 dashscope compatible-mode
-    api_key='<YOUR_API_KEY>',
-    name='v32-tencent',              # 结果库名带「模型-厂商」：同模型跨厂商也唯一，不撞目录
-    outputs_dir='results/v32-tencent',
-    multi_turn_session_cache=True,   # 腾讯=True 注入 session-id；阿里百炼改 False
-    dataset_offset=0,                # 复测同一(模型,厂商)时换 10 / 20 / … 取不相交子集
-
-    # ===== 全程固定（保证公平，别动）=====
-    api='openai',
-    dataset='swe_smith',
-    dataset_path='outputs/agentic_dataset.json',
-    multi_turn=True,
-    parallel=1,
-    number=10,
-    max_tokens=16384,
-    seed=42,
-    temperature=0.0,                 # 采样温度；0=贪心（可复现）
-    top_p=1.0,                       # 核采样；temperature=0 时为空操作，留作可调旋钮
-    stream=True,
-    extra_args={'reasoning_effort': 'high'},  # 思考档位 low/medium/high；非原生字段，走 extra_args 注入请求体。非推理模型删掉此行
-    read_timeout=300,                # 读超时 300s（reasoning=high 慢，60s 会误杀）
-    no_test_connection=True,
-    no_timestamp=True,
-)
-
-run_perf_benchmark(task)
+```bash
+evalscope perf \
+  --url https://tokenhub.tencentmaas.com/v1/chat/completions \
+  --api-key '<YOUR_API_KEY>' \
+  --model deepseek-v3.2 \
+  --dataset swe_smith \
+  --dataset-path outputs/agentic_dataset.json \
+  --dataset-offset 0 \
+  --multi-turn \
+  --parallel 5 --number 10 \
+  --max-tokens 16384 --seed 42 --temperature 1.0 --top-p 0.95 \
+  --stream \
+  --extra-args '{"reasoning_effort":"low"}' \
+  --read-timeout 300 --no-test-connection \
+  --name swe_deepseek-v3.2_tencent_offset-0_cache-off
 ```
 
-跑：`python run_perf_one.py`。换厂商/模型只改最上面 6 行（`model/url/api_key/outputs_dir/multi_turn_session_cache/dataset_offset`），其余不动。`run_perf_benchmark` 也接受 `dict`（`run_perf_benchmark({...})`）。
+- 换厂商/模型：改 `--url` / `--api-key` / `--model` / `--name`（`--name` 带 `<model>_<vendor>`）；
+- 腾讯云需要显式 Session 路由 → 加 `--multi-turn-session-cache`；阿里百炼（隐式缓存）不加；
+- 复测同一(模型,厂商) → 换 `--dataset-path outputs/agentic_pool.json` + `--dataset-offset 10/20/…`；
+- 批量/多模型编排 + 出对比报告 → 用 `.trae/skills/evalscope-eval-compare` skill。
 
 ### 8.7 读取结果（两种命中率口径都能拿）
 
@@ -411,14 +396,14 @@ run_perf_benchmark(task)
 - **Per-Request 表 `Cache Hit (%)`** = **token 级全局命中率**（总 cached ÷ 总 prompt，所有对话共享累加器）
 - **Per-Trace 表 `Cache Hit Rate (%)` / `Eligible Cache Hit Rate (%)`** = 对话等权平均 + 分布
 
-落盘文件在各 `results/<模型>/`：
+落盘文件在 `outputs/<时间戳>/swe_<model_id>_offset-<N>_cache-<tag>/parallel_5_number_10/`：
 - `trace_summary.json` → 对话级命中率
 - `workload_timeline.json` → 末点 `cum_cached_prompt` / `cum_new_prompt` = **原始 token 累计总数**（token 级命中率 = `cum_cached_prompt / (cum_cached_prompt + cum_new_prompt)`）
 
-**跨 4 模型对比脚本：**
+**跨 4 模型对比脚本**（目录已改为 `outputs/<ts>/swe_<model_id>_...`，下面示例按 `outputs` 递归，仅供参考）：
 
 ```powershell
-Get-ChildItem results -Directory | ForEach-Object {
+Get-ChildItem outputs -Directory | ForEach-Object {
     $model = $_.Name
     # 对话级：平均每条对话的 Cache Hit Rate
     $traceRates = Get-ChildItem $_.FullName -Recurse -Filter trace_summary.json | ForEach-Object {
@@ -439,7 +424,7 @@ Get-ChildItem results -Directory | ForEach-Object {
 
 ### 8.8 务必确认的坑
 
-1. **深度思考字段（已确认）**：本对比统一用 `--extra-args '{"reasoning_effort":"high"}'` 开启深度思考——腾讯云与阿里百炼的 DeepSeek 兼容接口都认这个字段，四家口径一致。（仅在换其他厂商/模型时才需重新确认字段名。）
+1. **推理字段（已确认）**：本对比统一用 `--extra-args '{"reasoning_effort":"low"}'` 开启推理——腾讯云与阿里百炼的 DeepSeek 兼容接口都认这个字段，四家口径一致。（仅在换其他厂商/模型时才需重新确认字段名。）
 2. **腾讯云 URL** 以控制台为准（示例是 LKEAP 接口）。
 3. **temperature=0**：DeepSeek-R1 类推理模型常不支持，报错就删掉这两行（默认本就是 0）。
 4. **真实 vs 估算**：看 `Eligible Cache Hit Rate` 是否死磕 100.00（是=客户端估算，服务端没回传 `cached_tokens`）。四家口径一致仍可比。
@@ -460,6 +445,6 @@ Get-ChildItem results -Directory | ForEach-Object {
 | `Cache Hit (%)`（Per-Request）= token 级全局；`Cache Hit Rate / Eligible`（Per-Trace）= 对话级 | 官方指标定义逐字吻合（含"turn1 计入分母""Eligible 排除首轮+新内容"） | ✅ 一致 |
 | `--multi-turn-session-cache` 注入 `X-Session-ID` / `prompt_cache_key` | 官方**无**任何 session-id / 缓存键功能 | ✅ 这是我们新增的能力，不与现有功能重复（故做成默认关闭的开关） |
 | Python：`run_perf_benchmark(Arguments(...))` | 官方文档**只给 CLI**，无 Python 示例 | ⚠️ 我的 Python 脚本是**对照源码验证**过的（`main.py` 接受 `Arguments`/`dict`/`Namespace`），非文档原文 |
-| `reasoning_effort:"high"` 开思考、不用 `ignore_eos` | 官方示例普遍用 `ignore_eos`（vLLM 专用） | ⚠️ 有意偏离：云端不支持 `ignore_eos`，见 8.8#6 |
+| `reasoning_effort:"low"` 开思考、不用 `ignore_eos` | 官方示例普遍用 `ignore_eos`（vLLM 专用） | ⚠️ 有意偏离：云端不支持 `ignore_eos`，见 8.8#6 |
 
 **结论：** 方案与官方文档在数据集、参数语义、指标定义、API 选择上完全一致；两处有意偏离（不用 `ignore_eos`、用 Python API）均已验证可行；session 注入是文档未覆盖的新增能力。

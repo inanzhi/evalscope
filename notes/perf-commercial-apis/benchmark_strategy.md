@@ -21,7 +21,7 @@
 
 ## 3. 具体测试命令与参数详解
 
-> 下面是底层 `evalscope perf` 的原生命令，仅作原理讲解。实际跑请用封装好的 [run_longalpaca_bench.py](../../scripts/perf/run_longalpaca_bench.py)：URL 与 API Key 已集中写死在 [run_perf_one.py](../../scripts/perf/run_perf_one.py) 的 `VENDORS` 里（填一次、两脚本共用），命令里**不需要再传 `--api-key` / `--url`**，只给一个 `<模型名>_<厂商名>` 形式的 profile 即可，模型/厂商/URL/Key 全自动推导。加模型只需往脚本 `PROFILES` 列表加一行同格式字符串。
+> 下面是底层 `evalscope perf` 的原生命令（也是实际直接使用的用法，`--url` / `--api-key` 显式传入）。批量/多模型编排请用 `.trae/skills/evalscope-eval-compare` skill（写一份 YAML，依次跑 cmmlu / humaneval_plus / longalpaca / swe 并出对比报告）。
 
 ```bash
 evalscope perf \

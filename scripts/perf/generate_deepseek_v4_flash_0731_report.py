@@ -1,15 +1,12 @@
-"""Generate a five-model deepseek-v4-flash comparison report (2026-08-20).
+"""Generate a deepseek-v4-flash-0731 (阿里云 vs 腾讯云) comparison report (2026-08-20).
 
-Format strictly follows SenseChat-Character-Max-v2-Flash_腾讯云_20260623.html
-(no SWE section), with the best value in each metric column highlighted via
-the .best CSS class.
+Format follows SenseChat-Character-Max-v2-Flash_腾讯云_20260623.html plus a
+SWE-Smith multi-turn cache section (from glm5_2_cloud_comparison_report). The
+best value in each metric column is highlighted via the .best CSS class.
 
 Data sources:
-- deepseek-v4-flash-0731_aliyun  : today's (2026-08-20) outputs
-- deepseek-v4-flash-0731_tencent  : today's (2026-08-20) outputs
-- deepseek-v4-flash_aliyun        : values already in the 2026-06 report
-- deepseek-v4-flash_tencent       : values already in the 2026-06 report
-- deepseek-v4-flash-202605_tencent: values already in the 2026-06 report
+- deepseek-v4-flash-0731_aliyun  : 2026-08-20 outputs + 2026-08 results
+- deepseek-v4-flash-0731_tencent  : 2026-08-20 outputs + 2026-08 results
 """
 
 import json
@@ -22,12 +19,14 @@ ROOT = Path(r"D:\MyCodes\Trae\evalscope")
 REPORT_PATH = ROOT / "outputs" / "deepseek_v4_flash_series_comparison_report_20260820.html"
 
 MODEL_ORDER = [
-    "deepseek-v4-flash_aliyun",
-    "deepseek-v4-flash_tencent",
-    "deepseek-v4-flash-202605_tencent",
     "deepseek-v4-flash-0731_aliyun",
     "deepseek-v4-flash-0731_tencent",
 ]
+
+SWE_SOURCES = {
+    "deepseek-v4-flash-0731_aliyun": ROOT / r"results\deepseek-v4-flash-0731_aliyun_offset-10_cache-off\deepseek-v4-flash-0731_aliyun\parallel_5_number_10",
+    "deepseek-v4-flash-0731_tencent": ROOT / r"results\deepseek-v4-flash-0731_tencent_offset-10_cache-off_20260821-111256\deepseek-v4-flash-0731_tencent\parallel_5_number_10",
+}
 
 
 def read_json(path):
@@ -57,6 +56,12 @@ def fmt_pct1(value):
     if value is None:
         return ""
     return f"{float(value) * 100:.1f}%"
+
+
+def fmt_pct_raw(value, digits=1):
+    if value is None:
+        return ""
+    return f"{float(value):.{digits}f}%"
 
 
 def cell(display, raw=None):
@@ -110,6 +115,38 @@ def load_metric(path):
         "latency_p50": latency.get("50%"),
         "latency_p99": latency.get("99%"),
         "output_tps": throughput.get("avg_output_tps"),
+    }
+
+
+def load_swe(swe_dir):
+    b = read_json(swe_dir / "benchmark_summary.json")
+    t = read_json(swe_dir / "trace_summary.json")
+    metrics = {r["metric"]: r for r in t.get("rows", [])}
+    return {
+        "requests": b["Total Requests"],
+        "success": b["Success Requests"],
+        "success_rate": b["Success Requests"] / b["Total Requests"],
+        "gen_tps": b["Output Throughput (tok/s)"],
+        "latency": b["Avg Latency (s)"],
+        "ttft": b["TTFT (ms)"],
+        "tpot": b["TPOT (ms)"],
+        "kv": b.get("KV Cache Hit Rate (%)"),
+        "first_ttft": b.get("First-Turn TTFT (ms)"),
+        "sub_ttft": b.get("Subsequent-Turn TTFT (ms)"),
+        "decoded_iter": b.get("Decoded Tok/Iter"),
+        "spec_accept": b.get("Spec. Accept Rate"),
+        "n_traces": t.get("n_traces"),
+        "lat_mean": metrics.get("Latency (s)", {}).get("mean"),
+        "lat_p50": metrics.get("Latency (s)", {}).get("p50"),
+        "lat_p99": metrics.get("Latency (s)", {}).get("p99"),
+        "first_ttft_mean": metrics.get("First-Turn TTFT (s)", {}).get("mean"),
+        "ttfat_mean": metrics.get("TTFAT (s)", {}).get("mean"),
+        "decode_tps_mean": metrics.get("Decode TPS", {}).get("mean"),
+        "decode_tps_p99": metrics.get("Decode TPS", {}).get("p99"),
+        "cache_mean": metrics.get("Cache Hit Rate (%)", {}).get("mean"),
+        "cache_p50": metrics.get("Cache Hit Rate (%)", {}).get("p50"),
+        "cache_p99": metrics.get("Cache Hit Rate (%)", {}).get("p99"),
+        "eligible_mean": metrics.get("Eligible Cache Hit Rate (%)", {}).get("mean"),
     }
 
 
@@ -180,6 +217,10 @@ def collect_models():
                 "cmmlu": cfg["cmmlu"],
                 "humaneval": cfg["humaneval"],
             }
+
+    for name, swe_dir in SWE_SOURCES.items():
+        if name in models:
+            models[name]["swe"] = load_swe(swe_dir)
     return models
 
 
@@ -327,6 +368,57 @@ def build_html(models):
             + "</div>"
         )
 
+    # SWE-Smith multi-turn tables (only models that have SWE results).
+    swe_models = [n for n in MODEL_ORDER if "swe" in models[n]]
+    swe_rows = []
+    trace_rows = []
+    for name in swe_models:
+        m = models[name]
+        s = m["swe"]
+        swe_rows.append([
+            m["vendor"],
+            model_display(name),
+            s["requests"],
+            cell(fmt_pct1(s["success_rate"]), s["success_rate"]),
+            cell(f"{fmt_num(s['gen_tps'], 2)} tok/s", s["gen_tps"]),
+            cell(f"{fmt_num(s['latency'], 2)} s", s["latency"]),
+            cell(f"{fmt_num(s['ttft'], 2)} ms", s["ttft"]),
+            cell(f"{fmt_num(s['tpot'], 2)} ms", s["tpot"]),
+            cell(fmt_pct_raw(s["kv"], 1), s["kv"]),
+            cell(f"{fmt_num(s['first_ttft'], 2)} ms", s["first_ttft"]),
+            cell(f"{fmt_num(s['sub_ttft'], 2)} ms", s["sub_ttft"]),
+            cell(fmt_num(s["decoded_iter"], 2), s["decoded_iter"]),
+            cell(fmt_pct1(s["spec_accept"]), s["spec_accept"]),
+        ])
+        trace_rows.append([
+            m["vendor"],
+            model_display(name),
+            s["n_traces"],
+            cell(f"{fmt_num(s['lat_mean'], 2)} s", s["lat_mean"]),
+            cell(f"{fmt_num(s['lat_p50'], 2)} s", s["lat_p50"]),
+            cell(f"{fmt_num(s['lat_p99'], 2)} s", s["lat_p99"]),
+            cell(f"{fmt_num(s['first_ttft_mean'], 2)} s", s["first_ttft_mean"]),
+            cell(f"{fmt_num(s['ttfat_mean'], 2)} s", s["ttfat_mean"]),
+            cell(fmt_num(s["decode_tps_mean"], 2), s["decode_tps_mean"]),
+            cell(fmt_num(s["decode_tps_p99"], 2), s["decode_tps_p99"]),
+            cell(fmt_pct_raw(s["cache_mean"], 1), s["cache_mean"]),
+            cell(fmt_pct_raw(s["cache_p50"], 1), s["cache_p50"]),
+            cell(fmt_pct_raw(s["cache_p99"], 1), s["cache_p99"]),
+            cell(fmt_pct_raw(s["eligible_mean"], 1), s["eligible_mean"]),
+        ])
+    swe_table = render_table(
+        ["厂商", "模型", "请求数", "成功率", "输出吞吐", "平均延迟", "TTFT", "TPOT", "KV缓存命中", "首轮TTFT", "后续TTFT", "Decoded Tok/Iter", "Spec接受率"],
+        swe_rows,
+        numeric_cols={2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12},
+        best_spec={3: "max", 4: "max", 5: "min", 6: "min", 7: "min", 8: "max", 9: "min", 10: "min", 11: "max", 12: "max"},
+    )
+    trace_table = render_table(
+        ["厂商", "模型", "Trace数", "Trace延迟均值", "Trace P50", "Trace P99", "首轮TTFT均值", "TTFAT均值", "Decode TPS均值", "Decode TPS P99", "Cache均值", "Cache P50", "Cache P99", "Eligible均值"],
+        trace_rows,
+        numeric_cols=set(range(2, 14)),
+        best_spec={3: "min", 4: "min", 5: "min", 6: "min", 7: "min", 8: "max", 9: "max", 10: "max", 11: "max", 12: "max", 13: "max"},
+    )
+
     # CMMLU table.
     cmmlu_rows = []
     for name in MODEL_ORDER:
@@ -385,7 +477,7 @@ def build_html(models):
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>deepseek-v4-flash 系列五模型对比_20260820</title>
+<title>deepseek-v4-flash-0731 阿里云 与 腾讯云 对比_20260820</title>
 <style>
   :root{{
     --bg:#f6f8fc; --card:#ffffff; --card2:#eef2f9; --line:#dde3ec;
@@ -398,7 +490,7 @@ def build_html(models):
   header{{padding:56px 0 26px;border-bottom:1px solid var(--line);margin-bottom:8px}}
   h1{{font-size:30px;margin:0 0 8px;letter-spacing:0;overflow-wrap:anywhere}}
   .sub{{color:var(--mut);font-size:15px}}
-  .toc{{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:28px 0 8px}}
+  .toc{{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:28px 0 8px}}
   .toc a{{display:block;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;text-decoration:none;color:var(--txt);transition:.15s;box-shadow:0 1px 3px rgba(20,40,80,.04)}}
   .toc a:hover{{border-color:var(--accent);transform:translateY(-2px);box-shadow:0 6px 18px rgba(47,107,255,.12)}}
   .toc .k{{font-size:12px;color:var(--accent2);font-weight:700;letter-spacing:1px}}
@@ -426,10 +518,10 @@ def build_html(models):
 </head>
 <body>
 <div class="wrap">
-<header><h1>deepseek-v4-flash 系列五模型对比_20260820</h1><div class="sub">在 DeepSeek-V4-Flash 对比报告基础上，纳入 <b>deepseek-v4-flash-0731_阿里云</b> 与 <b>deepseek-v4-flash-0731_腾讯云</b> 的 2026-08-20 最新结果，对比 <b>{compare_objects}</b> 在长文本性能和知识、代码评测上的表现。蓝色单元格表示同表最佳值。</div><div class="toc"><a href="#s1"><div class="k">结论总览</div><div class="t">五模型效果摘要</div></a><a href="#s2"><div class="k">性能压测</div><div class="t">LongAlpaca 单轮</div></a><a href="#s3"><div class="k">效果评测</div><div class="t">知识与代码评测</div></a></div></header>
+<header><h1>deepseek-v4-flash-0731 阿里云 与 腾讯云 对比_20260820</h1><div class="sub">基于 EvalScope 本地结果重新整理，对比 <b>阿里云 deepseek-v4-flash-0731</b> 与 <b>腾讯云 deepseek-v4-flash-0731</b> 在 LongAlpaca 长文本、SWE-Smith 多轮缓存、知识与代码评测上的表现。蓝色单元格表示同表最佳值。</div><div class="toc"><a href="#s1"><div class="k">结论总览</div><div class="t">两模型效果摘要</div></a><a href="#s2"><div class="k">性能压测</div><div class="t">LongAlpaca 单轮</div></a><a href="#s3"><div class="k">多轮压测</div><div class="t">SWE-Smith 与缓存</div></a><a href="#s4"><div class="k">效果评测</div><div class="t">知识与代码评测</div></a></div></header>
 
 <section id="s1"><h2><span class="num">1</span>核心结论</h2>
-<div class="lead">先看五个模型在 LongAlpaca 并发 1 / 8 / 16 下的横向对比，再展开各项指标。蓝色单元格表示同表最佳值。</div>
+<div class="lead">先看两个模型在 LongAlpaca 并发 1 / 8 / 16 下的横向对比，再展开各项指标。蓝色单元格表示同表最佳值。</div>
 <div class="card"><h3>模型与部署方式总览</h3>{overview}</div>
 <div class="card"><h3>结论速览</h3><table><tbody>
 {findings_rows}
@@ -441,12 +533,16 @@ def build_html(models):
 {long_tables}
 </section>
 
-<section id="s3"><h2><span class="num">3</span>知识评测</h2>
-<div class="lead">目标：对比五个模型在中文知识与代码生成上的效果及性能。数据来自各自的 EvalScope reports。</div>
+<section id="s3"><h2><span class="num">3</span>SWE-Smith 多轮性能及缓存命中率</h2>
+<div class="lead">该组统一读取 results 中 offset-10 cache-off 结果，对比 deepseek-v4-flash-0731（阿里云）与 deepseek-v4-flash-0731（腾讯云）的多轮缓存命中与解码性能。</div>
+<div class="card"><h3>请求级性能汇总</h3>{swe_table}</div>
+<div class="card"><h3>Trace 级分布</h3>{trace_table}</div></section>
+
+<section id="s4"><h2><span class="num">4</span>知识评测</h2>
+<div class="lead">目标：对比两个模型在中文知识与代码生成上的效果及性能。数据来自各自的 EvalScope reports。</div>
 <div class="card"><h3>CMMLU 汇总</h3>{cmmlu_table}</div>
 <div class="card"><h3>HumanEval Plus 汇总</h3>{he_table}</div></section>
-
-<footer><div><b>数据来源</b></div><ul><li>deepseek-v4-flash_阿里云 / deepseek-v4-flash_腾讯云 / deepseek-v4-flash-202605_腾讯云：原 DeepSeek Flash 对比报告（2026-06）</li><li>deepseek-v4-flash-0731_阿里云 / deepseek-v4-flash-0731_腾讯云：2026-08-20 的 results / outputs</li></ul><div>生成日期：2026-08-20 · {generated}</div></footer>
+<footer><div><b>数据来源</b></div><ul><li>LongAlpaca / CMMLU / HumanEval Plus：deepseek-v4-flash-0731_阿里云、deepseek-v4-flash-0731_腾讯云 取自 2026-08-20 outputs</li><li>SWE-Smith 多轮及缓存：deepseek-v4-flash-0731_阿里云、deepseek-v4-flash-0731_腾讯云 取自 2026-08 results</li></ul><div>生成日期：2026-08-20 · {generated}</div></footer>
 </div>
 </body>
 </html>"""

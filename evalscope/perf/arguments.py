@@ -293,6 +293,14 @@ class Arguments(BaseArgument):
     Accepts an int or a ``[min, max]`` list for uniform sampling per request.
     """
 
+    max_completion_tokens: Optional[IntOrRange] = None
+    """Maximum number of completion tokens (reasoning + content) in the response.
+
+    For OpenAI-style reasoning models this maps to the ``max_completion_tokens``
+    request field, which caps the total output length including any hidden
+    chain-of-thought. When set, it takes precedence over ``max_tokens``.
+    """
+
     min_tokens: Optional[int] = None
     """Minimum number of tokens in the response."""
 
@@ -394,6 +402,20 @@ class Arguments(BaseArgument):
                 raise ValueError(f'--max-tokens range min must be <= max, got {v}')
             if v[0] < 0:
                 raise ValueError(f'--max-tokens range values must be >= 0, got {v}')
+        return v
+
+    @field_validator('max_completion_tokens', mode='before')
+    @classmethod
+    def _validate_max_completion_tokens(cls, v):
+        if isinstance(v, list):
+            if len(v) == 1:
+                return v[0]  # single value from nargs='+'
+            if len(v) != 2:
+                raise ValueError(f'--max-completion-tokens accepts 1 or 2 values [min max], got {v}')
+            if v[0] > v[1]:
+                raise ValueError(f'--max-completion-tokens range min must be <= max, got {v}')
+            if v[0] < 0:
+                raise ValueError(f'--max-completion-tokens range values must be >= 0, got {v}')
         return v
 
     @field_validator('multi_turn_args', mode='before')
@@ -685,6 +707,11 @@ def add_argument(parser: argparse.ArgumentParser):
     parser.add_argument(
         '--max-tokens', type=int, nargs='+', help='The maximum number of tokens that can be generated. '
         'Accepts 1 value (fixed) or 2 values min max for uniform sampling per request.', default=2048)
+    parser.add_argument(
+        '--max-completion-tokens', type=int, nargs='+',
+        help='The maximum number of completion tokens (reasoning + content) that can be generated. '
+        'Sent as max_completion_tokens for OpenAI reasoning models and takes precedence over --max-tokens.',
+        default=None)
     parser.add_argument(
         '--min-tokens', type=int, help='The minimum number of tokens that can be generated', default=None)
     parser.add_argument('--n-choices', type=int, help='How many completion choices to generate', default=None)

@@ -147,6 +147,11 @@ evalscope/*_temp.py
 evalscope/data/
 */output_res/*
 
+# skill evalscope-eval-compare: 本地凭证 + 生成的产物清单
+credentials.yaml
+config.yaml
+runs_manifest.json
+
 
 /tmp
 /data*

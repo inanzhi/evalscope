@@ -114,7 +114,9 @@ class OpenaiPlugin(DefaultApiPlugin):
 
     def __compose_query_from_parameter(self, payload: Dict, param: Arguments):
         payload['model'] = param.model
-        if param.max_tokens is not None:
+        if param.max_completion_tokens is not None:
+            payload['max_completion_tokens'] = _sample_int_or_range(param.max_completion_tokens)
+        elif param.max_tokens is not None:
             payload['max_tokens'] = _sample_int_or_range(param.max_tokens)
         if param.min_tokens is not None:
             payload['min_tokens'] = param.min_tokens
