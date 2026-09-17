@@ -1,0 +1,33 @@
+{
+  "generated_at": "2026-09-17 17:43:44",
+  "entries": [
+    {
+      "model": "deepseek-v4-1-flash-260910",
+      "vendor": "huoshan-deepseek-v4-1-flash-260910",
+      "label": "火山",
+      "model_id": "deepseek-v4-1-flash-260910_huoshan-deepseek-v4-1-flash-260910",
+      "runs": {
+        "cmmlu": {
+          "status": "ok",
+          "elapsed": 1759.6,
+          "json": "D:\\MyCodes\\Trae\\evalscope\\outputs\\20260917_170008\\reports\\deepseek-v4-1-flash-260910_huoshan-deepseek-v4-1-flash-260910\\cmmlu.json"
+        },
+        "humaneval_plus": {
+          "status": "ok",
+          "elapsed": 415.0,
+          "json": "D:\\MyCodes\\Trae\\evalscope\\outputs\\20260917_172926\\reports\\deepseek-v4-1-flash-260910_huoshan-deepseek-v4-1-flash-260910\\humaneval_plus.json"
+        },
+        "longalpaca": {
+          "status": "ok",
+          "elapsed": 350.2,
+          "dir": "D:\\MyCodes\\Trae\\evalscope\\outputs\\20260917_173619\\longalpaca_deepseek-v4-1-flash-260910_huoshan-deepseek-v4-1-flash-260910"
+        },
+        "swe": {
+          "status": "ok",
+          "elapsed": 97.7,
+          "dir": "D:\\MyCodes\\Trae\\evalscope\\outputs\\20260917_174211\\swe_deepseek-v4-1-flash-260910_huoshan-deepseek-v4-1-flash-260910_offset-10_cache-off\\parallel_5_number_10"
+        }
+      }
+    }
+  ]
+}

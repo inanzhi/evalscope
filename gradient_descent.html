@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>梯度下降 · 交互式可视化</title>
+<style>
+  :root {
+    --bg: #f4f6fb;
+    --card: #ffffff;
+    --text: #0f172a;
+    --muted: #64748b;
+    --primary: #2563eb;
+    --accent: #f59e0b;
+    --green: #10b981;
+    --red: #ef4444;
+    --border: #e2e8f0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    padding: 32px 16px 64px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  h1 {
+    font-size: 28px;
+    margin: 0 0 4px;
+    letter-spacing: -0.5px;
+  }
+  .subtitle { color: var(--muted); margin: 0 0 28px; font-size: 15px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 20px;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
+  }
+  .analogy {
+    background: linear-gradient(135deg, #eef4ff, #fef9ec);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px 24px;
+    margin-bottom: 20px;
+    font-size: 16px;
+  }
+  .analogy strong { color: var(--primary); }
+  h2 { font-size: 19px; margin: 0 0 12px; }
+  h2 .badge {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 600;
+    color: #fff;
+    background: var(--primary);
+    border-radius: 6px;
+    padding: 1px 8px;
+    margin-right: 8px;
+    vertical-align: 2px;
+  }
+  p { margin: 0 0 10px; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 15px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; }
+  .formula {
+    background: #0f172a;
+    color: #e2e8f0;
+    border-radius: 10px;
+    padding: 16px 20px;
+    font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
+    font-size: 16px;
+    text-align: center;
+    letter-spacing: 0.5px;
+    overflow-x: auto;
+  }
+  .formula .eta { color: var(--accent); }
+  .formula .grad { color: #7dd3fc; }
+  canvas { display: block; width: 100%; background: #fff; border-radius: 12px; border: 1px solid var(--border); }
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: flex-end;
+    margin-top: 16px;
+  }
+  .control { display: flex; flex-direction: column; gap: 6px; min-width: 120px; }
+  .control label { font-size: 13px; color: var(--muted); font-weight: 600; }
+  .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .segmented button {
+    border: none; background: #fff; padding: 8px 14px; cursor: pointer;
+    font-size: 14px; color: var(--text); font-family: inherit;
+  }
+  .segmented button.active { background: var(--primary); color: #fff; }
+  .btn {
+    border: none; border-radius: 8px; padding: 10px 16px; cursor: pointer;
+    font-size: 14px; font-weight: 600; font-family: inherit; color: #fff;
+  }
+  .btn.primary { background: var(--primary); }
+  .btn.accent { background: var(--accent); }
+  .btn.ghost { background: #fff; color: var(--text); border: 1px solid var(--border); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
+  input[type=range] { width: 200px; accent-color: var(--primary); }
+  .readout {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px;
+    margin-top: 16px;
+  }
+  .readout .item {
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .readout .item .k { font-size: 12px; color: var(--muted); }
+  .readout .item .v { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .status {
+    margin-top: 12px; font-size: 14px; font-weight: 600; border-radius: 8px; padding: 8px 12px;
+  }
+  .status.running { background: #eff6ff; color: var(--primary); }
+  .status.converged { background: #ecfdf5; color: #047857; }
+  .status.diverged { background: #fef2f2; color: #b91c1c; }
+  .eta-hint { font-size: 13px; color: var(--muted); margin-top: 8px; }
+  .tip { font-size: 14px; color: var(--muted); }
+  .tip code { background: #eef2ff; color: var(--primary); padding: 1px 6px; border-radius: 5px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>梯度下降：找到山谷最低点</h1>
+  <p class="subtitle">一个球从山坡滚到谷底的全过程 —— 这就是神经网络"学习"的核心</p>
+
+  <div class="analogy">
+    🏔️ <strong>蒙眼下山</strong>：你站在山顶、蒙着眼，目标是走到谷底。你看不见全景，但脚能感受到
+    <strong>坡度（梯度）</strong>。于是每步都朝<strong>最陡的下坡方向</strong>迈一步 —— 走一步、感受坡度、再走一步……直到脚下变平（坡度≈0），你就到谷底了。
+  </div>
+
+  <div class="card">
+    <h2><span class="badge">1</span>三个关键词</h2>
+    <table>
+      <tr><th>名词</th><th>通俗意思</th><th>数学符号</th></tr>
+      <tr><td><strong>梯度</strong></td><td>脚下的"坡度/斜率"，告诉你往哪走、下降有多快</td><td>f′(x)</td></tr>
+      <tr><td><strong>学习率</strong></td><td>每一步迈多大</td><td>η（eta）</td></tr>
+      <tr><td><strong>损失函数</strong></td><td>你要下的这座"山"，谷底 = 最优点</td><td>f(x)</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2><span class="badge">2</span>唯一要记的公式</h2>
+    <div class="formula">新位置 = 旧位置 − 学习率 × 梯度<br><br>
+      x ← x − <span class="eta">η</span> · <span class="grad">f′(x)</span>
+    </div>
+    <p class="tip" style="margin-top:12px">对最简单的山 <code>f(x)=x²</code>，梯度 <code>f′(x)=2x</code>，于是 <code>x ← x − η·2x</code>，x 会一步步滚到 0（谷底）。</p>
+  </div>
+
+  <div class="card">
+    <h2><span class="badge">3</span>亲手试试（拖到山下看它滚）</h2>
+    <canvas id="plot"></canvas>
+
+    <div class="controls">
+      <div class="control">
+        <label>函数（地形）</label>
+        <div class="segmented" id="funcSeg">
+          <button data-func="bowl" class="active">f(x)=x² 简单碗</button>
+          <button data-func="double">f(x)=x⁴/4−x² 双谷</button>
+        </div>
+      </div>
+      <div class="control">
+        <label>学习率 η = <span id="etaVal">0.10</span></label>
+        <input type="range" id="eta" min="0.01" max="1.5" step="0.01" value="0.10">
+      </div>
+    </div>
+
+    <div class="btn-row" style="margin-top:16px">
+      <button class="btn primary" id="playBtn">▶ 开始下山</button>
+      <button class="btn ghost" id="stepBtn">单步 ⏭</button>
+      <button class="btn ghost" id="resetBtn">↺ 重置</button>
+    </div>
+
+    <div class="readout">
+      <div class="item"><div class="k">步数</div><div class="v" id="rStep">0</div></div>
+      <div class="item"><div class="k">位置 x</div><div class="v" id="rX">—</div></div>
+      <div class="item"><div class="k">损失 f(x)</div><div class="v" id="rFx">—</div></div>
+      <div class="item"><div class="k">梯度 f′(x)</div><div class="v" id="rDf">—</div></div>
+    </div>
+    <div class="status running" id="status" style="display:none"></div>
+    <div class="eta-hint" id="etaHint"></div>
+    <p class="tip" style="margin-top:14px">
+      ① 点击画布任意位置设置起点 ② 调学习率 ③ 点"开始下山"。
+      把学习率拉到 <code>&gt; 1</code> 再试试，你会看到球<strong>震荡甚至飞出画面（发散）</strong>。
+    </p>
+  </div>
+
+  <div class="card">
+    <h2><span class="badge">4</span>两个重要现象（切换函数体验）</h2>
+    <table>
+      <tr><th>现象</th><th>怎么触发</th><th>说明</th></tr>
+      <tr><td><strong>震荡 / 发散</strong></td><td>学习率 η 调大（比如 ≥1）</td><td>步子太大，冲过头，甚至翻到对面山坡</td></tr>
+      <tr><td><strong>局部最小值陷阱</strong></td><td>切到"双谷"函数，从某个谷附近出发</td><td>球只滚到<strong>附近</strong>的谷底，而不是全局最低的谷底</td></tr>
+    </table>
+    <p>为什么这重要？训练神经网络时，损失函数是超高维的"山"，梯度下降就是在找那座山的最低点 —— 学习率决定了收敛速度与稳定性，而"局部最小值"解释了为什么结果有时不完美。</p>
+  </div>
+</div>
+
+<script>
+(function () {
+  // ---- 函数定义 ----
+  const FUNCS = {
+    bowl: {
+      f: x => x * x,
+      df: x => 2 * x,
+      xMin: -6, xMax: 6, yMin: -3, yMax: 36,
+      label: 'f(x)=x²',
+      startX: 5.2,
+      minima: [{ x: 0, y: 0 }]
+    },
+    double: {
+      f: x => x * x * x * x / 4 - x * x,
+      df: x => x * x * x - 2 * x,
+      xMin: -3.2, xMax: 3.2, yMin: -1.8, yMax: 12,
+      label: 'f(x)=x⁴/4−x²',
+      startX: 2.4,
+      minima: [{ x: Math.SQRT2, y: -1 }, { x: -Math.SQRT2, y: -1 }]
+    }
+  };
+
+  const canvas = document.getElementById('plot');
+  const ctx = canvas.getContext('2d');
+
+  let funcKey = 'bowl';
+  let cfg = FUNCS[funcKey];
+  let state;
+
+  // 学习率发散阈值（对 bowl 函数：|1-2η|>=1 即 η>=1 发散；对 double 更早发散）
+  function resetState() {
+    state = {
+      x: cfg.startX,
+      step: 0,
+      eta: parseFloat(document.getElementById('eta').value),
+      playing: false,
+      converged: false,
+      diverged: false,
+      trail: [{ x: cfg.startX, y: cfg.f(cfg.startX) }]
+    };
+    document.getElementById('playBtn').textContent = '▶ 开始下山';
+  }
+
+  // ---- 画布尺寸 & 坐标映射 ----
+  function resize() {
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth;
+    const h = 460;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.height = h + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw();
+  }
+  const PAD = { l: 46, r: 16, t: 20, b: 40 };
+  function toX(mathX) {
+    const w = canvas.clientWidth;
+    return PAD.l + (mathX - cfg.xMin) / (cfg.xMax - cfg.xMin) * (w - PAD.l - PAD.r);
+  }
+  function toY(mathY) {
+    const h = parseFloat(canvas.style.height);
+    return PAD.t + (cfg.yMax - mathY) / (cfg.yMax - cfg.yMin) * (h - PAD.t - PAD.b);
+  }
+
+  // ---- 绘制 ----
+  function draw() {
+    const w = canvas.clientWidth;
+    const h = parseFloat(canvas.style.height);
+    ctx.clearRect(0, 0, w, h);
+
+    // 网格 + 坐标轴
+    ctx.strokeStyle = '#eef2f7';
+    ctx.lineWidth = 1;
+    ctx.font = '12px sans-serif';
+    ctx.fillStyle = '#94a3b8';
+    const xStep = (cfg.xMax - cfg.xMin) / 8;
+    for (let gx = Math.ceil(cfg.xMin / xStep) * xStep; gx <= cfg.xMax; gx += xStep) {
+      const px = toX(gx);
+      ctx.beginPath(); ctx.moveTo(px, PAD.t); ctx.lineTo(px, h - PAD.b); ctx.stroke();
+      ctx.fillText(gx.toFixed(1), px - 10, h - PAD.b + 18);
+    }
+    const yStep = (cfg.yMax - cfg.yMin) / 8;
+    for (let gy = Math.ceil(cfg.yMin / yStep) * yStep; gy <= cfg.yMax; gy += yStep) {
+      const py = toY(gy);
+      ctx.beginPath(); ctx.moveTo(PAD.l, py); ctx.lineTo(w - PAD.r, py); ctx.stroke();
+      ctx.fillText(gy.toFixed(0), 8, py + 4);
+    }
+    // 轴
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(PAD.l, toY(0)); ctx.lineTo(w - PAD.r, toY(0)); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(toX(0), PAD.t); ctx.lineTo(toX(0), h - PAD.b); ctx.stroke();
+
+    // 局部最小值标记
+    ctx.fillStyle = '#10b981';
+    cfg.minima.forEach(m => {
+      ctx.beginPath(); ctx.arc(toX(m.x), toY(m.y), 4, 0, Math.PI * 2); ctx.fill();
+    });
+
+    // 函数曲线
+    ctx.strokeStyle = '#2563eb';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    const N = 300;
+    for (let i = 0; i <= N; i++) {
+      const mx = cfg.xMin + (cfg.xMax - cfg.xMin) * i / N;
+      const my = cfg.f(mx);
+      const px = toX(mx), py = toY(my);
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+
+    // 轨迹
+    if (state.trail.length > 1) {
+      ctx.strokeStyle = 'rgba(245, 158, 11, 0.55)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      state.trail.forEach((p, i) => {
+        const px = toX(p.x), py = toY(p.y);
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      });
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // 梯度切线（斜率可视化）
+    const df = cfg.df(state.x);
+    if (isFinite(df)) {
+      const tHalf = 0.7;
+      const x1 = state.x - tHalf, y1 = cfg.f(state.x) - tHalf * df;
+      const x2 = state.x + tHalf, y2 = cfg.f(state.x) + tHalf * df;
+      ctx.strokeStyle = '#10b981';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath(); ctx.moveTo(toX(x1), toY(y1)); ctx.lineTo(toX(x2), toY(y2)); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // 球（当前位置）
+    const bx = toX(state.x), by = toY(cfg.f(state.x));
+    if (by >= PAD.t - 20 && by <= h) {
+      ctx.beginPath();
+      ctx.arc(bx, by, 9, 0, Math.PI * 2);
+      ctx.fillStyle = '#f59e0b';
+      ctx.shadowColor = 'rgba(245, 158, 11, 0.5)';
+      ctx.shadowBlur = 10;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+    }
+  }
+
+  // ---- 一步梯度下降 ----
+  function stepOnce() {
+    if (state.converged || state.diverged) return;
+    const df = cfg.df(state.x);
+    state.x = state.x - state.eta * df;
+    state.step++;
+    state.trail.push({ x: state.x, y: cfg.f(state.x) });
+
+    if (!isFinite(state.x) || Math.abs(state.x) > cfg.xMax * 3) {
+      state.diverged = true;
+      state.playing = false;
+    } else if (Math.abs(df) < 0.01 && state.step > 1) {
+      state.converged = true;
+      state.playing = false;
+    }
+    if (state.step >= 300) { state.playing = false; }
+  }
+
+  // ---- UI 更新 ----
+  function updateUI() {
+    document.getElementById('rStep').textContent = state.step;
+    document.getElementById('rX').textContent = state.x.toFixed(4);
+    document.getElementById('rFx').textContent = cfg.f(state.x).toFixed(4);
+    document.getElementById('rDf').textContent = cfg.df(state.x).toFixed(4);
+
+    const st = document.getElementById('status');
+    if (state.diverged) {
+      st.style.display = 'block';
+      st.className = 'status diverged';
+      st.textContent = '⚠ 发散了！学习率太大，球飞出了画面。把 η 调小再试。';
+    } else if (state.converged) {
+      st.style.display = 'block';
+      st.className = 'status converged';
+      st.textContent = '✓ 到达谷底！梯度 ≈ 0，球停在了最低点。';
+    } else if (state.playing) {
+      st.style.display = 'block';
+      st.className = 'status running';
+      st.textContent = '● 下山中……';
+    } else {
+      st.style.display = 'none';
+    }
+
+    const hint = document.getElementById('etaHint');
+    const e = state.eta;
+    if (funcKey === 'bowl') {
+      if (e < 0.5) hint.textContent = '当前 η < 0.5：稳定下降，一路滚到底。';
+      else if (e < 1) hint.textContent = '当前 0.5 ≤ η < 1：会来回震荡，但仍收敛。';
+      else hint.textContent = '当前 η ≥ 1：步子太大，会发散（冲出画面）。';
+    } else {
+      hint.textContent = '双谷函数有两个谷底。从不同起点出发，球会滚到"附近"那个谷（局部最小值）。';
+    }
+
+    document.getElementById('playBtn').textContent = state.playing ? '⏸ 暂停' : '▶ 开始下山';
+    draw();
+  }
+
+  // ---- 动画循环 ----
+  let last = 0;
+  function loop(t) {
+    if (state.playing && t - last > 70) {
+      last = t;
+      stepOnce();
+      updateUI();
+    }
+    requestAnimationFrame(loop);
+  }
+
+  // ---- 事件绑定 ----
+  document.getElementById('eta').addEventListener('input', e => {
+    state.eta = parseFloat(e.target.value);
+    document.getElementById('etaVal').textContent = state.eta.toFixed(2);
+    // 只更新提示，不重置
+    document.getElementById('rX').textContent = state.x.toFixed(4);
+    const hint = document.getElementById('etaHint');
+    const hh = state.eta;
+    if (funcKey === 'bowl') {
+      if (hh < 0.5) hint.textContent = '当前 η < 0.5：稳定下降。';
+      else if (hh < 1) hint.textContent = '当前 0.5 ≤ η < 1：震荡但收敛。';
+      else hint.textContent = '当前 η ≥ 1：会发散。';
+    }
+  });
+
+  document.getElementById('playBtn').addEventListener('click', () => {
+    if (state.converged || state.diverged) resetState();
+    state.playing = !state.playing;
+    updateUI();
+  });
+
+  document.getElementById('stepBtn').addEventListener('click', () => {
+    state.playing = false;
+    stepOnce();
+    updateUI();
+  });
+
+  document.getElementById('resetBtn').addEventListener('click', () => {
+    resetState();
+    updateUI();
+  });
+
+  canvas.addEventListener('click', e => {
+    const rect = canvas.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const w = canvas.clientWidth;
+    const mx = cfg.xMin + (px - PAD.l) / (w - PAD.l - PAD.r) * (cfg.xMax - cfg.xMin);
+    if (mx < cfg.xMin || mx > cfg.xMax) return;
+    cfg.startX = mx;
+    resetState();
+    updateUI();
+  });
+
+  document.getElementById('funcSeg').addEventListener('click', e => {
+    const btn = e.target.closest('button[data-func]');
+    if (!btn) return;
+    funcKey = btn.dataset.func;
+    cfg = FUNCS[funcKey];
+    document.querySelectorAll('#funcSeg button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    // 双谷默认用小一点的学习率
+    if (funcKey === 'double') {
+      document.getElementById('eta').value = '0.10';
+      document.getElementById('etaVal').textContent = '0.10';
+    }
+    resetState();
+    updateUI();
+  });
+
+  // ---- 启动 ----
+  resetState();
+  resize();
+  window.addEventListener('resize', resize);
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
